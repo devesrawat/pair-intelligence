@@ -4,7 +4,7 @@ Targets (spec §11): **RPO 24 h, RTO 4 h**. These are *targets*. They are proven
 
 ## Backups
 - Command: `scripts/backup` (daily from the host scheduler, e.g. cron/systemd timer at 02:30 Asia/Kolkata).
-- Format: `pg_dump -Fc`, written to `PAIR_BACKUP_DIR` (default `var/backups`) as `pair-<UTC timestamp>.dump.age`.
+- Format: `pg_dump -Fc`, written to `PAIR_BACKUP_DIR` (default `~/.local/state/pair/backups`, outside the repo) as `pair-<UTC timestamp>.dump.age`.
 - Encryption: `age`, recipient public key in `PAIR_BACKUP_AGE_RECIPIENT`. If `age` or the recipient is missing the script **fails loudly**. `PAIR_BACKUP_UNENCRYPTED=1` is an explicit opt-out for local drills only.
 - Keep the age *identity* (private key) offline and separate from the backups; a backup you cannot decrypt is not a backup.
 - Retention: newest backup of each of the last 7 days, plus the newest of each of 4 older ISO weeks (`scripts/tests/test_retention.sh`).

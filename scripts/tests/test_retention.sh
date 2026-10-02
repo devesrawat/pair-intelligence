@@ -27,5 +27,13 @@ done
 source "$ROOT/scripts/lib/retention.sh"
 weeks="$(find "$dir" -maxdepth 1 -name 'pair-*' ! -name '*.partial' | sort -r | tail -n 4 | while read -r f; do b="$(basename "$f")"; iso_week "${b:5:8}"; done | sort -u | wc -l | tr -d ' ')"
 [ "$weeks" -eq 4 ] || fail "expected 4 distinct weekly backups, got $weeks"
+for w in 20260913 20260906 20260830 20260823; do
+  ls "$dir" | grep -q "pair-${w}T" || fail "expected weekly backup for $w"
+done
+dweeks="$(for d in $(seq 0 6); do iso_week "$(fmt_epoch $((base - d * day)) | cut -c1-8)"; done | sort -u)"
+for f in $(find "$dir" -maxdepth 1 -name 'pair-*' ! -name '*.partial' | sort -r | tail -n 4); do
+  b="$(basename "$f")"
+  [[ "$dweeks" != *"$(iso_week "${b:5:8}")"* ]] || fail "weekly $b shares an ISO week with a daily keep"
+done
 echo "retained: $(find "$dir" -maxdepth 1 -name 'pair-*' ! -name '*.partial' -exec basename {} \; | sort -r | tr '\n' ' ')"
 echo "retention test: PASS"

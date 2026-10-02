@@ -6,7 +6,7 @@ A full Postgres volume stops writes: budget reservations fail closed (no spend) 
 
 ## Diagnose
 1. `df -h` on the host; `docker system df`.
-2. Biggest consumers: Postgres data (`docker exec deploy-postgres-1 du -sh /var/lib/postgresql/data`), `var/backups`, container logs, build cache, worker workspaces.
+2. Biggest consumers: Postgres data (`docker exec deploy-postgres-1 du -sh /var/lib/postgresql/data`), `PAIR_BACKUP_DIR` (default `~/.local/state/pair/backups`), container logs, build cache, worker workspaces.
 
 ## Free space (safest first)
 1. `docker builder prune` and `docker image prune` (unused images only; keep the current and previous immutable tags needed for [rollback](rollback.md)).

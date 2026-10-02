@@ -4,14 +4,15 @@
 #   scripts/backup               dump + prune
 #   scripts/backup --prune-only  prune only (no database needed)
 #
-# Env: DATABASE_URL, PAIR_BACKUP_DB (default: db in URL), PAIR_BACKUP_DIR (default var/backups),
+# Env: DATABASE_URL, PAIR_BACKUP_DB (default: db in URL), PAIR_BACKUP_DIR (default ~/.local/state/pair/backups),
 #      PAIR_BACKUP_AGE_RECIPIENT (age public key; required unless unencrypted),
 #      PAIR_BACKUP_UNENCRYPTED=1 (explicit opt-out; never use on the production host).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=lib/retention.sh
 source "$ROOT/scripts/lib/retention.sh"
-BACKUP_DIR="${PAIR_BACKUP_DIR:-$ROOT/var/backups}"
+# Default lives outside the repository working tree so dumps can never be committed.
+BACKUP_DIR="${PAIR_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pair/backups}"
 mkdir -p "$BACKUP_DIR"
 
 if [ "${1:-}" = "--prune-only" ]; then

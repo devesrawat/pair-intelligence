@@ -109,7 +109,7 @@ impl ProviderRegistry {
 
     /// Parse and validate. Every endpoint passes the cloud-only guard.
     pub fn from_yaml_str(yaml: &str) -> Result<Self> {
-        let cfg: RegistryConfig = serde_yaml::from_str(yaml)
+        let cfg: RegistryConfig = serde_yaml_ng::from_str(yaml)
             .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("models.yaml: {e}")))?;
         let mut entries = Vec::with_capacity(cfg.models.len());
         for e in cfg.models {

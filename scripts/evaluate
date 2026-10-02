@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# scripts/evaluate [baseline|jev]  - routing strategy comparison (see evals/README.md)
+# baseline: fixed baseline + deterministic rules, no network. jev: also needs TYPESAFE_API_KEY (owner's key).
+set -euo pipefail
+cd "$(dirname "$0")/../service"
+exec cargo run -q -p pair-models --bin pair_evaluate -- "${1:-baseline}"

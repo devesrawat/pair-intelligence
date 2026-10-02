@@ -1,0 +1,18 @@
+budget:
+  currency: USD
+  metered_monthly_cap: 20.00
+  metered_daily_cap: 1.00
+  classifier_monthly_subcap: 1.00
+  default_task_cap: 0.10
+  research_task_cap: 0.50
+  coding_task_cap: 1.00
+  auto_top_up: false
+execution:
+  max_model_attempts: 3
+  max_tool_calls: 20
+  interactive_timeout_minutes: 15
+  research_timeout_minutes: 30
+schedule:
+  timezone: Asia/Kolkata
+  morning: '07:30'
+  review: '22:30'

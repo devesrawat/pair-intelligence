@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/policy", "crates/budget", "crates/models", "crates/memory", "crates/context", "crates/jobs", "crates/workflows", "crates/telemetry", "crates/api"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+tracing = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "migrate"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"

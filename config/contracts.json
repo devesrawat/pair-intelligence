@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "source_of_truth": "service/crates/core (Rust types, serde)",
+  "storage": {"time": "UTC", "money": "integer micro-USD"},
+  "interfaces": ["Classifier","Provider","Policy","Budget","Memory","ContextCompiler","Router","Workflows","Approvals"],
+  "error_codes": ["unauthenticated","policy_denied","approval_required","approval_expired","approval_payload_changed","budget_exceeded","budget_unknown_price","reservation_unresolved","provider_timeout","provider_unavailable","provider_disallowed","classifier_invalid","memory_no_evidence","source_deleted","context_overflow","conflict","not_found","invalid_input","internal"]
+}

@@ -1,0 +1,16 @@
+# Dev/staging Postgres. Bound to loopback only; credentials are placeholders from .env.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pair}
+      POSTGRES_DB: ${POSTGRES_DB:-pair}
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pair}"]
+      interval: 3s
+      retries: 20
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:

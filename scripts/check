@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Stable PAIR check entry point: scripts/check <suite>
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export DATABASE_URL="${DATABASE_URL:-postgres://pair:pair@127.0.0.1:55432/pair}"
+suite="${1:-all}"
+case "$suite" in
+  policy) crate=policy ;;
+  budget) crate=budget ;;
+  providers) crate=models ;;
+  routing) crate=models ;;
+  memory-store|memory-inbox|memory) crate=memory ;;
+  context) crate=context ;;
+  recovery) crate=jobs ;;
+  daily|research|coding|personal-integrations) crate=workflows ;;
+  smoke) crate=api ;;
+  all|release) cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace; exit ;;
+  *) echo "unknown suite: $suite" >&2; exit 2 ;;
+esac
+cargo clippy -p "pair-$crate" --all-targets -- -D warnings
+cargo test -p "pair-$crate" -- --test-threads=4

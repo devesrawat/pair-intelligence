@@ -77,13 +77,23 @@ impl PgMemory {
         Ok(memory)
     }
 
+    /// Read one memory. A memory derived solely from deleted sources is refused with
+    /// `SourceDeleted` and no content (its tombstone remains visible via `memory_chain` and
+    /// `export`). A memory with a live source is returned minus the deleted sources' spans.
     pub async fn get_memory(&self, id: MemoryId) -> Result<MemoryRecord> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        load_memories(&mut conn, &[id.0])
+        let record = load_memories(&mut conn, &[id.0])
             .await?
             .into_iter()
             .next()
-            .ok_or_else(|| not_found("memory", id))
+            .ok_or_else(|| not_found("memory", id))?;
+        if record.redacted {
+            return Err(PairError::new(
+                ErrorCode::SourceDeleted,
+                format!("memory {id} was derived only from deleted sources"),
+            ));
+        }
+        Ok(record)
     }
 
     /// Full supersession chain containing `id`, oldest first.

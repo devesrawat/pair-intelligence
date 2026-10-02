@@ -49,6 +49,11 @@ pub struct AffectedMemory {
     pub status: String,
 }
 
+/// SQL predicate on alias `c` (memory_candidates): the candidate has evidence, none of it active.
+const ALL_EVIDENCE_DELETED: &str = "EXISTS (SELECT 1 FROM memory_candidate_evidence ce WHERE ce.candidate_id = c.id) \
+     AND NOT EXISTS (SELECT 1 FROM memory_candidate_evidence ce JOIN sources s ON s.id = ce.source_id \
+                     WHERE ce.candidate_id = c.id AND s.deletion_state = 'active')";
+
 /// What a reviewer sees: the proposed fact, evidence, reason and affected records.
 #[derive(Debug, Clone, Serialize)]
 pub struct InboxEntry {
@@ -361,11 +366,12 @@ impl PgMemory {
         Ok(self.propose_with_outcome(draft).await?.id)
     }
 
-    /// Pending candidates, oldest first.
+    /// Pending candidates, oldest first. Candidates whose evidence sources are all deleted are
+    /// omitted (see `get_candidate`).
     pub async fn list_inbox(&self) -> Result<Vec<InboxEntry>> {
-        let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM memory_candidates WHERE state = 'pending' ORDER BY id",
-        )
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT c.id FROM memory_candidates c WHERE c.state = 'pending' AND NOT ({ALL_EVIDENCE_DELETED}) ORDER BY c.id",
+        ))
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
@@ -376,6 +382,10 @@ impl PgMemory {
         Ok(entries)
     }
 
+    /// Read one candidate. One derived solely from deleted sources (it has evidence and none of
+    /// it is on an active source) is refused with `SourceDeleted` and no content. Otherwise it is
+    /// returned without the deleted sources' evidence, and contradiction links to memories that
+    /// were themselves derived only from deleted sources are dropped.
     pub async fn get_candidate(&self, id: CandidateId) -> Result<InboxEntry> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
         let row = sqlx::query(
@@ -390,28 +400,42 @@ impl PgMemory {
         .ok_or_else(|| not_found("candidate", id))?;
 
         let evidence = sqlx::query(
-            "SELECT e.source_id, e.span, s.kind, s.external_id, s.trust FROM memory_candidate_evidence e \
+            "SELECT e.source_id, e.span, s.kind, s.external_id, s.trust, s.deletion_state FROM memory_candidate_evidence e \
              JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
         )
         .bind(id.0)
         .fetch_all(&mut *conn)
         .await
-        .map_err(db_err)?
-        .iter()
-        .map(|r| {
-            Ok(InboxEvidence {
-                source: SourceId(r.try_get("source_id").map_err(db_err)?),
-                source_kind: r.try_get("kind").map_err(db_err)?,
-                external_id: r.try_get("external_id").map_err(db_err)?,
-                trust: parse_trust(&r.try_get::<String, _>("trust").map_err(db_err)?)?,
-                span: r.try_get("span").map_err(db_err)?,
+        .map_err(db_err)?;
+        let total_evidence = evidence.len();
+        let evidence = evidence
+            .iter()
+            .filter(|r| {
+                r.try_get::<String, _>("deletion_state")
+                    .is_ok_and(|d| d == "active")
             })
-        })
-        .collect::<Result<Vec<_>>>()?;
+            .map(|r| {
+                Ok(InboxEvidence {
+                    source: SourceId(r.try_get("source_id").map_err(db_err)?),
+                    source_kind: r.try_get("kind").map_err(db_err)?,
+                    external_id: r.try_get("external_id").map_err(db_err)?,
+                    trust: parse_trust(&r.try_get::<String, _>("trust").map_err(db_err)?)?,
+                    span: r.try_get("span").map_err(db_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if total_evidence > 0 && evidence.is_empty() {
+            return Err(PairError::new(
+                ErrorCode::SourceDeleted,
+                format!("candidate {id} was derived only from deleted sources"),
+            ));
+        }
 
         let affected_ids: Vec<Uuid> = row.try_get("contradicts_memories").map_err(db_err)?;
         let affected = sqlx::query(
-            "SELECT id, kind, content, status FROM memories WHERE id = ANY($1) ORDER BY id",
+            "SELECT m.id, m.kind, m.content, m.status FROM memories m WHERE m.id = ANY($1) \
+             AND EXISTS (SELECT 1 FROM memory_evidence e JOIN sources s ON s.id = e.source_id \
+                         WHERE e.memory_id = m.id AND s.deletion_state = 'active') ORDER BY m.id",
         )
         .bind(&affected_ids)
         .fetch_all(&mut *conn)

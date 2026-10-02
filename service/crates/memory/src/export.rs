@@ -1,9 +1,6 @@
 //! Markdown and JSON export of memories with evidence. PostgreSQL stays the only writable
 //! source of truth; exports are read-only views for inspection and portability.
-use crate::{
-    error::db_err, model::MemoryRecord, read::load_memories, sources::SOURCE_DELETED_REASON,
-    store::PgMemory,
-};
+use crate::{error::db_err, model::MemoryRecord, read::load_memories, store::PgMemory};
 use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
 use serde::Serialize;
@@ -11,27 +8,12 @@ use std::fmt::Write;
 use uuid::Uuid;
 
 pub const EXPORT_SCHEMA_VERSION: u32 = 1;
-const REDACTED: &str = "[redacted: source deleted]";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryExport {
     pub schema_version: u32,
     pub exported_at: DateTime<Utc>,
     pub memories: Vec<MemoryRecord>,
-}
-
-/// Remove content derived from deleted sources; keeps ids and lifecycle for audit.
-fn redact(mut m: MemoryRecord) -> MemoryRecord {
-    if m.invalidated_reason.as_deref() == Some(SOURCE_DELETED_REASON) {
-        m.content = REDACTED.to_string();
-    }
-    for ev in &mut m.evidence {
-        if ev.source_deleted {
-            ev.span = None;
-            ev.uri = None;
-        }
-    }
-    m
 }
 
 impl PgMemory {
@@ -41,11 +23,7 @@ impl PgMemory {
             .fetch_all(&mut *conn)
             .await
             .map_err(db_err)?;
-        let memories = load_memories(&mut conn, &ids)
-            .await?
-            .into_iter()
-            .map(redact)
-            .collect();
+        let memories = load_memories(&mut conn, &ids).await?;
         Ok(MemoryExport {
             schema_version: EXPORT_SCHEMA_VERSION,
             exported_at: (self.clock)(),

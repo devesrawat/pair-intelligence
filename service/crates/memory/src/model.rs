@@ -193,6 +193,8 @@ pub struct MemoryRecord {
     pub invalidated_reason: Option<String>,
     pub accepted_by: String,
     pub evidence: Vec<EvidenceRecord>,
+    /// True when every evidence source was deleted: `content` is replaced by a tombstone marker.
+    pub redacted: bool,
 }
 
 pub const DEFAULT_EXTRACTION_VERSION: &str = "v1";

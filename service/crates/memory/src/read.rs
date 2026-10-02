@@ -11,6 +11,9 @@ use sqlx::{postgres::PgRow, PgConnection, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Tombstone shown instead of content derived solely from deleted sources.
+pub const REDACTED_CONTENT: &str = "[redacted: source deleted]";
+
 pub(crate) fn evidence_from_row(row: &PgRow) -> Result<EvidenceRecord> {
     Ok(EvidenceRecord {
         source: SourceId(row.try_get("source_id").map_err(db_err)?),
@@ -25,7 +28,9 @@ pub(crate) fn evidence_from_row(row: &PgRow) -> Result<EvidenceRecord> {
     })
 }
 
-/// Load memories (with all evidence, including from deleted/hidden sources) ordered by id.
+/// Load memories ordered by id. Deletion is enforced here so every read path shares it: spans and
+/// URIs of deleted sources are dropped, and a memory whose evidence is entirely from deleted
+/// sources comes back as a content-free tombstone (`redacted`). Hidden sources are not redacted.
 pub(crate) async fn load_memories(
     conn: &mut PgConnection,
     ids: &[Uuid],
@@ -64,11 +69,21 @@ pub(crate) async fn load_memories(
             let id: Uuid = row.try_get("id").map_err(db_err)?;
             let confidence: String = row.try_get("confidence").map_err(db_err)?;
             let supersedes: Option<Uuid> = row.try_get("supersedes_id").map_err(db_err)?;
+            let mut evidence = evidence.remove(&id).unwrap_or_default();
+            for ev in evidence.iter_mut().filter(|e| e.source_deleted) {
+                ev.span = None;
+                ev.uri = None;
+            }
+            let redacted = !evidence.is_empty() && evidence.iter().all(|e| e.source_deleted);
             Ok(MemoryRecord {
                 id: MemoryId(id),
                 kind: row.try_get("kind").map_err(db_err)?,
                 status: MemoryStatus::parse(&row.try_get::<String, _>("status").map_err(db_err)?)?,
-                content: row.try_get("content").map_err(db_err)?,
+                content: if redacted {
+                    REDACTED_CONTENT.to_string()
+                } else {
+                    row.try_get("content").map_err(db_err)?
+                },
                 topic_key: row.try_get("topic_key").map_err(db_err)?,
                 project: row.try_get("project").map_err(db_err)?,
                 valid_from: row.try_get("valid_from").map_err(db_err)?,
@@ -79,7 +94,8 @@ pub(crate) async fn load_memories(
                 supersedes: supersedes.map(MemoryId),
                 invalidated_reason: row.try_get("invalidated_reason").map_err(db_err)?,
                 accepted_by: row.try_get("accepted_by").map_err(db_err)?,
-                evidence: evidence.remove(&id).unwrap_or_default(),
+                evidence,
+                redacted,
             })
         })
         .collect()

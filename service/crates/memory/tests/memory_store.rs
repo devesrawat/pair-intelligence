@@ -203,7 +203,11 @@ async fn deleted_source_is_not_retrievable() {
     );
     assert_eq!(report.invalidated, vec![doomed]);
 
-    let doomed_rec = mem.get_memory(doomed).await.unwrap();
+    assert_eq!(
+        mem.get_memory(doomed).await.unwrap_err().code,
+        ErrorCode::SourceDeleted
+    );
+    let doomed_rec = mem.memory_chain(doomed).await.unwrap().remove(0);
     assert_eq!(doomed_rec.status, MemoryStatus::Expired);
     assert_eq!(
         doomed_rec.invalidated_reason.as_deref(),

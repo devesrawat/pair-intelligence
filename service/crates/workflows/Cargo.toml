@@ -14,8 +14,9 @@ async-trait.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["json"] }
 sha2 = "0.10"
+chrono-tz = "0.10.4"
 
 [lints]
 workspace = true

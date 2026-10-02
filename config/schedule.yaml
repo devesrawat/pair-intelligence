@@ -1,0 +1,14 @@
+# Scheduled daily routines (spec section 10). Times are local to `timezone`;
+# next_run is computed in that zone and stored as UTC.
+# A routine only runs once its manual version has passed (manual_checks_passed).
+routines:
+  - name: morning_brief
+    kind: briefing
+    local_time: "07:30"
+    timezone: Asia/Kolkata
+    max_runtime_secs: 120
+  - name: evening_review
+    kind: review
+    local_time: "22:30"
+    timezone: Asia/Kolkata
+    max_runtime_secs: 120

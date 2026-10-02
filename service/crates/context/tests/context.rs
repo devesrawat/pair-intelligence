@@ -4,7 +4,8 @@ use pair_core::error::ErrorCode;
 use pair_core::ids::MemoryId;
 use pair_core::traits::ContextCompiler;
 use pair_core::types::{
-    CompiledContext, EvidenceItem, ModelLimits, ModelMessage, TaskContext, TrustClass,
+    CompiledContext, EvidenceItem, EvidenceStatus, ModelLimits, ModelMessage, TaskContext,
+    TrustClass,
 };
 
 const CONFIG: &str = include_str!("../../../../config/context.yaml");
@@ -45,6 +46,10 @@ fn memory(text: &str, score: f64) -> EvidenceItem {
         content: text.into(),
         evidence: vec![],
         score,
+        status: EvidenceStatus::Current,
+        superseded_by: None,
+        conflicts_with: vec![],
+        inferred: false,
     }
 }
 

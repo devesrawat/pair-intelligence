@@ -1,0 +1,75 @@
+# PAIR alert thresholds (spec §11 health checks, §12 queue health).
+# Evaluated from /readyz, budget ledger and backup job output by whatever scheduler the
+# host provides (EventBridge/cron + notifier). Values for disk and queue backlog are
+# mirrored as constants in service/crates/telemetry/src/health.rs - change both together.
+# Every alert links to a runbook in docs/runbooks/.
+version: 1
+
+alerts:
+  disk_free:
+    source: readyz.checks.disk
+    warn:     { free_percent_below: 15 }
+    critical: { free_percent_below: 5, or_free_gib_below: 2 }
+    critical_effect: readyz returns 503
+    runbook: docs/runbooks/full-disk.md
+
+  queue_backlog:
+    source: readyz.checks.queue_backlog
+    warn:     { depth_at_least: 50,  or_oldest_queued_age_seconds_at_least: 300 }
+    critical: { depth_at_least: 200, or_oldest_queued_age_seconds_at_least: 1800 }
+    critical_effect: readyz returns 503
+    runbook: docs/runbooks/queue-backlog.md
+
+  migration_failure:
+    source: readyz.checks.migrations
+    critical: { failed_or_pending_migrations_at_least: 1 }
+    critical_effect: readyz returns 503
+    runbook: docs/runbooks/migration-failure.md
+
+  database_unreachable:
+    source: readyz.checks.database
+    critical: { consecutive_failures_at_least: 3, interval_seconds: 30 }
+    runbook: docs/runbooks/rollback.md
+
+  provider_outage:
+    source: readyz.checks.providers
+    warn:     { providers_unavailable_at_least: 1, for_seconds: 300 }
+    critical: { all_providers_unavailable: true, for_seconds: 300 }
+    note: Provider outage degrades readiness (warn) but never returns 503.
+    runbook: docs/runbooks/provider-outage.md
+
+  reservation_unresolved:
+    source: budget ledger (reservations in state reserved)
+    warn:     { unresolved_older_than_minutes: 30 }
+    critical: { unresolved_older_than_minutes: 120 }
+    runbook: docs/runbooks/reservation-reconciliation.md
+
+  budget_cap:
+    source: budget ledger
+    warn:     { cap_consumed_percent_at_least: 80 }
+    critical: { cap_consumed_percent_at_least: 100 }
+    note: The ledger already blocks spend at the cap; the critical alert confirms the block is active.
+    runbook: docs/runbooks/kill-switch.md
+
+  backup_stale:
+    source: newest file in PAIR_BACKUP_DIR
+    warn:     { age_hours_above: 26 }
+    critical: { age_hours_above: 48 }
+    note: RPO target is 24h; warn leaves a 2h scheduling margin.
+    runbook: docs/runbooks/backup-restore.md
+
+  restore_drill_overdue:
+    source: date of last entry in docs/runbooks/restore-drill.md (owner-verified on the real host)
+    warn:     { age_days_above: 90 }
+    runbook: docs/runbooks/backup-restore.md
+
+  unauthorized_action_block:
+    source: policy audit log
+    warn: { blocks_in_one_hour_at_least: 5 }
+    note: Informational; blocks mean policy worked. A spike may indicate an injection attempt.
+    runbook: docs/runbooks/kill-switch.md
+
+notify:
+  # Placeholder: channel and credentials are host-specific and owner-supplied.
+  channel: owner-defined
+  repeat_after_minutes: 60

@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod config;
 pub mod error;
+pub mod healthcheck;
 pub mod providers;
 pub mod readiness;
 pub mod state;

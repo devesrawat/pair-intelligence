@@ -77,7 +77,7 @@ case "$suite" in
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
-    for s in "$ROOT"/scripts/backup "$ROOT"/scripts/restore "$ROOT"/scripts/restore-drill "$ROOT"/scripts/lib/pgtools.sh; do bash -n "$s"; done
+    for s in "$ROOT"/scripts/backup "$ROOT"/scripts/restore "$ROOT"/scripts/restore-drill "$ROOT"/scripts/lib/pgtools.sh "$ROOT"/scripts/lib/retention.sh; do bash -n "$s"; done
     bash "$ROOT/scripts/tests/test_retention.sh"
     echo "release: automated checks passed. Gates in docs/release-checklist.md remain UNMEASURED until evaluated."
     exit ;;

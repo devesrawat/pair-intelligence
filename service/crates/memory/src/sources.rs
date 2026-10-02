@@ -2,7 +2,10 @@
 use crate::{
     audit,
     error::{db_err, not_found},
-    model::{data_class_str, parse_data_class, parse_trust, trust_str, NewSource, SourceRecord, Visibility},
+    model::{
+        data_class_str, parse_data_class, parse_trust, trust_str, NewSource, SourceRecord,
+        Visibility,
+    },
     store::PgMemory,
 };
 use pair_core::{
@@ -47,8 +50,13 @@ impl PgMemory {
     /// Register a source. An unchanged hash reuses the latest revision; a changed hash
     /// creates the next revision, inheriting deletion and visibility state of the identity.
     pub async fn register_source(&self, new: NewSource) -> Result<SourceRecord> {
-        if new.kind.trim().is_empty() || new.external_id.trim().is_empty() || new.content_hash.trim().is_empty() {
-            return Err(crate::error::invalid("source kind, external_id and content_hash are required"));
+        if new.kind.trim().is_empty()
+            || new.external_id.trim().is_empty()
+            || new.content_hash.trim().is_empty()
+        {
+            return Err(crate::error::invalid(
+                "source kind, external_id and content_hash are required",
+            ));
         }
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
@@ -67,7 +75,10 @@ impl PgMemory {
         .map_err(db_err)?;
 
         let record = match latest {
-            Some(row) if row.try_get::<String, _>("content_hash").map_err(db_err)? == new.content_hash => {
+            Some(row)
+                if row.try_get::<String, _>("content_hash").map_err(db_err)?
+                    == new.content_hash =>
+            {
                 source_from_row(&row)?
             }
             other => {
@@ -76,7 +87,8 @@ impl PgMemory {
                         row.try_get::<i32, _>("revision").map_err(db_err)? + 1,
                         row.try_get::<String, _>("visibility").map_err(db_err)?,
                         row.try_get::<String, _>("deletion_state").map_err(db_err)?,
-                        row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("deleted_at").map_err(db_err)?,
+                        row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("deleted_at")
+                            .map_err(db_err)?,
                     ),
                     None => (1, "visible".to_string(), "active".to_string(), None),
                 };
@@ -109,28 +121,36 @@ impl PgMemory {
     }
 
     pub async fn get_source(&self, id: SourceId) -> Result<SourceRecord> {
-        let row = sqlx::query(&format!("SELECT {SOURCE_COLUMNS} FROM sources WHERE id = $1"))
-            .bind(id.0)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db_err)?
-            .ok_or_else(|| not_found("source", id))?;
+        let row = sqlx::query(&format!(
+            "SELECT {SOURCE_COLUMNS} FROM sources WHERE id = $1"
+        ))
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| not_found("source", id))?;
         source_from_row(&row)
     }
 
     /// Change visibility for every revision of the source identity. Retrieval re-checks
     /// visibility at query time, so memories derived only from it disappear immediately.
-    pub async fn set_source_visibility(&self, id: SourceId, visibility: Visibility, actor: &str) -> Result<u64> {
+    pub async fn set_source_visibility(
+        &self,
+        id: SourceId,
+        visibility: Visibility,
+        actor: &str,
+    ) -> Result<u64> {
         let src = self.get_source(id).await?;
         let mut tx = self.pool.begin().await.map_err(db_err)?;
-        let changed = sqlx::query("UPDATE sources SET visibility = $3 WHERE kind = $1 AND external_id = $2")
-            .bind(&src.kind)
-            .bind(&src.external_id)
-            .bind(visibility.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?
-            .rows_affected();
+        let changed =
+            sqlx::query("UPDATE sources SET visibility = $3 WHERE kind = $1 AND external_id = $2")
+                .bind(&src.kind)
+                .bind(&src.external_id)
+                .bind(visibility.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?
+                .rows_affected();
         audit::record(
             &mut tx,
             actor,
@@ -220,6 +240,9 @@ impl PgMemory {
         .await?;
         tx.commit().await.map_err(db_err)?;
         tracing::info!(source = %id, invalidated = doomed.len(), "source deleted");
-        Ok(DeletionReport { source_revisions: revisions, invalidated: doomed.into_iter().map(MemoryId).collect() })
+        Ok(DeletionReport {
+            source_revisions: revisions,
+            invalidated: doomed.into_iter().map(MemoryId).collect(),
+        })
     }
 }

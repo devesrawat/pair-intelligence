@@ -3,7 +3,10 @@ use crate::{
     accept::accept_in_tx,
     audit,
     error::{db_err, invalid, not_found},
-    inbox::{find_candidate_contradictions, find_memory_contradictions, insert_candidate, prepare, NewCandidateRow},
+    inbox::{
+        find_candidate_contradictions, find_memory_contradictions, insert_candidate, prepare,
+        NewCandidateRow,
+    },
     model::{CandidateDraft, MemoryRecord},
     policy,
     store::{AcceptMode, PgMemory},
@@ -59,7 +62,10 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
     .ok_or_else(|| not_found("candidate", id))?;
     let state: String = row.try_get("state").map_err(db_err)?;
     if state != "pending" {
-        return Err(PairError::new(ErrorCode::Conflict, format!("candidate {id} is {state}, not pending")));
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            format!("candidate {id} is {state}, not pending"),
+        ));
     }
     let evidence = sqlx::query(
         "SELECT e.source_id, e.span FROM memory_candidate_evidence e JOIN sources s ON s.id = e.source_id \
@@ -100,13 +106,17 @@ impl PgMemory {
         .map_err(db_err)?
         .rows_affected();
         if updated == 0 {
-            let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM memory_candidates WHERE id = $1")
-                .bind(id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db_err)?;
+            let exists: Option<Uuid> =
+                sqlx::query_scalar("SELECT id FROM memory_candidates WHERE id = $1")
+                    .bind(id.0)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
             return Err(match exists {
-                Some(_) => PairError::new(ErrorCode::Conflict, format!("candidate {id} is not pending")),
+                Some(_) => PairError::new(
+                    ErrorCode::Conflict,
+                    format!("candidate {id} is not pending"),
+                ),
                 None => not_found("candidate", id),
             });
         }
@@ -117,10 +127,18 @@ impl PgMemory {
 
     /// Replace a pending candidate with an edited one. The original keeps its text and evidence
     /// (state `edited`, `replaced_by` set); the replacement carries all evidence plus any new.
-    pub async fn edit_candidate(&self, id: CandidateId, actor: &str, patch: EditPatch) -> Result<CandidateId> {
+    pub async fn edit_candidate(
+        &self,
+        id: CandidateId,
+        actor: &str,
+        patch: EditPatch,
+    ) -> Result<CandidateId> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let original = load_original(&mut tx, id).await?;
-        let content_changed = patch.content.as_deref().is_some_and(|c| c.trim() != original.content);
+        let content_changed = patch
+            .content
+            .as_deref()
+            .is_some_and(|c| c.trim() != original.content);
         let mut evidence = original.evidence;
         evidence.extend(patch.extra_evidence);
 
@@ -132,21 +150,49 @@ impl PgMemory {
             evidence,
         });
         draft.reason = patch.reason.or(original.reason);
-        draft.topic = if content_changed { None } else { original.topic };
+        draft.topic = if content_changed {
+            None
+        } else {
+            original.topic
+        };
         draft.extraction_version = original.extraction_version;
 
         let prepared = prepare(&mut tx, draft, None).await?;
         let c = &prepared.draft.candidate;
         let (mem_links, cand_links) = match &prepared.topic {
             Some(topic) => (
-                find_memory_contradictions(&mut tx, &c.kind, c.project.as_deref(), topic, &prepared.normalized, (self.clock)()).await?,
-                find_candidate_contradictions(&mut tx, &c.kind, c.project.as_deref(), topic, &prepared.normalized, Some(id.0)).await?,
+                find_memory_contradictions(
+                    &mut tx,
+                    &c.kind,
+                    c.project.as_deref(),
+                    topic,
+                    &prepared.normalized,
+                    (self.clock)(),
+                )
+                .await?,
+                find_candidate_contradictions(
+                    &mut tx,
+                    &c.kind,
+                    c.project.as_deref(),
+                    topic,
+                    &prepared.normalized,
+                    Some(id.0),
+                )
+                .await?,
             ),
             None => (Vec::new(), Vec::new()),
         };
-        let mut assessment = policy::assess(&c.kind, c.inferred, &c.content, &prepared.facts, !mem_links.is_empty() || !cand_links.is_empty());
+        let mut assessment = policy::assess(
+            &c.kind,
+            c.inferred,
+            &c.content,
+            &prepared.facts,
+            !mem_links.is_empty() || !cand_links.is_empty(),
+        );
         // A human edit is never auto-accepted, even if the edited text would otherwise qualify.
-        assessment.review_reasons.retain(|r| r != "not_a_preference");
+        assessment
+            .review_reasons
+            .retain(|r| r != "not_a_preference");
         assessment.review_reasons.push(EDITED_REASON.to_string());
         let replacement = insert_candidate(
             &mut tx,
@@ -176,7 +222,12 @@ impl PgMemory {
 
     /// Correct an accepted memory: a replacement is accepted and supersedes the original, which
     /// stays in history with its evidence. The replacement carries the original evidence.
-    pub async fn correct_memory(&self, id: MemoryId, actor: &str, patch: CorrectionPatch) -> Result<MemoryId> {
+    pub async fn correct_memory(
+        &self,
+        id: MemoryId,
+        actor: &str,
+        patch: CorrectionPatch,
+    ) -> Result<MemoryId> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let original = sqlx::query(
             "SELECT kind, project, confidence, topic_key FROM memories WHERE id = $1 AND status = 'accepted' \
@@ -207,7 +258,10 @@ impl PgMemory {
             kind: original.try_get("kind").map_err(db_err)?,
             content: patch.content,
             project: original.try_get("project").map_err(db_err)?,
-            inferred: original.try_get::<String, _>("confidence").map_err(db_err)? == "inferred",
+            inferred: original
+                .try_get::<String, _>("confidence")
+                .map_err(db_err)?
+                == "inferred",
             evidence,
         });
         draft.topic = original.try_get("topic_key").map_err(db_err)?;
@@ -224,8 +278,26 @@ impl PgMemory {
             },
         )
         .await?;
-        let new_id = accept_in_tx(&mut tx, self.clock, candidate, actor, AcceptMode { supersedes: Some(id), keep_both: false }).await?;
-        audit::record(&mut tx, actor, "memory.corrected", "memory", &id.to_string(), serde_json::json!({ "replacement": new_id.to_string() })).await?;
+        let new_id = accept_in_tx(
+            &mut tx,
+            self.clock,
+            candidate,
+            actor,
+            AcceptMode {
+                supersedes: Some(id),
+                keep_both: false,
+            },
+        )
+        .await?;
+        audit::record(
+            &mut tx,
+            actor,
+            "memory.corrected",
+            "memory",
+            &id.to_string(),
+            serde_json::json!({ "replacement": new_id.to_string() }),
+        )
+        .await?;
         tx.commit().await.map_err(db_err)?;
         tracing::info!(memory = %id, replacement = %new_id, actor, "memory corrected");
         Ok(new_id)
@@ -234,6 +306,9 @@ impl PgMemory {
     /// The memory currently active at the end of `id`'s supersession chain.
     pub async fn current_version(&self, id: MemoryId) -> Result<MemoryRecord> {
         let chain = self.memory_chain(id).await?;
-        chain.into_iter().last().ok_or_else(|| not_found("memory", id))
+        chain
+            .into_iter()
+            .last()
+            .ok_or_else(|| not_found("memory", id))
     }
 }

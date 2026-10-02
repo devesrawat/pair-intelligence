@@ -26,7 +26,10 @@ pub(crate) fn evidence_from_row(row: &PgRow) -> Result<EvidenceRecord> {
 }
 
 /// Load memories (with all evidence, including from deleted/hidden sources) ordered by id.
-pub(crate) async fn load_memories(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<MemoryRecord>> {
+pub(crate) async fn load_memories(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<Vec<MemoryRecord>> {
     let rows = sqlx::query(
         "SELECT id, kind, status, content, topic_key, project, valid_from, valid_to, observed_at, \
                 confidence, importance, supersedes_id, invalidated_reason, accepted_by \
@@ -50,7 +53,10 @@ pub(crate) async fn load_memories(conn: &mut PgConnection, ids: &[Uuid]) -> Resu
     let mut evidence: HashMap<Uuid, Vec<EvidenceRecord>> = HashMap::new();
     for row in &ev_rows {
         let memory_id: Uuid = row.try_get("memory_id").map_err(db_err)?;
-        evidence.entry(memory_id).or_default().push(evidence_from_row(row)?);
+        evidence
+            .entry(memory_id)
+            .or_default()
+            .push(evidence_from_row(row)?);
     }
 
     rows.iter()

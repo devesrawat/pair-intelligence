@@ -54,10 +54,15 @@ pub(crate) async fn accept_in_tx(
     if state == "accepted" {
         // Idempotent: an auto-accepted candidate may be accepted again by a reviewer.
         let existing: Option<Uuid> = row.try_get("accepted_memory_id").map_err(db_err)?;
-        return existing.map(MemoryId).ok_or_else(|| PairError::new(ErrorCode::Internal, "accepted candidate has no memory"));
+        return existing.map(MemoryId).ok_or_else(|| {
+            PairError::new(ErrorCode::Internal, "accepted candidate has no memory")
+        });
     }
     if state != "pending" {
-        return Err(PairError::new(ErrorCode::Conflict, format!("candidate {id} is {state}, not pending")));
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            format!("candidate {id} is {state}, not pending"),
+        ));
     }
     let cand = CandidateRow {
         kind: row.try_get("kind").map_err(db_err)?,
@@ -78,14 +83,31 @@ pub(crate) async fn accept_in_tx(
 
     let now = clock();
     let contradicted = match &cand.topic {
-        Some(topic) => find_memory_contradictions(conn, &cand.kind, cand.project.as_deref(), topic, &cand.normalized, now).await?,
+        Some(topic) => {
+            find_memory_contradictions(
+                conn,
+                &cand.kind,
+                cand.project.as_deref(),
+                topic,
+                &cand.normalized,
+                now,
+            )
+            .await?
+        }
         None => Vec::new(),
     };
-    let unresolved: Vec<Uuid> = contradicted.iter().map(|m| m.0).filter(|m| Some(*m) != mode.supersedes.map(|s| s.0)).collect();
+    let unresolved: Vec<Uuid> = contradicted
+        .iter()
+        .map(|m| m.0)
+        .filter(|m| Some(*m) != mode.supersedes.map(|s| s.0))
+        .collect();
     if !unresolved.is_empty() && !mode.keep_both {
         return Err(PairError::new(
             ErrorCode::Conflict,
-            format!("candidate {id} contradicts {} accepted memories; supersede one or keep both", unresolved.len()),
+            format!(
+                "candidate {id} contradicts {} accepted memories; supersede one or keep both",
+                unresolved.len()
+            ),
         ));
     }
 
@@ -116,7 +138,14 @@ pub(crate) async fn accept_in_tx(
     .execute(&mut *conn)
     .await
     .map_err(db_err)?;
-    insert_evidence_and_chunks(conn, memory_id, &cand.content, &live, &cand.extraction_version).await?;
+    insert_evidence_and_chunks(
+        conn,
+        memory_id,
+        &cand.content,
+        &live,
+        &cand.extraction_version,
+    )
+    .await?;
 
     if mode.keep_both {
         for other in unresolved {
@@ -151,7 +180,10 @@ pub(crate) async fn accept_in_tx(
 
 /// Evidence on active sources plus the trust classes of those sources. Errors when the
 /// candidate has no evidence at all, or only evidence from deleted sources.
-async fn live_evidence(conn: &mut PgConnection, id: CandidateId) -> Result<(Vec<EvidenceRef>, Vec<TrustClass>)> {
+async fn live_evidence(
+    conn: &mut PgConnection,
+    id: CandidateId,
+) -> Result<(Vec<EvidenceRef>, Vec<TrustClass>)> {
     let rows = sqlx::query(
         "SELECT e.source_id, e.span, s.deletion_state, s.trust FROM memory_candidate_evidence e \
          JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
@@ -161,18 +193,29 @@ async fn live_evidence(conn: &mut PgConnection, id: CandidateId) -> Result<(Vec<
     .await
     .map_err(db_err)?;
     if rows.is_empty() {
-        return Err(PairError::new(ErrorCode::MemoryNoEvidence, "an accepted memory requires at least one evidence reference"));
+        return Err(PairError::new(
+            ErrorCode::MemoryNoEvidence,
+            "an accepted memory requires at least one evidence reference",
+        ));
     }
     let mut live = Vec::with_capacity(rows.len());
     let mut trusts = Vec::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? == "active" {
-            live.push(EvidenceRef { source: SourceId(row.try_get("source_id").map_err(db_err)?), span: row.try_get("span").map_err(db_err)? });
-            trusts.push(parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?);
+            live.push(EvidenceRef {
+                source: SourceId(row.try_get("source_id").map_err(db_err)?),
+                span: row.try_get("span").map_err(db_err)?,
+            });
+            trusts.push(parse_trust(
+                &row.try_get::<String, _>("trust").map_err(db_err)?,
+            )?);
         }
     }
     if live.is_empty() {
-        return Err(PairError::new(ErrorCode::SourceDeleted, "all evidence sources of this candidate are deleted"));
+        return Err(PairError::new(
+            ErrorCode::SourceDeleted,
+            "all evidence sources of this candidate are deleted",
+        ));
     }
     Ok((live, trusts))
 }
@@ -186,10 +229,23 @@ async fn record_conflict(conn: &mut PgConnection, a: Uuid, b: Uuid, actor: &str)
         .execute(&mut *conn)
         .await
         .map_err(db_err)?;
-    audit::record(conn, actor, "memory.conflict_kept", "memory", &a.to_string(), serde_json::json!({ "other": b.to_string() })).await
+    audit::record(
+        conn,
+        actor,
+        "memory.conflict_kept",
+        "memory",
+        &a.to_string(),
+        serde_json::json!({ "other": b.to_string() }),
+    )
+    .await
 }
 
-async fn close_superseded(conn: &mut PgConnection, old: MemoryId, new_valid_from: DateTime<Utc>, actor: &str) -> Result<()> {
+async fn close_superseded(
+    conn: &mut PgConnection,
+    old: MemoryId,
+    new_valid_from: DateTime<Utc>,
+    actor: &str,
+) -> Result<()> {
     let updated = sqlx::query(
         "UPDATE memories SET status = 'superseded', \
                 valid_to = GREATEST(valid_from, LEAST(COALESCE(valid_to, $2), $2)) \
@@ -208,5 +264,13 @@ async fn close_superseded(conn: &mut PgConnection, old: MemoryId, new_valid_from
             format!("memory {old} cannot be superseded (not an active accepted memory)"),
         ));
     }
-    audit::record(conn, actor, "memory.superseded", "memory", &old.to_string(), serde_json::json!({})).await
+    audit::record(
+        conn,
+        actor,
+        "memory.superseded",
+        "memory",
+        &old.to_string(),
+        serde_json::json!({}),
+    )
+    .await
 }

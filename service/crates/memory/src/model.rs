@@ -9,15 +9,25 @@ use serde::{Deserialize, Serialize};
 
 /// Memory types from spec section 7.
 pub const MEMORY_KINDS: [&str; 10] = [
-    "fact", "preference", "project", "person", "decision", "procedure", "goal", "event",
-    "commitment", "open_loop",
+    "fact",
+    "preference",
+    "project",
+    "person",
+    "decision",
+    "procedure",
+    "goal",
+    "event",
+    "commitment",
+    "open_loop",
 ];
 
 pub fn validate_kind(kind: &str) -> Result<()> {
     if MEMORY_KINDS.contains(&kind) {
         Ok(())
     } else {
-        Err(crate::error::invalid(format!("unknown memory kind '{kind}'")))
+        Err(crate::error::invalid(format!(
+            "unknown memory kind '{kind}'"
+        )))
     }
 }
 
@@ -82,7 +92,9 @@ pub fn parse_data_class(s: &str) -> Result<DataClass> {
         "personal" => Ok(DataClass::Personal),
         "sensitive" => Ok(DataClass::Sensitive),
         "employer" => Ok(DataClass::Employer),
-        other => Err(crate::error::invalid(format!("unknown data class '{other}'"))),
+        other => Err(crate::error::invalid(format!(
+            "unknown data class '{other}'"
+        ))),
     }
 }
 
@@ -99,7 +111,9 @@ pub fn parse_trust(s: &str) -> Result<TrustClass> {
         "owner" => Ok(TrustClass::Owner),
         "tool" => Ok(TrustClass::Tool),
         "untrusted" => Ok(TrustClass::Untrusted),
-        other => Err(crate::error::invalid(format!("unknown trust class '{other}'"))),
+        other => Err(crate::error::invalid(format!(
+            "unknown trust class '{other}'"
+        ))),
     }
 }
 

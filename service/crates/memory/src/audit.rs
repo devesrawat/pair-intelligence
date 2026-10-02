@@ -15,7 +15,7 @@ pub async fn record(
     metadata: serde_json::Value,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO audit_events (id, actor, action, subject_kind, subject_id, policy_version, metadata) \
+        "INSERT INTO memory_audit_events (id, actor, action, subject_kind, subject_id, policy_version, metadata) \
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(Uuid::now_v7())
@@ -28,6 +28,12 @@ pub async fn record(
     .execute(conn)
     .await
     .map_err(db_err)?;
-    tracing::info!(actor, action, subject_kind, subject_id, "audit event recorded");
+    tracing::info!(
+        actor,
+        action,
+        subject_kind,
+        subject_id,
+        "audit event recorded"
+    );
     Ok(())
 }

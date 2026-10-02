@@ -55,8 +55,8 @@ pub struct ExtractionBatch {
 }
 
 pub fn parse_batch(json: &str) -> Result<ExtractionBatch> {
-    let batch: ExtractionBatch =
-        serde_json::from_str(json).map_err(|e| invalid(format!("extraction output does not match schema: {e}")))?;
+    let batch: ExtractionBatch = serde_json::from_str(json)
+        .map_err(|e| invalid(format!("extraction output does not match schema: {e}")))?;
     if batch.extraction_version.trim().is_empty() {
         return Err(invalid("extraction_version is required"));
     }
@@ -114,7 +114,10 @@ impl ExtractedCandidate {
             evidence: self
                 .evidence
                 .into_iter()
-                .map(|e| EvidenceRef { source: SourceId(e.source), span: e.span })
+                .map(|e| EvidenceRef {
+                    source: SourceId(e.source),
+                    span: e.span,
+                })
                 .collect(),
         });
         draft.topic = self.topic;
@@ -136,7 +139,10 @@ impl PgMemory {
     pub async fn propose_batch(&self, batch: ExtractionBatch) -> Result<Vec<Proposal>> {
         let mut out = Vec::with_capacity(batch.candidates.len());
         for candidate in batch.candidates {
-            out.push(self.propose_with_outcome(candidate.into_draft(&batch.extraction_version)).await?);
+            out.push(
+                self.propose_with_outcome(candidate.into_draft(&batch.extraction_version))
+                    .await?,
+            );
         }
         Ok(out)
     }

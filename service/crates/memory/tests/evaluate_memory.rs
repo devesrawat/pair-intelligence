@@ -39,7 +39,9 @@ struct QueryRec {
 }
 
 fn dataset<T: for<'de> Deserialize<'de>>(name: &str) -> Vec<T> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../evals/datasets").join(name);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../evals/datasets")
+        .join(name);
     std::fs::read_to_string(&path)
         .unwrap()
         .lines()
@@ -48,13 +50,21 @@ fn dataset<T: for<'de> Deserialize<'de>>(name: &str) -> Vec<T> {
         .collect()
 }
 
-async fn seed(mem: &PgMemory, corpus: &[CorpusRec]) -> (HashMap<String, MemoryId>, HashMap<String, SourceId>) {
+async fn seed(
+    mem: &PgMemory,
+    corpus: &[CorpusRec],
+) -> (HashMap<String, MemoryId>, HashMap<String, SourceId>) {
     let mut sources: HashMap<String, SourceId> = HashMap::new();
     let mut memories: HashMap<String, MemoryId> = HashMap::new();
     for rec in corpus {
         if !sources.contains_key(&rec.source) {
             let s = mem
-                .register_source(NewSource::new("doc", rec.source.clone(), format!("hash-{}", rec.source), TrustClass::Owner))
+                .register_source(NewSource::new(
+                    "doc",
+                    rec.source.clone(),
+                    format!("hash-{}", rec.source),
+                    TrustClass::Owner,
+                ))
                 .await
                 .unwrap();
             sources.insert(rec.source.clone(), s.id);
@@ -64,15 +74,23 @@ async fn seed(mem: &PgMemory, corpus: &[CorpusRec]) -> (HashMap<String, MemoryId
             content: rec.content.clone(),
             project: rec.project.clone(),
             inferred: rec.inferred,
-            evidence: vec![EvidenceRef { source: sources[&rec.source], span: Some(rec.span.clone()) }],
+            evidence: vec![EvidenceRef {
+                source: sources[&rec.source],
+                span: Some(rec.span.clone()),
+            }],
         });
         draft.topic = Some(rec.topic.clone());
         draft.reason = Some("fixture corpus".into());
         let proposal = mem.propose_with_outcome(draft).await.unwrap();
         let id = match (proposal.auto_accepted, &rec.supersedes) {
             (Some(id), _) => id,
-            (None, Some(old)) => mem.accept_superseding(proposal.id, "eval", memories[old]).await.unwrap(),
-            (None, None) => pair_core::traits::Memory::accept(mem, proposal.id, "eval").await.unwrap(),
+            (None, Some(old)) => mem
+                .accept_superseding(proposal.id, "eval", memories[old])
+                .await
+                .unwrap(),
+            (None, None) => pair_core::traits::Memory::accept(mem, proposal.id, "eval")
+                .await
+                .unwrap(),
         };
         memories.insert(rec.key.clone(), id);
     }
@@ -123,7 +141,12 @@ async fn evaluate_memory_retrieval() {
     let mut misses = Vec::new();
     for q in &queries {
         let hits = mem
-            .retrieve_detailed(RetrievalQuery { text: q.query.clone(), project: q.project.clone(), as_of: chrono::Utc::now(), limit: 0 })
+            .retrieve_detailed(RetrievalQuery {
+                text: q.query.clone(),
+                project: q.project.clone(),
+                as_of: chrono::Utc::now(),
+                limit: 0,
+            })
             .await
             .unwrap();
         let tally = if q.held_out { &mut held } else { &mut dev };
@@ -132,21 +155,38 @@ async fn evaluate_memory_retrieval() {
                 tally.answerable += 1;
                 let (want, want_src) = (memories[key], sources[src]);
                 let position = hits.iter().position(|h| {
-                    h.item.memory == want && h.current && h.item.evidence.iter().any(|e| e.source == want_src && e.span.is_some())
+                    h.item.memory == want
+                        && h.current
+                        && h.item
+                            .evidence
+                            .iter()
+                            .any(|e| e.source == want_src && e.span.is_some())
                 });
                 match position {
                     Some(p) => {
                         tally.found += 1;
                         tally.top1 += u32::from(p == 0);
                     }
-                    None => misses.push(format!("MISS {} {:?} got {} items", q.id, q.query, hits.len())),
+                    None => misses.push(format!(
+                        "MISS {} {:?} got {} items",
+                        q.id,
+                        q.query,
+                        hits.len()
+                    )),
                 }
             }
             _ => {
                 tally.unknown += 1;
                 if !hits.is_empty() {
                     tally.unsupported += 1;
-                    misses.push(format!("UNSUPPORTED {} {:?} returned {:?}", q.id, q.query, hits.iter().map(|h| h.item.content.clone()).collect::<Vec<_>>()));
+                    misses.push(format!(
+                        "UNSUPPORTED {} {:?} returned {:?}",
+                        q.id,
+                        q.query,
+                        hits.iter()
+                            .map(|h| h.item.content.clone())
+                            .collect::<Vec<_>>()
+                    ));
                 }
             }
         }
@@ -158,7 +198,11 @@ async fn evaluate_memory_retrieval() {
         unknown: dev.unknown + held.unknown,
         unsupported: dev.unsupported + held.unsupported,
     };
-    println!("\nFIXTURE-CORPUS NUMBERS (not real usage); corpus={} memories, queries={}", corpus.len(), queries.len());
+    println!(
+        "\nFIXTURE-CORPUS NUMBERS (not real usage); corpus={} memories, queries={}",
+        corpus.len(),
+        queries.len()
+    );
     println!("{}", dev.line("dev"));
     println!("{}", held.line("held_out"));
     println!("{}", all.line("all"));
@@ -176,9 +220,20 @@ async fn evaluate_memory_retrieval() {
     );
 
     // Regression floors on the fixture corpus.
-    assert!(held.answerable >= 10 && held.unknown >= 3, "held-out split must cover both query types");
-    assert!(all.recall() >= RECALL_FLOOR, "recall regressed: {:.3}", all.recall());
-    assert!(all.unsupported_rate() <= UNSUPPORTED_CEILING, "unsupported answers regressed: {:.3}", all.unsupported_rate());
+    assert!(
+        held.answerable >= 10 && held.unknown >= 3,
+        "held-out split must cover both query types"
+    );
+    assert!(
+        all.recall() >= RECALL_FLOOR,
+        "recall regressed: {:.3}",
+        all.recall()
+    );
+    assert!(
+        all.unsupported_rate() <= UNSUPPORTED_CEILING,
+        "unsupported answers regressed: {:.3}",
+        all.unsupported_rate()
+    );
 }
 
 const RECALL_FLOOR: f64 = 0.9;

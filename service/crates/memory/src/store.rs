@@ -32,7 +32,10 @@ pub struct AcceptMode {
 
 impl PgMemory {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool, clock: Utc::now }
+        Self {
+            pool,
+            clock: Utc::now,
+        }
     }
 
     pub fn with_clock(mut self, clock: fn() -> DateTime<Utc>) -> Self {
@@ -44,11 +47,29 @@ impl PgMemory {
         &self.pool
     }
 
-    pub async fn accept_superseding(&self, id: CandidateId, actor: &str, old: MemoryId) -> Result<MemoryId> {
-        self.accept_with(id, actor, AcceptMode { supersedes: Some(old), keep_both: false }).await
+    pub async fn accept_superseding(
+        &self,
+        id: CandidateId,
+        actor: &str,
+        old: MemoryId,
+    ) -> Result<MemoryId> {
+        self.accept_with(
+            id,
+            actor,
+            AcceptMode {
+                supersedes: Some(old),
+                keep_both: false,
+            },
+        )
+        .await
     }
 
-    pub async fn accept_with(&self, id: CandidateId, actor: &str, mode: AcceptMode) -> Result<MemoryId> {
+    pub async fn accept_with(
+        &self,
+        id: CandidateId,
+        actor: &str,
+        mode: AcceptMode,
+    ) -> Result<MemoryId> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let memory = crate::accept::accept_in_tx(&mut tx, self.clock, id, actor, mode).await?;
         tx.commit().await.map_err(db_err)?;
@@ -58,26 +79,39 @@ impl PgMemory {
 
     pub async fn get_memory(&self, id: MemoryId) -> Result<MemoryRecord> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        load_memories(&mut conn, &[id.0]).await?.into_iter().next().ok_or_else(|| not_found("memory", id))
+        load_memories(&mut conn, &[id.0])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| not_found("memory", id))
     }
 
     /// Full supersession chain containing `id`, oldest first.
     pub async fn memory_chain(&self, id: MemoryId) -> Result<Vec<MemoryRecord>> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        let mut head = load_memories(&mut conn, &[id.0]).await?.into_iter().next().ok_or_else(|| not_found("memory", id))?;
+        let mut head = load_memories(&mut conn, &[id.0])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| not_found("memory", id))?;
         let mut chain = vec![head.clone()];
         while let Some(prev) = head.supersedes {
-            head = load_memories(&mut conn, &[prev.0]).await?.into_iter().next().ok_or_else(|| not_found("memory", prev))?;
+            head = load_memories(&mut conn, &[prev.0])
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| not_found("memory", prev))?;
             chain.push(head.clone());
         }
         chain.reverse();
         loop {
             let tail = chain.last().map(|m| m.id.0).unwrap_or(id.0);
-            let next: Option<Uuid> = sqlx::query_scalar("SELECT id FROM memories WHERE supersedes_id = $1")
-                .bind(tail)
-                .fetch_optional(&mut *conn)
-                .await
-                .map_err(db_err)?;
+            let next: Option<Uuid> =
+                sqlx::query_scalar("SELECT id FROM memories WHERE supersedes_id = $1")
+                    .bind(tail)
+                    .fetch_optional(&mut *conn)
+                    .await
+                    .map_err(db_err)?;
             match next {
                 Some(n) => chain.extend(load_memories(&mut conn, &[n]).await?),
                 None => return Ok(chain),
@@ -100,9 +134,20 @@ impl PgMemory {
         .map_err(db_err)?
         .rows_affected();
         if updated == 0 {
-            return Err(PairError::new(ErrorCode::Conflict, format!("memory {id} is not an accepted memory")));
+            return Err(PairError::new(
+                ErrorCode::Conflict,
+                format!("memory {id} is not an accepted memory"),
+            ));
         }
-        audit::record(&mut tx, actor, "memory.expired", "memory", &id.to_string(), serde_json::json!({ "reason": reason })).await?;
+        audit::record(
+            &mut tx,
+            actor,
+            "memory.expired",
+            "memory",
+            &id.to_string(),
+            serde_json::json!({ "reason": reason }),
+        )
+        .await?;
         tx.commit().await.map_err(db_err)
     }
 }
@@ -135,14 +180,21 @@ pub(crate) async fn insert_evidence_and_chunks(
     Ok(())
 }
 
-async fn insert_chunk(conn: &mut PgConnection, memory: MemoryId, source: Option<Uuid>, text: &str) -> Result<()> {
-    sqlx::query("INSERT INTO memory_chunks (id, memory_id, source_id, text) VALUES ($1, $2, $3, $4)")
-        .bind(Uuid::now_v7())
-        .bind(memory.0)
-        .bind(source)
-        .bind(text)
-        .execute(conn)
-        .await
-        .map_err(db_err)?;
+async fn insert_chunk(
+    conn: &mut PgConnection,
+    memory: MemoryId,
+    source: Option<Uuid>,
+    text: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO memory_chunks (id, memory_id, source_id, text) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(memory.0)
+    .bind(source)
+    .bind(text)
+    .execute(conn)
+    .await
+    .map_err(db_err)?;
     Ok(())
 }

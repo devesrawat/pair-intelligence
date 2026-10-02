@@ -29,7 +29,13 @@ pub struct Assessment {
     pub review_reasons: Vec<String>,
 }
 
-pub fn assess(kind: &str, inferred: bool, content: &str, sources: &[SourceFacts], contradiction: bool) -> Assessment {
+pub fn assess(
+    kind: &str,
+    inferred: bool,
+    content: &str,
+    sources: &[SourceFacts],
+    contradiction: bool,
+) -> Assessment {
     let mut reasons: Vec<&str> = Vec::new();
     if sources.is_empty() {
         reasons.push("no_evidence");
@@ -60,8 +66,15 @@ pub fn assess(kind: &str, inferred: bool, content: &str, sources: &[SourceFacts]
     // Everything that is not auto-accepted is reviewed; `not_a_preference` alone is the
     // default path for ordinary facts and is recorded for transparency.
     let auto_accept = reasons.is_empty();
-    let review_reasons = if auto_accept { Vec::new() } else { reasons.into_iter().map(str::to_string).collect() };
-    Assessment { auto_accept, review_reasons }
+    let review_reasons = if auto_accept {
+        Vec::new()
+    } else {
+        reasons.into_iter().map(str::to_string).collect()
+    };
+    Assessment {
+        auto_accept,
+        review_reasons,
+    }
 }
 
 /// Hard gate applied on every acceptance, including human accepts.
@@ -83,7 +96,10 @@ pub fn check_accept(kind: &str, content: &str, trusts: &[TrustClass]) -> Result<
 mod tests {
     use super::*;
 
-    const OWNER: SourceFacts = SourceFacts { trust: TrustClass::Owner, data_class: DataClass::Personal };
+    const OWNER: SourceFacts = SourceFacts {
+        trust: TrustClass::Owner,
+        data_class: DataClass::Personal,
+    };
 
     #[test]
     fn test_assess_explicit_owner_preference_auto_accepts() {

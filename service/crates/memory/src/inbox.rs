@@ -83,17 +83,33 @@ pub(crate) struct Prepared {
     pub facts: Vec<SourceFacts>,
 }
 
-pub(crate) async fn prepare(conn: &mut PgConnection, mut draft: CandidateDraft, key_salt: Option<&str>) -> Result<Prepared> {
+pub(crate) async fn prepare(
+    conn: &mut PgConnection,
+    mut draft: CandidateDraft,
+    key_salt: Option<&str>,
+) -> Result<Prepared> {
     validate_kind(&draft.candidate.kind)?;
     draft.candidate.content = draft.candidate.content.trim().to_string();
     let content = &draft.candidate.content;
     if content.is_empty() || content.chars().count() > MAX_CONTENT_CHARS {
-        return Err(invalid(format!("candidate content must be 1..={MAX_CONTENT_CHARS} characters")));
+        return Err(invalid(format!(
+            "candidate content must be 1..={MAX_CONTENT_CHARS} characters"
+        )));
     }
     let normalized = normalize_content(content);
-    let topic = draft.topic.as_deref().map(normalize_content).filter(|t| !t.is_empty()).or_else(|| topic_of(content));
+    let topic = draft
+        .topic
+        .as_deref()
+        .map(normalize_content)
+        .filter(|t| !t.is_empty())
+        .or_else(|| topic_of(content));
 
-    let ids: Vec<Uuid> = draft.candidate.evidence.iter().map(|e| e.source.0).collect();
+    let ids: Vec<Uuid> = draft
+        .candidate
+        .evidence
+        .iter()
+        .map(|e| e.source.0)
+        .collect();
     let rows = sqlx::query("SELECT DISTINCT id, kind, external_id, trust, data_class, deletion_state FROM sources WHERE id = ANY($1)")
         .bind(&ids)
         .fetch_all(&mut *conn)
@@ -107,7 +123,10 @@ pub(crate) async fn prepare(conn: &mut PgConnection, mut draft: CandidateDraft, 
     let mut facts = Vec::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? != "active" {
-            return Err(PairError::new(ErrorCode::SourceDeleted, "candidate references a deleted source"));
+            return Err(PairError::new(
+                ErrorCode::SourceDeleted,
+                "candidate references a deleted source",
+            ));
         }
         identities.insert(format!(
             "{}:{}",
@@ -125,12 +144,19 @@ pub(crate) async fn prepare(conn: &mut PgConnection, mut draft: CandidateDraft, 
         normalized,
         identities.into_iter().collect::<Vec<_>>().join(",")
     );
-    let dedupe_key: String = sqlx::query_scalar("SELECT encode(sha256(convert_to($1, 'UTF8')), 'hex')")
-        .bind(material)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(db_err)?;
-    Ok(Prepared { draft, normalized, topic, dedupe_key, facts })
+    let dedupe_key: String =
+        sqlx::query_scalar("SELECT encode(sha256(convert_to($1, 'UTF8')), 'hex')")
+            .bind(material)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(db_err)?;
+    Ok(Prepared {
+        draft,
+        normalized,
+        topic,
+        dedupe_key,
+        facts,
+    })
 }
 
 /// Accepted, currently valid memories on the same topic with different content.
@@ -189,7 +215,10 @@ pub(crate) struct NewCandidateRow<'a> {
     pub edited_from: Option<CandidateId>,
 }
 
-pub(crate) async fn insert_candidate(conn: &mut PgConnection, row: NewCandidateRow<'_>) -> Result<CandidateId> {
+pub(crate) async fn insert_candidate(
+    conn: &mut PgConnection,
+    row: NewCandidateRow<'_>,
+) -> Result<CandidateId> {
     let p = row.prepared;
     let c = &p.draft.candidate;
     let id = CandidateId::new();
@@ -262,13 +291,35 @@ impl PgMemory {
         let c = &prepared.draft.candidate;
         let (mem_links, cand_links) = match &prepared.topic {
             Some(topic) => (
-                find_memory_contradictions(&mut tx, &c.kind, c.project.as_deref(), topic, &prepared.normalized, (self.clock)()).await?,
-                find_candidate_contradictions(&mut tx, &c.kind, c.project.as_deref(), topic, &prepared.normalized, None).await?,
+                find_memory_contradictions(
+                    &mut tx,
+                    &c.kind,
+                    c.project.as_deref(),
+                    topic,
+                    &prepared.normalized,
+                    (self.clock)(),
+                )
+                .await?,
+                find_candidate_contradictions(
+                    &mut tx,
+                    &c.kind,
+                    c.project.as_deref(),
+                    topic,
+                    &prepared.normalized,
+                    None,
+                )
+                .await?,
             ),
             None => (Vec::new(), Vec::new()),
         };
         let contradiction = !mem_links.is_empty() || !cand_links.is_empty();
-        let assessment = policy::assess(&c.kind, c.inferred, &c.content, &prepared.facts, contradiction);
+        let assessment = policy::assess(
+            &c.kind,
+            c.inferred,
+            &c.content,
+            &prepared.facts,
+            contradiction,
+        );
         let id = insert_candidate(
             &mut tx,
             NewCandidateRow {
@@ -285,9 +336,14 @@ impl PgMemory {
 
         let mut auto_accepted = None;
         if assessment.auto_accept {
-            match self.accept_with(id, AUTO_ACCEPT_ACTOR, AcceptMode::default()).await {
+            match self
+                .accept_with(id, AUTO_ACCEPT_ACTOR, AcceptMode::default())
+                .await
+            {
                 Ok(memory) => auto_accepted = Some(memory),
-                Err(err) => tracing::warn!(candidate = %id, error = %err, "auto-accept failed; candidate left pending for review"),
+                Err(err) => {
+                    tracing::warn!(candidate = %id, error = %err, "auto-accept failed; candidate left pending for review")
+                }
             }
         }
         Ok(Proposal {
@@ -307,10 +363,12 @@ impl PgMemory {
 
     /// Pending candidates, oldest first.
     pub async fn list_inbox(&self) -> Result<Vec<InboxEntry>> {
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM memory_candidates WHERE state = 'pending' ORDER BY id")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_err)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM memory_candidates WHERE state = 'pending' ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
         let mut entries = Vec::with_capacity(ids.len());
         for id in ids {
             entries.push(self.get_candidate(CandidateId(id)).await?);
@@ -352,30 +410,33 @@ impl PgMemory {
         .collect::<Result<Vec<_>>>()?;
 
         let affected_ids: Vec<Uuid> = row.try_get("contradicts_memories").map_err(db_err)?;
-        let affected = sqlx::query("SELECT id, kind, content, status FROM memories WHERE id = ANY($1) ORDER BY id")
-            .bind(&affected_ids)
-            .fetch_all(&mut *conn)
-            .await
-            .map_err(db_err)?
-            .iter()
-            .map(|r| {
-                Ok(AffectedMemory {
-                    memory: MemoryId(r.try_get("id").map_err(db_err)?),
-                    kind: r.try_get("kind").map_err(db_err)?,
-                    content: r.try_get("content").map_err(db_err)?,
-                    status: r.try_get("status").map_err(db_err)?,
-                })
+        let affected = sqlx::query(
+            "SELECT id, kind, content, status FROM memories WHERE id = ANY($1) ORDER BY id",
+        )
+        .bind(&affected_ids)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db_err)?
+        .iter()
+        .map(|r| {
+            Ok(AffectedMemory {
+                memory: MemoryId(r.try_get("id").map_err(db_err)?),
+                kind: r.try_get("kind").map_err(db_err)?,
+                content: r.try_get("content").map_err(db_err)?,
+                status: r.try_get("status").map_err(db_err)?,
             })
-            .collect::<Result<Vec<_>>>()?;
+        })
+        .collect::<Result<Vec<_>>>()?;
 
         let replaced_by: Option<Uuid> = row.try_get("replaced_by").map_err(db_err)?;
         let mut active = replaced_by;
         while let Some(current) = active {
-            let next: Option<Uuid> = sqlx::query_scalar("SELECT replaced_by FROM memory_candidates WHERE id = $1")
-                .bind(current)
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(db_err)?;
+            let next: Option<Uuid> =
+                sqlx::query_scalar("SELECT replaced_by FROM memory_candidates WHERE id = $1")
+                    .bind(current)
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(db_err)?;
             if next.is_none() {
                 break;
             }
@@ -407,7 +468,11 @@ impl PgMemory {
     }
 }
 
-async fn proposal_from_row(conn: &mut PgConnection, id: CandidateId, duplicate: bool) -> Result<Proposal> {
+async fn proposal_from_row(
+    conn: &mut PgConnection,
+    id: CandidateId,
+    duplicate: bool,
+) -> Result<Proposal> {
     let row = sqlx::query(
         "SELECT needs_review, review_reasons, contradicts_memories, contradicts_candidates, accepted_memory_id, auto_accepted \
          FROM memory_candidates WHERE id = $1",
@@ -424,7 +489,11 @@ async fn proposal_from_row(conn: &mut PgConnection, id: CandidateId, duplicate: 
         duplicate,
         needs_review: row.try_get("needs_review").map_err(db_err)?,
         review_reasons: row.try_get("review_reasons").map_err(db_err)?,
-        auto_accepted: if row.try_get::<bool, _>("auto_accepted").map_err(db_err)? { accepted.map(MemoryId) } else { None },
+        auto_accepted: if row.try_get::<bool, _>("auto_accepted").map_err(db_err)? {
+            accepted.map(MemoryId)
+        } else {
+            None
+        },
         contradicts_memories: mems.into_iter().map(MemoryId).collect(),
         contradicts_candidates: cands.into_iter().map(CandidateId).collect(),
     })

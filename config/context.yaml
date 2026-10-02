@@ -1,0 +1,31 @@
+# Context compiler section budgets (tokens). Tunable ceilings, spec section 8.
+# Token counts are estimates (chars/4); provider accounting is applied via budget reserve.
+default_profile: general
+profiles:
+  coding:
+    system_policy: 800
+    task_contract: 700
+    project: 1200
+    memories: 1200
+    tool_results: 5000
+    conversation: 1500
+    tool_schemas: 800
+    total: 11200
+  general:
+    system_policy: 600
+    task_contract: 700
+    project: 600
+    memories: 1500
+    tool_results: 2000
+    conversation: 2500
+    tool_schemas: 400
+    total: 8300
+  research:
+    system_policy: 600
+    task_contract: 700
+    project: 400
+    memories: 2500
+    tool_results: 6000
+    conversation: 1500
+    tool_schemas: 400
+    total: 12100

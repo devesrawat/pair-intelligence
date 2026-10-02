@@ -1,0 +1,7 @@
+.superpowers/
+upstream/
+.env
+.env.*
+!.env.example
+node_modules/
+target/

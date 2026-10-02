@@ -15,7 +15,8 @@ use pair_core::{
     money::Micros,
     traits::{Budget, ContextCompiler, Memory, Provider},
     types::{
-        DataClass, ModelLimits, ModelMessage, ModelRequest, RetrievalQuery, TaskContext, TrustClass,
+        DataClass, ModelLimits, ModelMessage, ModelRequest, PolicyContext, RetrievalQuery,
+        TaskContext, TrustClass,
     },
 };
 use pair_policy::Gate;
@@ -58,6 +59,10 @@ pub struct CodingDeps<'a> {
     pub budget: &'a dyn Budget,
     pub memory: &'a dyn Memory,
     pub compiler: &'a dyn ContextCompiler,
+    /// Policy context for every command: active policy version (`PolicyEngine::version()`),
+    /// the workspace root the policy confines paths to (must contain the repo and the
+    /// worktrees), and the approval ids offered to the Gate (default empty).
+    pub policy: PolicyContext,
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +182,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         deps.gate,
         task.id,
         task.trace,
-        &task.workspaces_root,
+        deps.policy.clone(),
         home,
         Duration::from_secs(cfg.timeout_secs),
         cfg.env_passthrough.clone(),
@@ -301,6 +306,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
 /// Removes the task worktree (the branch and its commits-to-be remain for review).
 pub async fn discard_workspace(
     gate: &Gate,
+    policy: PolicyContext,
     task: &CodingTask,
     result: &CodingResult,
 ) -> Result<()> {
@@ -308,7 +314,7 @@ pub async fn discard_workspace(
         gate,
         task.id,
         task.trace,
-        &task.workspaces_root,
+        policy,
         task.workspaces_root.join(format!(".home-{}", task.id)),
         Duration::from_secs(DISCARD_TIMEOUT_SECS),
         Vec::new(),

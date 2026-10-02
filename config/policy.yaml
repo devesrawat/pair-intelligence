@@ -1,7 +1,7 @@
 # PAIR tool policy (spec section 9). Parsed by pair_policy::PolicyConfig; any parse or
 # validation error means no policy engine exists, so every action is refused (fail closed).
 # Unknown keys are rejected. Bump `version` whenever this file changes.
-version: "2026-10-03.1"
+version: "2026-10-03.2"
 
 # Risk class per registered tool. A tool that is not listed here is denied.
 # read | local_edit | local_commit run unprompted inside the workspace;
@@ -12,6 +12,10 @@ tools:
   fs.write: local_edit
   fs.edit: local_edit
   shell.exec: local_edit
+  # Research workflow (pair_workflows::tools). Read-only, but the destination host is
+  # checked against `egress` below, so a host that is not listed is denied.
+  web.search: read
+  web.fetch: read
   git.commit: local_commit
   message.send: external_write
   git.push: external_write
@@ -47,3 +51,8 @@ egress:
   - { host: index.crates.io, data_classes: [public] }
   - { host: pypi.org, data_classes: [public] }
   - { host: files.pythonhosted.org, data_classes: [public] }
+
+# Research sources (web.fetch) and the search service (web.search) are public data only.
+# Add the hosts you trust here; nothing is reachable by default. Example:
+#   - { host: docs.rs, data_classes: [public] }
+#   - { host: "*.wikipedia.org", data_classes: [public] }

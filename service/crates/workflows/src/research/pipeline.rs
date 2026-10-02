@@ -27,6 +27,11 @@ pub struct ResearchDeps<'a> {
     pub store: &'a EvidenceStore,
     /// Optional semantic veto on top of the deterministic support check.
     pub judge: Option<&'a dyn SupportJudge>,
+    /// Policy context (version from `PolicyEngine::version()`, an existing workspace root,
+    /// approval ids; normally none) used for every search and fetch.
+    pub policy: pair_core::types::PolicyContext,
+    /// Host of the search service; must be on the policy egress list.
+    pub search_host: String,
 }
 
 pub struct ResearchRun {
@@ -83,6 +88,8 @@ async fn execute(
         fetcher: deps.fetcher,
         task: run.task,
         trace: run.trace,
+        ctx: deps.policy.clone(),
+        search_host: deps.search_host.clone(),
     };
     let llm = ResearchLlm {
         provider: deps.provider,

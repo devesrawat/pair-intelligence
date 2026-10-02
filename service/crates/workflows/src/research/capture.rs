@@ -6,6 +6,7 @@ use super::{
     fetch::{normalize_url, Candidate, FetchOutcome, SourceFetcher},
     types::{ResearchScope, Source},
 };
+use crate::tools::{WEB_FETCH, WEB_SEARCH};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, Result},
@@ -17,7 +18,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 const MAX_QUERIES: usize = 8;
-const POLICY_VERSION: &str = "research-workflow";
 
 /// Network access for research. Every search and fetch runs inside `Gate::execute`, so the
 /// `SourceFetcher` is only called after policy allows it.
@@ -26,6 +26,12 @@ pub struct Network<'a> {
     pub fetcher: &'a dyn SourceFetcher,
     pub task: TaskId,
     pub trace: TraceId,
+    /// Active policy version, an existing workspace root and any approval ids (normally
+    /// empty). Built by the caller from `PolicyEngine::version()`.
+    pub ctx: PolicyContext,
+    /// Host of the search service. Searches are egress to this host, so it must be listed
+    /// in the policy's egress rules; the query text is never used as a destination.
+    pub search_host: String,
 }
 
 impl Network<'_> {
@@ -42,25 +48,18 @@ impl Network<'_> {
         }
     }
 
-    fn ctx() -> PolicyContext {
-        PolicyContext {
-            workspace_root: String::new(),
-            approvals: Vec::new(),
-            policy_version: POLICY_VERSION.into(),
-        }
-    }
-
     async fn search(&self, query: &str) -> Result<Vec<Candidate>> {
-        let req = self.request("web_search", query);
+        tracing::debug!(task = %self.task, %query, "research search");
+        let req = self.request(WEB_SEARCH, &self.search_host);
         self.gate
-            .execute(&req, &Self::ctx(), || self.fetcher.search(query))
+            .execute(&req, &self.ctx, || self.fetcher.search(query))
             .await
     }
 
     async fn fetch(&self, url: &str, normalized: &str) -> Result<FetchOutcome> {
-        let req = self.request("web_fetch", normalized);
+        let req = self.request(WEB_FETCH, normalized);
         self.gate
-            .execute(&req, &Self::ctx(), || self.fetcher.fetch(url))
+            .execute(&req, &self.ctx, || self.fetcher.fetch(url))
             .await
     }
 }

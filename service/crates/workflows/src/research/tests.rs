@@ -133,6 +133,8 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         fetcher: &fetcher,
         store: &store,
         judge,
+        policy: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
     };
     let run = ResearchRun {
         task: TaskId::new(),
@@ -155,6 +157,7 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
     }
 }
 
+const SEARCH_HOST: &str = "search.example.com";
 const GATED_URL: &str = "https://example.com/page";
 
 #[derive(Default)]
@@ -206,6 +209,8 @@ async fn research_network_access_only_happens_after_gate_allow() {
         fetcher: &fetcher,
         task: TaskId::new(),
         trace: TraceId::new(),
+        ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, pair_core::error::ErrorCode::PolicyDenied);

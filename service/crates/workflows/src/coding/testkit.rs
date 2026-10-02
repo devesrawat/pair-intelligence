@@ -1,6 +1,7 @@
 //! In-test fakes of external services (policy engine, model provider, budget ledger,
 //! memory store, context compiler). Test-only.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use crate::tools::{GIT_PUSH, PR_CREATE};
 use async_trait::async_trait;
 use pair_core::{
     error::Result,
@@ -76,7 +77,7 @@ impl Policy for FakePolicy {
     fn authorize(&self, req: &ActionRequest, _ctx: &PolicyContext) -> PolicyOutcome {
         self.seen.lock().unwrap().push(req.clone());
         let decision =
-            if matches!(req.tool.as_str(), "git_push" | "open_pr") && !self.allow_remote_writes {
+            if matches!(req.tool.as_str(), GIT_PUSH | PR_CREATE) && !self.allow_remote_writes {
                 Decision::NeedsApproval {
                     payload_hash: "hash".into(),
                 }
@@ -178,5 +179,14 @@ impl ContextCompiler for PlainCompiler {
             manifest: Vec::new(),
             total_tokens: 1,
         })
+    }
+}
+
+/// Context for tests that use a fake policy (which ignores the version).
+pub fn fake_ctx(workspace_root: &std::path::Path) -> PolicyContext {
+    PolicyContext {
+        workspace_root: workspace_root.display().to_string(),
+        approvals: Vec::new(),
+        policy_version: "fake-1".into(),
     }
 }

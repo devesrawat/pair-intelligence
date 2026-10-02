@@ -1224,6 +1224,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "pair-core",
+ "pair-jobs",
  "pair-policy",
  "serde",
  "serde_json",

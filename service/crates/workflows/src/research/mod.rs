@@ -2,7 +2,7 @@
 //!
 //! Stages: scope -> queries -> source discovery -> capture source versions -> dedupe ->
 //! extract evidence -> compare claims -> synthesize -> citation validation -> save report.
-mod capture;
+pub(crate) mod capture;
 mod extract;
 mod fetch;
 mod model;

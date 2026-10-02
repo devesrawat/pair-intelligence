@@ -1,6 +1,6 @@
 # ADR 001: Foundation and integration boundary
 
-Status: **Proposed** (becomes Accepted when the spike in `upstream-audit.md` §"Not yet demonstrated" passes)
+Status: **Accepted with conditions** (2026-10-03). Plugin spike passed against the built gateway (`docs/spike-openclaw-plugin.md`). Still open: authenticated cloud inference, real approval round trip, sandbox mode `all`, advisory re-check.
 Date: 2026-10-03
 
 ## Decision
@@ -18,7 +18,8 @@ Date: 2026-10-03
 - `agents.defaults.sandbox.mode: all`, `network: none`, `workspaceAccess` per task
 - `gateway.auth.mode: token`, bind loopback behind reverse proxy
 - `plugins.entries.pair.hooks.allowConversationAccess: true` (only for PAIR)
-- `OPENCLAW_NO_AUTO_UPDATE=1`, `openclaw telemetry off`, `CLAWHUB_DISABLE_TELEMETRY=1`
+- `OPENCLAW_NO_AUTO_UPDATE=1`, `openclaw telemetry off`, `CLAWHUB_DISABLE_TELEMETRY=1`, `OPENCLAW_DISABLE_BONJOUR=1` (mDNS advertising is on by default)
+- Deny the bundled `acpx` plugin (pulls `@anthropic-ai/claude-agent-sdk`, no OSS license). Do not ship `@openclaw/whatsapp` or `@openclaw/qa-lab` (libsignal GPL-3.0 confirmed in `docs/license-scan.md`)
 - Anthropic via API key in a capped workspace; never `claude-cli/*` subscription routes (see `provider-billing.md`)
 
 ## Risks accepted
@@ -30,3 +31,10 @@ Date: 2026-10-03
 ## Fallback
 
 If `before_model_resolve` or `before_tool_call` do not behave as documented in the spike, run PAIR as an OpenAI-compatible endpoint registered via `models.providers.pair` and enforce tool policy in the sandbox backend instead; if neither works, revisit foundation (spec §3, step 4).
+
+## Amendments from the spike (2026-10-03)
+
+- **Budget accounting cannot use `model_call_ended`:** it carries no token counts. Reserve in `before_model_resolve` from prompt-length estimates; settle from `llm_output.usage` (per run, post hoc, needs `allowConversationAccess`) or diagnostics events.
+- **Approvals:** `requireApproval` from a CLI turn denies immediately (no approval-capable surface). Fail-closed, but the real allow/deny round trip must be tested on the actual approval surface before Task 3 is considered closed against OpenClaw.
+- **Conversation hooks are not silent when dropped:** the gateway logs a warn line at start naming each blocked hook; add a startup check that fails PAIR's own readiness if that warning appears.
+- **`openclaw telemetry off` rewrites config and strips JSON5 comments;** manage config from a template, not in place.

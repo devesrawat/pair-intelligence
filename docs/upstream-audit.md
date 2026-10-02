@@ -42,7 +42,7 @@ Status: verified = read in source at the pinned SHA. All hook APIs are labelled 
 | License | MIT, © 2026 OpenClaw Foundation (`LICENSE`, `package.json`). GitHub API shows `NOASSERTION` (detector quirk). | low |
 | Notices | `THIRD_PARTY_NOTICES.md`: Pi/pi-mono (MIT), GitHub Octicons (MIT). Icon bundles MIT/CC0. | low |
 | Trademark | No policy file. Name/logo reuse needs Foundation consent if commercialized (`docs/start/lore.md:18`). | low-med |
-| Copyleft | `extensions/whatsapp` → `baileys` → `libsignal` (believed GPL-3.0, **not confirmed locally**); `mpg123-decoder` LGPL-2.1; `jszip` dual MIT/GPLv3. Lockfile has no license data. | med, only if WhatsApp shipped |
+| Copyleft | `extensions/whatsapp` → `baileys` → `libsignal` (**GPL-3.0, confirmed** in `docs/license-scan.md`; also behind `@openclaw/qa-lab`); `mpg123-decoder` is MIT (earlier note of LGPL-2.1 was wrong); GPL-2.0/LGPL `@audio/decode-*` packages and `codec-parser` exist behind `@openclaw/whatsapp`; `jszip` dual MIT/GPLv3. Lockfile has no license data. | med, only if WhatsApp shipped |
 | Action | Run `pnpm licenses list` after install and attach output; do not enable WhatsApp plugin. | |
 
 ## Security posture
@@ -65,6 +65,7 @@ Status: verified = read in source at the pinned SHA. All hook APIs are labelled 
 
 ## Not yet demonstrated (Task 1 exit criteria still open)
 
+0. DONE: plugin spike (`docs/spike-openclaw-plugin.md`): hooks verified except approval round trip, sandbox=all, before_prompt_build, memory capability, onDiagnosticEvent. License scan done (`docs/license-scan.md`).
 1. Authenticated cloud inference through the runtime: needs `ANTHROPIC_API_KEY` for a spend-capped `pair` workspace (owner action, see `provider-billing.md`).
 2. One extension point exercised live: a spike plugin using `before_tool_call` (block) and `before_model_resolve` against the built gateway.
 3. License scan output and authenticated advisory re-check.

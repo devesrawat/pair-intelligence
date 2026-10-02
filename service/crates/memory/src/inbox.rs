@@ -2,9 +2,10 @@
 //! reviewer-facing views. Review actions (reject/edit/correct) live in `review`.
 use crate::{
     error::{db_err, invalid, not_found},
-    model::{parse_data_class, parse_trust, validate_kind, CandidateDraft},
+    model::{parse_data_class, parse_trust, validate_kind, CandidateDraft, VerifiedSpans},
     normalize::{normalize_content, topic_of},
     policy::{self, SourceFacts, AUTO_ACCEPT_ACTOR},
+    spans::span_in_text,
     store::{AcceptMode, PgMemory, MAX_CONTENT_CHARS},
 };
 use chrono::{DateTime, Utc};
@@ -39,6 +40,8 @@ pub struct InboxEvidence {
     pub external_id: String,
     pub trust: TrustClass,
     pub span: Option<String>,
+    /// Span was found in source text supplied at propose time; false = never checked.
+    pub span_verified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,6 +51,11 @@ pub struct AffectedMemory {
     pub content: String,
     pub status: String,
 }
+
+/// SQL predicate on alias `c` (memory_candidates): the candidate has evidence, none of it active.
+const ALL_EVIDENCE_DELETED: &str = "EXISTS (SELECT 1 FROM memory_candidate_evidence ce WHERE ce.candidate_id = c.id) \
+     AND NOT EXISTS (SELECT 1 FROM memory_candidate_evidence ce JOIN sources s ON s.id = ce.source_id \
+                     WHERE ce.candidate_id = c.id AND s.deletion_state = 'active')";
 
 /// What a reviewer sees: the proposed fact, evidence, reason and affected records.
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +89,8 @@ pub(crate) struct Prepared {
     pub topic: Option<String>,
     pub dedupe_key: String,
     pub facts: Vec<SourceFacts>,
+    /// Evidence (source, span) pairs whose span was verified against supplied text.
+    pub verified: VerifiedSpans,
 }
 
 pub(crate) async fn prepare(
@@ -138,6 +148,7 @@ pub(crate) async fn prepare(
             data_class: parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
         });
     }
+    let verified = verify_spans(&draft)?;
     let material = format!(
         "{}\n{}\n{}",
         key_salt.unwrap_or(""),
@@ -156,7 +167,36 @@ pub(crate) async fn prepare(
         topic,
         dedupe_key,
         facts,
+        verified,
     })
+}
+
+/// Check every span against the supplied text of its source. A span missing from supplied text is
+/// an `InvalidInput`; evidence without supplied text (or without a span) is left unverified.
+fn verify_spans(draft: &CandidateDraft) -> Result<VerifiedSpans> {
+    let mut verified = VerifiedSpans::new();
+    for ev in &draft.candidate.evidence {
+        let key = (ev.source, ev.span.clone());
+        if draft.carried_verified.contains(&key) {
+            verified.insert(key);
+            continue;
+        }
+        let (Some(text), Some(span)) = (draft.source_texts.get(&ev.source), ev.span.as_deref())
+        else {
+            continue;
+        };
+        if span.trim().is_empty() {
+            continue;
+        }
+        if !span_in_text(span, text) {
+            return Err(invalid(format!(
+                "evidence span for source {} is not in the supplied source text",
+                ev.source
+            )));
+        }
+        verified.insert(key);
+    }
+    Ok(verified)
 }
 
 /// Accepted, currently valid memories on the same topic with different content.
@@ -252,10 +292,12 @@ pub(crate) async fn insert_candidate(
     .await
     .map_err(db_err)?;
     for ev in &c.evidence {
-        sqlx::query("INSERT INTO memory_candidate_evidence (candidate_id, source_id, span) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+        let span_verified = p.verified.contains(&(ev.source, ev.span.clone()));
+        sqlx::query("INSERT INTO memory_candidate_evidence (candidate_id, source_id, span, span_verified) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING")
             .bind(id.0)
             .bind(ev.source.0)
             .bind(&ev.span)
+            .bind(span_verified)
             .execute(&mut *conn)
             .await
             .map_err(db_err)?;
@@ -361,11 +403,12 @@ impl PgMemory {
         Ok(self.propose_with_outcome(draft).await?.id)
     }
 
-    /// Pending candidates, oldest first.
+    /// Pending candidates, oldest first. Candidates whose evidence sources are all deleted are
+    /// omitted (see `get_candidate`).
     pub async fn list_inbox(&self) -> Result<Vec<InboxEntry>> {
-        let ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM memory_candidates WHERE state = 'pending' ORDER BY id",
-        )
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT c.id FROM memory_candidates c WHERE c.state = 'pending' AND NOT ({ALL_EVIDENCE_DELETED}) ORDER BY c.id",
+        ))
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
@@ -376,6 +419,10 @@ impl PgMemory {
         Ok(entries)
     }
 
+    /// Read one candidate. One derived solely from deleted sources (it has evidence and none of
+    /// it is on an active source) is refused with `SourceDeleted` and no content. Otherwise it is
+    /// returned without the deleted sources' evidence, and contradiction links to memories that
+    /// were themselves derived only from deleted sources are dropped.
     pub async fn get_candidate(&self, id: CandidateId) -> Result<InboxEntry> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
         let row = sqlx::query(
@@ -390,28 +437,43 @@ impl PgMemory {
         .ok_or_else(|| not_found("candidate", id))?;
 
         let evidence = sqlx::query(
-            "SELECT e.source_id, e.span, s.kind, s.external_id, s.trust FROM memory_candidate_evidence e \
+            "SELECT e.source_id, e.span, e.span_verified, s.kind, s.external_id, s.trust, s.deletion_state FROM memory_candidate_evidence e \
              JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
         )
         .bind(id.0)
         .fetch_all(&mut *conn)
         .await
-        .map_err(db_err)?
-        .iter()
-        .map(|r| {
-            Ok(InboxEvidence {
-                source: SourceId(r.try_get("source_id").map_err(db_err)?),
-                source_kind: r.try_get("kind").map_err(db_err)?,
-                external_id: r.try_get("external_id").map_err(db_err)?,
-                trust: parse_trust(&r.try_get::<String, _>("trust").map_err(db_err)?)?,
-                span: r.try_get("span").map_err(db_err)?,
+        .map_err(db_err)?;
+        let total_evidence = evidence.len();
+        let evidence = evidence
+            .iter()
+            .filter(|r| {
+                r.try_get::<String, _>("deletion_state")
+                    .is_ok_and(|d| d == "active")
             })
-        })
-        .collect::<Result<Vec<_>>>()?;
+            .map(|r| {
+                Ok(InboxEvidence {
+                    source: SourceId(r.try_get("source_id").map_err(db_err)?),
+                    source_kind: r.try_get("kind").map_err(db_err)?,
+                    external_id: r.try_get("external_id").map_err(db_err)?,
+                    trust: parse_trust(&r.try_get::<String, _>("trust").map_err(db_err)?)?,
+                    span: r.try_get("span").map_err(db_err)?,
+                    span_verified: r.try_get("span_verified").map_err(db_err)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if total_evidence > 0 && evidence.is_empty() {
+            return Err(PairError::new(
+                ErrorCode::SourceDeleted,
+                format!("candidate {id} was derived only from deleted sources"),
+            ));
+        }
 
         let affected_ids: Vec<Uuid> = row.try_get("contradicts_memories").map_err(db_err)?;
         let affected = sqlx::query(
-            "SELECT id, kind, content, status FROM memories WHERE id = ANY($1) ORDER BY id",
+            "SELECT m.id, m.kind, m.content, m.status FROM memories m WHERE m.id = ANY($1) \
+             AND EXISTS (SELECT 1 FROM memory_evidence e JOIN sources s ON s.id = e.source_id \
+                         WHERE e.memory_id = m.id AND s.deletion_state = 'active') ORDER BY m.id",
         )
         .bind(&affected_ids)
         .fetch_all(&mut *conn)

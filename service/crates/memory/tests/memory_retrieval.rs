@@ -6,7 +6,7 @@ use common::{candidate, days_ago, source, TestDb};
 use pair_core::{
     ids::MemoryId,
     traits::Memory,
-    types::{EvidenceRef, RetrievalQuery, TrustClass},
+    types::{EvidenceRef, EvidenceStatus, RetrievalQuery, TrustClass},
 };
 use pair_memory::{store::AcceptMode, CandidateDraft, PgMemory, Visibility};
 
@@ -221,7 +221,7 @@ async fn conflicting_decisions_flagged() {
     );
     assert_eq!(hits[1].item.memory, old);
     assert!(!hits[1].current);
-    assert_eq!(hits[1].superseded_by, Some(new));
+    assert_eq!(hits[1].item.superseded_by, Some(new));
     assert!(hits.iter().all(|h| !h.item.evidence.is_empty()));
 
     // Querying only with words of the old decision still surfaces the replacement first.
@@ -281,18 +281,8 @@ async fn conflicting_decisions_flagged() {
         .unwrap();
     assert_eq!(auth.len(), 2);
     let flagged = auth.iter().find(|h| h.item.memory == jwt).unwrap();
-    assert_eq!(flagged.conflicts_with, vec![sess]);
+    assert_eq!(flagged.item.conflicts_with, vec![sess]);
     assert!(auth.iter().all(|h| h.current));
-
-    // The plain trait output carries the markers for consumers that only see EvidenceItem.
-    let items = mem
-        .retrieve(query(
-            "which queue technology did we decide on",
-            Some("pair"),
-        ))
-        .await
-        .unwrap();
-    assert!(items[1].content.starts_with("[superseded"));
 }
 
 async fn old_valid_from(mem: &PgMemory, id: MemoryId) -> chrono::DateTime<Utc> {
@@ -459,7 +449,147 @@ async fn inferred_label_survives_retrieval() {
         .retrieve_detailed(query("conference talk", None))
         .await
         .unwrap();
-    assert!(hits[0].inferred);
-    let items = mem.retrieve(query("conference talk", None)).await.unwrap();
-    assert!(items[0].content.starts_with("[inferred]"));
+    assert!(hits[0].item.inferred);
+}
+
+#[tokio::test]
+async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let (old, _) = accept_fact(
+        &mem,
+        "decision",
+        "Queue technology: Redis streams",
+        Some("pair"),
+        "q1",
+        "use Redis streams",
+    )
+    .await;
+    let s2 = source(&mem, "q2", TrustClass::Owner).await;
+    let c2 = mem
+        .propose(candidate(
+            "decision",
+            "Queue technology: SQS with DLQ",
+            Some("pair"),
+            s2.id,
+            "use SQS",
+        ))
+        .await
+        .unwrap();
+    let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
+
+    let items = mem
+        .retrieve(query(
+            "which queue technology did we decide on",
+            Some("pair"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].memory, new);
+    assert_eq!(items[0].status, EvidenceStatus::Current);
+    assert_eq!(items[0].superseded_by, None);
+    assert_eq!(items[1].memory, old);
+    assert_eq!(items[1].status, EvidenceStatus::Superseded);
+    assert_eq!(items[1].superseded_by, Some(new));
+    assert_eq!(items[1].content, "Queue technology: Redis streams");
+    assert_eq!(items[0].content, "Queue technology: SQS with DLQ");
+
+    let (jwt, _) = accept_fact(
+        &mem,
+        "decision",
+        "Auth mode: JWT bearer tokens",
+        Some("pair"),
+        "a1",
+        "jwt",
+    )
+    .await;
+    let s4 = source(&mem, "a2", TrustClass::Owner).await;
+    let sc = mem
+        .propose(candidate(
+            "decision",
+            "Auth mode: server sessions",
+            Some("pair"),
+            s4.id,
+            "sessions",
+        ))
+        .await
+        .unwrap();
+    let sess = mem
+        .accept_with(
+            sc,
+            "owner",
+            AcceptMode {
+                keep_both: true,
+                ..AcceptMode::default()
+            },
+        )
+        .await
+        .unwrap();
+    let auth = mem
+        .retrieve(query("auth mode", Some("pair")))
+        .await
+        .unwrap();
+    assert_eq!(auth.len(), 2);
+    let jwt_item = auth.iter().find(|i| i.memory == jwt).unwrap();
+    assert_eq!(jwt_item.status, EvidenceStatus::Conflicting);
+    assert_eq!(jwt_item.conflicts_with, vec![sess]);
+    assert_eq!(jwt_item.content, "Auth mode: JWT bearer tokens");
+
+    let src = source(&mem, "inf", TrustClass::Owner).await;
+    let mut c = candidate(
+        "fact",
+        "The user is likely preparing for a conference talk",
+        None,
+        src.id,
+        "slides draft",
+    );
+    c.inferred = true;
+    mem.accept(mem.propose(c).await.unwrap(), "owner")
+        .await
+        .unwrap();
+    let inferred = mem.retrieve(query("conference talk", None)).await.unwrap();
+    assert!(inferred[0].inferred);
+    assert_eq!(inferred[0].status, EvidenceStatus::Current);
+    assert_eq!(
+        inferred[0].content,
+        "The user is likely preparing for a conference talk"
+    );
+    assert!(items
+        .iter()
+        .chain(&auth)
+        .all(|i| !i.content.starts_with('[') && !i.inferred));
+}
+
+#[tokio::test]
+async fn coverage_counts_across_chunks() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    // Two query terms live in the memory text, two others only in the evidence span.
+    let (id, _) = accept_fact(
+        &mem,
+        "fact",
+        "Kubernetes deployment",
+        None,
+        "k8s",
+        "frankfurt region",
+    )
+    .await;
+    // Five terms need three matches; no single chunk has more than two.
+    let hits = mem
+        .retrieve_detailed(query(
+            "kubernetes deployment frankfurt region unrelated",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].item.memory, id);
+
+    // Terms matched in no chunk still do not count: 2 of 5 stays below the gate.
+    let weak = mem
+        .retrieve_detailed(query("kubernetes frankfurt alpha beta gamma", None))
+        .await
+        .unwrap();
+    assert!(weak.is_empty());
 }

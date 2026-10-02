@@ -6,6 +6,7 @@ use pair_core::{
     types::{DataClass, MemoryCandidate, TrustClass},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Memory types from spec section 7.
 pub const MEMORY_KINDS: [&str; 10] = [
@@ -174,6 +175,9 @@ pub struct EvidenceRecord {
     pub extraction_version: String,
     pub source_deleted: bool,
     pub source_hidden: bool,
+    /// The span was found in source text supplied when the candidate was proposed. False means
+    /// it was never checked (no text supplied), not that it is wrong.
+    pub span_verified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,7 +197,12 @@ pub struct MemoryRecord {
     pub invalidated_reason: Option<String>,
     pub accepted_by: String,
     pub evidence: Vec<EvidenceRecord>,
+    /// True when every evidence source was deleted: `content` is replaced by a tombstone marker.
+    pub redacted: bool,
 }
+
+/// (source, span) pairs whose span was verified against supplied source text.
+pub type VerifiedSpans = HashSet<(SourceId, Option<String>)>;
 
 pub const DEFAULT_EXTRACTION_VERSION: &str = "v1";
 
@@ -207,6 +216,12 @@ pub struct CandidateDraft {
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_to: Option<DateTime<Utc>>,
     pub extraction_version: String,
+    /// Text of the evidence sources, when the proposer has it. A span that is not in the supplied
+    /// text of its source makes `propose` fail with `InvalidInput`; sources without text are
+    /// accepted as before but their evidence is recorded with `span_verified = false`.
+    pub source_texts: HashMap<SourceId, String>,
+    /// (source, span) pairs already verified on the candidate or memory this draft derives from.
+    pub(crate) carried_verified: VerifiedSpans,
 }
 
 impl CandidateDraft {
@@ -219,6 +234,14 @@ impl CandidateDraft {
             valid_from: None,
             valid_to: None,
             extraction_version: DEFAULT_EXTRACTION_VERSION.to_string(),
+            source_texts: HashMap::new(),
+            carried_verified: HashSet::new(),
         }
+    }
+
+    /// Supply the text of an evidence source so its spans can be verified at propose time.
+    pub fn with_source_text(mut self, source: SourceId, text: impl Into<String>) -> Self {
+        self.source_texts.insert(source, text.into());
+        self
     }
 }

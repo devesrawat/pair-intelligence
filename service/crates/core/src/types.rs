@@ -220,12 +220,36 @@ pub struct RetrievalQuery {
     pub as_of: DateTime<Utc>,
     pub limit: usize,
 }
+/// Lifecycle standing of a retrieved memory at the query time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceStatus {
+    /// Valid and uncontested.
+    #[default]
+    Current,
+    /// Replaced by a later memory (`superseded_by`); returned as decision history.
+    Superseded,
+    /// Valid, but deliberately kept beside competing memories (`conflicts_with`).
+    Conflicting,
+}
+
+/// A retrieved memory. `content` is the stored memory text only: lifecycle context lives in
+/// `status`, `superseded_by`, `conflicts_with` and `inferred`, never as text prefixes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceItem {
     pub memory: MemoryId,
     pub content: String,
     pub evidence: Vec<EvidenceRef>,
     pub score: f64,
+    #[serde(default)]
+    pub status: EvidenceStatus,
+    #[serde(default)]
+    pub superseded_by: Option<MemoryId>,
+    #[serde(default)]
+    pub conflicts_with: Vec<MemoryId>,
+    /// True when the extractor concluded this rather than the source stating it.
+    #[serde(default)]
+    pub inferred: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelLimits {

@@ -8,7 +8,7 @@ use pair_core::{
     error::Result,
     ids::{MemoryId, SourceId},
     traits::Memory,
-    types::{EvidenceItem, EvidenceRef, MemoryCandidate, RetrievalQuery},
+    types::{EvidenceItem, EvidenceRef, EvidenceStatus, MemoryCandidate, RetrievalQuery},
 };
 use serde::Serialize;
 use sqlx::{PgConnection, Row};
@@ -19,8 +19,9 @@ pub const DEFAULT_LIMIT: usize = 8;
 pub const MAX_LIMIT: usize = 32;
 /// Reciprocal rank fusion constant.
 const RRF_K: f64 = 60.0;
-/// Fraction of (non-stop-word) query terms a memory must match to be returned. Keeps
-/// single-word overlaps from producing unsupported answers.
+/// Fraction of (non-stop-word) query terms a memory must match to be returned, counted over the
+/// union of all its chunks (memory text and evidence spans). Keeps single-word overlaps from
+/// producing unsupported answers.
 const MIN_TERM_COVERAGE: f64 = 0.5;
 const MAX_QUERY_TERMS: usize = 24;
 const MAX_CANDIDATES: i64 = 200;
@@ -28,20 +29,17 @@ const MAX_CHAIN_DEPTH: usize = 16;
 /// Superseded-decision history is shown below its replacement at reduced weight.
 const HISTORY_SCORE_FACTOR: f64 = 0.5;
 
-/// One retrieved memory with lifecycle context. `item` is the contract type.
+/// One retrieved memory with lifecycle context. `item` is the contract type and carries status,
+/// supersession, conflict and inferred flags.
 #[derive(Debug, Clone, Serialize)]
 pub struct RetrievedMemory {
     pub item: EvidenceItem,
     pub kind: String,
     /// Valid as of the query time. False means this is superseded history.
     pub current: bool,
-    pub inferred: bool,
     pub valid_from: DateTime<Utc>,
     pub valid_to: Option<DateTime<Utc>>,
     pub supersedes: Option<MemoryId>,
-    pub superseded_by: Option<MemoryId>,
-    /// Currently valid memories deliberately kept beside this one after a contradiction.
-    pub conflicts_with: Vec<MemoryId>,
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +175,9 @@ async fn fulltext_hits(
         .max(1.0) as i64;
     let sql = format!(
         "SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
-                max((SELECT count(*) FROM unnest($1::text[]) t WHERE c.search_vector @@ plainto_tsquery('english', t))) AS matched \
+                (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
+                    SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
+                      AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
          FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
          WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
          GROUP BY m.id ORDER BY rank DESC, m.id LIMIT {MAX_CANDIDATES}",
@@ -420,46 +420,38 @@ async fn decorate(
                 .map(|p| MemoryId(*p))
                 .collect();
             partners.sort_by_key(|p| p.0);
+            let conflicts_with = if e.current { partners } else { Vec::new() };
+            let superseded_by = successors
+                .get(&id)
+                .copied()
+                .map(MemoryId)
+                .filter(|_| !e.current);
+            let status = if !e.current {
+                EvidenceStatus::Superseded
+            } else if conflicts_with.is_empty() {
+                EvidenceStatus::Current
+            } else {
+                EvidenceStatus::Conflicting
+            };
             RetrievedMemory {
                 item: EvidenceItem {
                     memory: MemoryId(id),
                     content: e.row.content.clone(),
                     evidence: evidence.remove(&id).unwrap_or_default(),
                     score: e.score,
+                    status,
+                    superseded_by,
+                    conflicts_with,
+                    inferred: e.row.inferred,
                 },
                 kind: e.row.kind.clone(),
                 current: e.current,
-                inferred: e.row.inferred,
                 valid_from: e.row.valid_from,
                 valid_to: e.row.valid_to,
                 supersedes: e.row.supersedes.map(MemoryId),
-                superseded_by: successors.get(&id).copied().map(MemoryId),
-                conflicts_with: if e.current { partners } else { Vec::new() },
             }
         })
         .collect())
-}
-
-impl RetrievedMemory {
-    /// Content with lifecycle markers, for consumers that only see `EvidenceItem`.
-    pub fn labeled_content(&self) -> String {
-        let mut prefix = String::new();
-        if let Some(by) = self.superseded_by.filter(|_| !self.current) {
-            prefix.push_str(&format!("[superseded by {by}] "));
-        }
-        if !self.conflicts_with.is_empty() {
-            let ids: Vec<String> = self
-                .conflicts_with
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            prefix.push_str(&format!("[conflicts with {}] ", ids.join(", ")));
-        }
-        if self.inferred {
-            prefix.push_str("[inferred] ");
-        }
-        format!("{prefix}{}", self.item.content)
-    }
 }
 
 #[async_trait]
@@ -481,10 +473,7 @@ impl Memory for PgMemory {
             .retrieve_detailed(q)
             .await?
             .into_iter()
-            .map(|r| EvidenceItem {
-                content: r.labeled_content(),
-                ..r.item
-            })
+            .map(|r| r.item)
             .collect())
     }
 }

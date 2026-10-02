@@ -77,13 +77,23 @@ impl PgMemory {
         Ok(memory)
     }
 
+    /// Read one memory. A memory derived solely from deleted sources is refused with
+    /// `SourceDeleted` and no content (its tombstone remains visible via `memory_chain` and
+    /// `export`). A memory with a live source is returned minus the deleted sources' spans.
     pub async fn get_memory(&self, id: MemoryId) -> Result<MemoryRecord> {
         let mut conn = self.pool.acquire().await.map_err(db_err)?;
-        load_memories(&mut conn, &[id.0])
+        let record = load_memories(&mut conn, &[id.0])
             .await?
             .into_iter()
             .next()
-            .ok_or_else(|| not_found("memory", id))
+            .ok_or_else(|| not_found("memory", id))?;
+        if record.redacted {
+            return Err(PairError::new(
+                ErrorCode::SourceDeleted,
+                format!("memory {id} was derived only from deleted sources"),
+            ));
+        }
+        Ok(record)
     }
 
     /// Full supersession chain containing `id`, oldest first.
@@ -153,23 +163,25 @@ impl PgMemory {
 }
 
 /// Persist evidence rows and search chunks (memory text plus each distinct evidence span).
+/// Each evidence reference carries whether its span was verified at propose time.
 pub(crate) async fn insert_evidence_and_chunks(
     conn: &mut PgConnection,
     memory: MemoryId,
     content: &str,
-    evidence: &[EvidenceRef],
+    evidence: &[(EvidenceRef, bool)],
     extraction_version: &str,
 ) -> Result<()> {
     insert_chunk(conn, memory, None, content).await?;
-    for ev in evidence {
+    for (ev, verified) in evidence {
         sqlx::query(
-            "INSERT INTO memory_evidence (memory_id, source_id, span, extraction_version) VALUES ($1, $2, $3, $4) \
-             ON CONFLICT DO NOTHING",
+            "INSERT INTO memory_evidence (memory_id, source_id, span, extraction_version, span_verified) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
         )
         .bind(memory.0)
         .bind(ev.source.0)
         .bind(&ev.span)
         .bind(extraction_version)
+        .bind(verified)
         .execute(&mut *conn)
         .await
         .map_err(db_err)?;

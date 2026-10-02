@@ -60,8 +60,8 @@ Status: verified = read in source at the pinned SHA. All hook APIs are labelled 
 | Step | Result |
 |---|---|
 | `pnpm install --frozen-lockfile` | pass, 2m34s (Node 24.21.0) |
-| `pnpm build` | BUILD_RESULT_PLACEHOLDER |
-| `pnpm test` / `pnpm test:contracts` baseline | not yet run |
+| `pnpm build` | pass, 14m55s on Apple Silicon (slowest: d.ts generation 8m45s). `node openclaw.mjs --version` → `OpenClaw 2026.9.7 (c074824)` |
+| `pnpm test` baseline | not yet run (deferred; full suite is large, run `pnpm test:contracts` for the plugin spike) |
 
 ## Not yet demonstrated (Task 1 exit criteria still open)
 

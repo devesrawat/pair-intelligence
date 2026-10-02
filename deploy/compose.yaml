@@ -12,5 +12,33 @@ services:
       interval: 3s
       retries: 20
     volumes: ["pgdata:/var/lib/postgresql/data"]
+  # PAIR API service. Opt-in: `docker compose --profile app up -d --wait`.
+  # Build is not exercised by CI yet; image tags must be immutable in staging/prod.
+  pair-api:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: deploy/api/Dockerfile
+    image: pair-api:${PAIR_IMAGE_TAG:-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-pair}:${POSTGRES_PASSWORD:-pair}@postgres:5432/${POSTGRES_DB:-pair}
+      PAIR_SERVICE_TOKEN: ${PAIR_SERVICE_TOKEN:-}  # required (>=16 chars); the service refuses to start without it
+      PAIR_BIND: 0.0.0.0:8080
+      PAIR_MIGRATIONS_DIR: /app/migrations
+      PAIR_DATA_DIR: /var/lib/pair
+      RUST_LOG: info
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ../migrations:/app/migrations:ro
+      - pairdata:/var/lib/pair
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pair-api", "--healthcheck"]
+      interval: 5s
+      retries: 12
+    restart: unless-stopped
 volumes:
   pgdata:
+  pairdata:

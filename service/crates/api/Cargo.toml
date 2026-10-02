@@ -4,8 +4,16 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "pair-api"
+path = "src/main.rs"
+
 [dependencies]
 pair-core = { path = "../core" }
+pair-telemetry = { path = "../telemetry" }
+axum = "0.8"
+subtle = "2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -15,6 +23,10 @@ uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [lints]
 workspace = true

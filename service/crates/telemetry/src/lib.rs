@@ -1,4 +1,5 @@
-//! pair-telemetry: trace-id propagation, structured tracing setup, secret redaction.
+//! pair-telemetry: trace-id propagation, structured tracing setup, secret redaction, health checks.
+pub mod health;
 pub mod redact;
 pub mod setup;
 pub mod trace;

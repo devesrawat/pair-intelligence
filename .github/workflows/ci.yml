@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Postgres service container below; tests create per-test databases (pair_t_*_<uuid>).
+  DATABASE_URL: postgres://pair:pair@127.0.0.1:5432/pair
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pair
+          POSTGRES_PASSWORD: pair
+          POSTGRES_DB: pair
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pair"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: service
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: smoke (boot the service, check auth contract)
+        working-directory: .
+        env:
+          PAIR_SMOKE_PORT: "18080"
+        run: scripts/check smoke
+      - name: ops script tests
+        working-directory: .
+        run: bash scripts/tests/test_retention.sh
+
+  supply-chain:
+    # Non-blocking: advisories should be visible but must not gate merges.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file service/Cargo.lock
+      - name: cargo deny
+        # Skipped (not failed) when the repo has no deny.toml yet.
+        run: |
+          if [ -f deny.toml ] || [ -f service/deny.toml ]; then
+            cargo install cargo-deny --locked
+            cd service && cargo deny check
+          else
+            echo "no deny.toml; skipping cargo deny"
+          fi

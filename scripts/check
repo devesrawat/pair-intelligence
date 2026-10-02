@@ -1,9 +1,68 @@
 #!/usr/bin/env bash
 # Stable PAIR check entry point: scripts/check <suite>
 set -euo pipefail
-cd "$(dirname "$0")/.."
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT/service"
 export DATABASE_URL="${DATABASE_URL:-postgres://pair:pair@127.0.0.1:55432/pair}"
 suite="${1:-all}"
+
+# Boot the real pair-api binary and assert the authenticated-service contract.
+smoke() {
+  local port="${PAIR_SMOKE_PORT:-18080}" base token
+  base="http://127.0.0.1:${port}"
+  token="smoke-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  log="$(mktemp)"; pid=""
+  cargo clippy -p pair-api --all-targets -- -D warnings
+  cargo test -p pair-api -- --test-threads=4
+  cargo build -p pair-api --bin pair-api
+  if curl -fs "$base/healthz" >/dev/null 2>&1; then
+    echo "smoke: something already listens on $base; set PAIR_SMOKE_PORT" >&2; return 1
+  fi
+  PAIR_SERVICE_TOKEN="$token" PAIR_BIND="127.0.0.1:${port}" \
+    PAIR_MIGRATIONS_DIR="$ROOT/migrations" PAIR_DATA_DIR="$ROOT" \
+    ./target/debug/pair-api >"$log" 2>&1 &
+  pid=$!
+  trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$log"' EXIT
+  local i
+  for i in $(seq 1 60); do
+    curl -fs "$base/healthz" >/dev/null 2>&1 && break
+    kill -0 "$pid" 2>/dev/null || { echo "smoke: pair-api exited early" >&2; cat "$log" >&2; return 1; }
+    sleep 0.5
+  done
+  expect_code() { # expected, description, curl args...
+    local want="$1" what="$2" got; shift 2
+    got="$(curl -s -o /dev/null -w '%{http_code}' "$@")"
+    [ "$got" = "$want" ] || { echo "smoke FAIL: $what: want $want got $got" >&2; cat "$log" >&2; return 1; }
+    echo "smoke ok: $what ($got)"
+  }
+  # 200 required, except a host whose disk is genuinely critical (readyz is correct to
+  # say not-ready there): every non-disk check must still be non-critical.
+  readyz_authenticated() {
+    local out code body
+    out="$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" -H "X-Actor: smoke" "$base/readyz")"
+    code="${out##*$'\n'}"; body="${out%$'\n'*}"
+    if [ "$code" = "200" ]; then echo "smoke ok: readyz authenticated (200)"; return 0; fi
+    if [ "$code" = "503" ] && printf '%s' "$body" | python3 -c '
+import json,sys
+b=json.load(sys.stdin)
+bad=[c["name"] for c in b["checks"] if c["level"]=="critical"]
+sys.exit(0 if bad==["disk"] else 1)'; then
+      echo "smoke ok: readyz authenticated (503: only disk critical on this host: $body)"; return 0
+    fi
+    echo "smoke FAIL: readyz authenticated: $code $body" >&2; cat "$log" >&2; return 1
+  }
+  expect_code 200 "healthz open" "$base/healthz"
+  expect_code 401 "readyz without auth rejected" "$base/readyz"
+  expect_code 401 "readyz with wrong token rejected" -H "Authorization: Bearer wrong-wrong-wrong-wrong" -H "X-Actor: smoke" "$base/readyz"
+  expect_code 401 "readyz without X-Actor rejected" -H "Authorization: Bearer $token" "$base/readyz"
+  readyz_authenticated
+  local echoed
+  echoed="$(curl -s -D - -o /dev/null -H "X-Trace-Id: smoke-trace-1" "$base/healthz" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-trace-id"{print $2}')"
+  [ "$echoed" = "smoke-trace-1" ] || { echo "smoke FAIL: trace id not echoed ($echoed)" >&2; return 1; }
+  echo "smoke ok: trace id propagated"
+  echo "smoke: PASS"
+}
+
 case "$suite" in
   policy) crate=policy ;;
   budget) crate=budget ;;
@@ -13,8 +72,16 @@ case "$suite" in
   context) crate=context ;;
   recovery) crate=jobs ;;
   daily|research|coding|personal-integrations) crate=workflows ;;
-  smoke) crate=api ;;
-  all|release) cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace; exit ;;
+  smoke) smoke; exit ;;
+  release)
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    for s in "$ROOT"/scripts/backup "$ROOT"/scripts/restore "$ROOT"/scripts/restore-drill "$ROOT"/scripts/lib/pgtools.sh "$ROOT"/scripts/lib/retention.sh; do bash -n "$s"; done
+    bash "$ROOT/scripts/tests/test_retention.sh"
+    echo "release: automated checks passed. Gates in docs/release-checklist.md remain UNMEASURED until evaluated."
+    exit ;;
+  all) cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace; exit ;;
   *) echo "unknown suite: $suite" >&2; exit 2 ;;
 esac
 cargo clippy -p "pair-$crate" --all-targets -- -D warnings

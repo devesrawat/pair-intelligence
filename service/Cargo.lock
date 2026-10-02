@@ -1056,14 +1056,20 @@ name = "pair-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "chrono",
+ "http-body-util",
  "pair-core",
+ "pair-telemetry",
  "serde",
  "serde_json",
  "sqlx",
+ "subtle",
  "thiserror",
  "tokio",
+ "tower",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

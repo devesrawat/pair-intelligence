@@ -1,10 +1,11 @@
-//! Section budgets loaded from `config/context.yaml`. The file uses a tiny YAML subset
-//! (two-level maps of integers), parsed here to avoid a YAML dependency.
+//! Section budgets loaded from `config/context.yaml`.
 use pair_core::error::{ErrorCode, PairError, Result};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 /// Per-section token ceilings plus the total input target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContextBudgets {
     pub system_policy: u64,
     pub task_contract: u64,
@@ -16,14 +17,12 @@ pub struct ContextBudgets {
     pub total: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContextConfig {
     pub default_profile: String,
     pub profiles: BTreeMap<String, ContextBudgets>,
 }
-
-const PROFILE_INDENT: usize = 2;
-const FIELD_INDENT: usize = 4;
 
 fn bad(msg: impl Into<String>) -> PairError {
     PairError::new(
@@ -34,55 +33,14 @@ fn bad(msg: impl Into<String>) -> PairError {
 
 impl ContextConfig {
     pub fn parse(text: &str) -> Result<Self> {
-        let mut default_profile: Option<String> = None;
-        let mut raw: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
-        let mut current: Option<String> = None;
-        for (n, line) in text.lines().enumerate() {
-            let body = line.split('#').next().unwrap_or("").trim_end();
-            if body.trim().is_empty() {
-                continue;
-            }
-            let indent = body.len() - body.trim_start().len();
-            let (key, val) = body
-                .trim()
-                .split_once(':')
-                .ok_or_else(|| bad(format!("line {}: expected key: value", n + 1)))?;
-            let (key, val) = (key.trim(), val.trim());
-            match indent {
-                0 if key == "default_profile" => default_profile = Some(val.to_string()),
-                0 if key == "profiles" && val.is_empty() => {}
-                PROFILE_INDENT if val.is_empty() => {
-                    raw.entry(key.to_string()).or_default();
-                    current = Some(key.to_string());
-                }
-                FIELD_INDENT => {
-                    let profile = current
-                        .as_ref()
-                        .ok_or_else(|| bad(format!("line {}: field outside profile", n + 1)))?;
-                    let v: u64 = val
-                        .parse()
-                        .map_err(|_| bad(format!("line {}: '{val}' is not an integer", n + 1)))?;
-                    raw.entry(profile.clone())
-                        .or_default()
-                        .insert(key.to_string(), v);
-                }
-                _ => return Err(bad(format!("line {}: unexpected structure", n + 1))),
-            }
-        }
-        let default_profile = default_profile.ok_or_else(|| bad("missing default_profile"))?;
-        let profiles = raw
-            .into_iter()
-            .map(|(name, fields)| Ok((name.clone(), budgets_from(&name, &fields)?)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        if !profiles.contains_key(&default_profile) {
+        let config: Self = serde_yaml_ng::from_str(text).map_err(|e| bad(e.to_string()))?;
+        if !config.profiles.contains_key(&config.default_profile) {
             return Err(bad(format!(
-                "default_profile '{default_profile}' not defined"
+                "default_profile '{}' not defined",
+                config.default_profile
             )));
         }
-        Ok(Self {
-            default_profile,
-            profiles,
-        })
+        Ok(config)
     }
 
     pub fn profile(&self, name: &str) -> Result<ContextBudgets> {
@@ -95,24 +53,6 @@ impl ContextConfig {
     pub fn default_budgets(&self) -> Result<ContextBudgets> {
         self.profile(&self.default_profile)
     }
-}
-
-fn budgets_from(name: &str, f: &BTreeMap<String, u64>) -> Result<ContextBudgets> {
-    let get = |k: &str| {
-        f.get(k)
-            .copied()
-            .ok_or_else(|| bad(format!("profile '{name}' missing '{k}'")))
-    };
-    Ok(ContextBudgets {
-        system_policy: get("system_policy")?,
-        task_contract: get("task_contract")?,
-        project: get("project")?,
-        memories: get("memories")?,
-        tool_results: get("tool_results")?,
-        conversation: get("conversation")?,
-        tool_schemas: get("tool_schemas")?,
-        total: get("total")?,
-    })
 }
 
 #[cfg(test)]
@@ -138,6 +78,24 @@ mod tests {
             .ok(),
             Some((800, 700, 1200, 1200, 5000, 1500, 800, 11200))
         );
+    }
+
+    #[test]
+    fn test_parse_yaml_comments_are_accepted() {
+        let text = "# top\ndefault_profile: a # inline\nprofiles:\n  # profile a\n  a:\n    system_policy: 1\n    task_contract: 1\n    project: 1\n    memories: 1\n    tool_results: 1\n    conversation: 1\n    tool_schemas: 1\n    total: 7 # sum\n";
+        assert!(ContextConfig::parse(text).is_ok());
+    }
+
+    #[test]
+    fn test_parse_malformed_yaml_fails_closed() {
+        for bad in [
+            "default_profile: [a\nprofiles: {",
+            "default_profile: a\nprofiles:\n  a:\n    total: seven\n",
+            "default_profile: b\nprofiles: {}\n",
+            "",
+        ] {
+            assert!(ContextConfig::parse(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

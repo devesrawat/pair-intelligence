@@ -6,9 +6,11 @@ use super::store::db_err;
 use chrono::{DateTime, Duration, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use pair_core::error::{ErrorCode, PairError, Result};
+use serde::Deserialize;
 use sqlx::{PgPool, Row};
 use std::time::Duration as StdDuration;
 
+const LOCAL_TIME_FORMAT: &str = "%H:%M";
 /// Days scanned forward when computing the next run (covers any DST gap/overlap).
 const NEXT_RUN_SEARCH_DAYS: i64 = 3;
 /// Step used to move past a nonexistent local time (spring-forward gap).
@@ -16,7 +18,8 @@ const GAP_STEP_MINUTES: i64 = 30;
 /// Maximum total shift past a nonexistent local time.
 const GAP_MAX_SHIFT_MINUTES: i64 = 180;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RoutineKind {
     Briefing,
     Review,
@@ -41,101 +44,49 @@ fn invalid(msg: impl Into<String>) -> PairError {
     PairError::new(ErrorCode::InvalidInput, msg)
 }
 
-#[derive(Default)]
-struct Draft {
-    name: Option<String>,
-    kind: Option<RoutineKind>,
-    local_time: Option<NaiveTime>,
-    timezone: Option<Tz>,
-    max_secs: Option<u64>,
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScheduleFile {
+    routines: Vec<RawRoutine>,
 }
 
-impl Draft {
-    fn finish(self) -> Result<Routine> {
-        let name = self.name.ok_or_else(|| invalid("routine missing name"))?;
-        let missing = |f: &str| invalid(format!("routine {name} missing {f}"));
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoutine {
+    name: String,
+    kind: RoutineKind,
+    local_time: String,
+    timezone: String,
+    max_runtime_secs: u64,
+}
+
+impl RawRoutine {
+    fn into_routine(self) -> Result<Routine> {
         Ok(Routine {
-            kind: self.kind.ok_or_else(|| missing("kind"))?,
-            local_time: self.local_time.ok_or_else(|| missing("local_time"))?,
-            timezone: self.timezone.ok_or_else(|| missing("timezone"))?,
-            max_runtime: StdDuration::from_secs(
-                self.max_secs.ok_or_else(|| missing("max_runtime_secs"))?,
-            ),
-            name,
+            local_time: NaiveTime::parse_from_str(&self.local_time, LOCAL_TIME_FORMAT)
+                .map_err(|e| invalid(format!("bad local_time {}: {e}", self.local_time)))?,
+            timezone: self
+                .timezone
+                .parse::<Tz>()
+                .map_err(|e| invalid(format!("bad timezone {}: {e}", self.timezone)))?,
+            max_runtime: StdDuration::from_secs(self.max_runtime_secs),
+            kind: self.kind,
+            name: self.name,
         })
     }
-
-    fn set(&mut self, key: &str, value: &str) -> Result<()> {
-        match key {
-            "name" => self.name = Some(value.to_string()),
-            "kind" => {
-                self.kind = Some(match value {
-                    "briefing" => RoutineKind::Briefing,
-                    "review" => RoutineKind::Review,
-                    other => return Err(invalid(format!("unknown routine kind {other}"))),
-                })
-            }
-            "local_time" => {
-                self.local_time = Some(
-                    NaiveTime::parse_from_str(value, "%H:%M")
-                        .map_err(|e| invalid(format!("bad local_time {value}: {e}")))?,
-                )
-            }
-            "timezone" => {
-                self.timezone = Some(
-                    value
-                        .parse::<Tz>()
-                        .map_err(|e| invalid(format!("bad timezone {value}: {e}")))?,
-                )
-            }
-            "max_runtime_secs" => {
-                self.max_secs = Some(
-                    value
-                        .parse()
-                        .map_err(|e| invalid(format!("bad max_runtime_secs {value}: {e}")))?,
-                )
-            }
-            other => return Err(invalid(format!("unknown schedule key {other}"))),
-        }
-        Ok(())
-    }
 }
 
-/// Parse the restricted `routines:` list format used by `config/schedule.yaml`.
+/// Parse `config/schedule.yaml`. Any structural or value error rejects the whole file.
 pub fn parse_schedule(text: &str) -> Result<Vec<Routine>> {
-    let mut routines = Vec::new();
-    let mut current: Option<Draft> = None;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') || line == "routines:" {
-            continue;
-        }
-        let (item_start, body) = match line.strip_prefix("- ") {
-            Some(rest) => (true, rest),
-            None => (false, line),
-        };
-        if item_start {
-            if let Some(done) = current.take() {
-                routines.push(done.finish()?);
-            }
-            current = Some(Draft::default());
-        }
-        let (key, value) = body
-            .split_once(':')
-            .ok_or_else(|| invalid(format!("bad schedule line: {line}")))?;
-        let value = value.trim().trim_matches('"');
-        current
-            .as_mut()
-            .ok_or_else(|| invalid("schedule key outside a routine"))?
-            .set(key.trim(), value)?;
-    }
-    if let Some(done) = current {
-        routines.push(done.finish()?);
-    }
-    if routines.is_empty() {
+    let file: ScheduleFile =
+        serde_yaml_ng::from_str(text).map_err(|e| invalid(format!("bad schedule: {e}")))?;
+    if file.routines.is_empty() {
         return Err(invalid("schedule defines no routines"));
     }
-    Ok(routines)
+    file.routines
+        .into_iter()
+        .map(RawRoutine::into_routine)
+        .collect()
 }
 
 fn resolve_local(tz: Tz, date: chrono::NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {

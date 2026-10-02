@@ -16,6 +16,7 @@ tracing.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
 sha2 = "0.10"
+serde_yaml_ng = "0.10"
 
 [lints]
 workspace = true

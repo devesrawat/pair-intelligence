@@ -241,6 +241,39 @@ fn malformed_config_fails_closed() {
     .is_err());
 }
 
+const MINIMAL_POLICY: &str = r#"
+# comment at top
+version: "t1"   # trailing comment
+tools:
+  fs.read: read   # read-only
+executables_allow: [git]
+denied_paths: ["~/.ssh"]
+egress: []
+"#;
+
+#[test]
+fn yaml_comment_is_accepted() {
+    let home = std::path::Path::new("/tmp");
+    assert!(pair_policy::PolicyEngine::from_config_str(MINIMAL_POLICY, home).is_ok());
+}
+
+#[test]
+fn malformed_yaml_fails_closed() {
+    let home = std::path::Path::new("/tmp");
+    for bad in [
+        "version: [unclosed",
+        "version: 1\n  tools: bad indent: :",
+        "",
+        "version: t\ntools: {}\nexecutables_allow: []\ndenied_paths: []\negress: []\n",
+        "version: t\nsurprise: 1\n",
+    ] {
+        assert!(
+            pair_policy::PolicyEngine::from_config_str(bad, home).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
 #[test]
 fn model_supplied_safe_label_is_ignored() {
     let f = fixture();

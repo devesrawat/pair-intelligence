@@ -34,10 +34,10 @@ pub struct PolicyConfig {
 }
 
 impl PolicyConfig {
-    /// Parses the policy file. `config/policy.yaml` is written as JSON, which is valid YAML 1.2.
+    /// Parses `config/policy.yaml`. Any parse or validation error means no policy exists.
     pub fn parse(text: &str) -> Result<Self, PolicyError> {
         let cfg: Self =
-            serde_json::from_str(text).map_err(|e| PolicyError::Invalid(e.to_string()))?;
+            serde_yaml_ng::from_str(text).map_err(|e| PolicyError::Invalid(e.to_string()))?;
         cfg.validate()?;
         Ok(cfg)
     }

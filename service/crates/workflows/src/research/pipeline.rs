@@ -1,7 +1,7 @@
 //! scope -> queries -> discovery -> capture -> dedupe -> extract -> compare -> synthesize
 //! -> citation validation -> save report.
 use super::{
-    capture::{capture_sources, Gate},
+    capture::{capture_sources, Network},
     extract::{compare_claims, extract_claims, validate_claims},
     fetch::SourceFetcher,
     model::ResearchLlm,
@@ -16,12 +16,12 @@ use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
     money::Micros,
-    traits::{Budget, Policy, Provider},
+    traits::{Budget, Provider},
 };
 
 pub struct ResearchDeps<'a> {
     pub provider: &'a dyn Provider,
-    pub policy: &'a dyn Policy,
+    pub gate: &'a pair_policy::Gate,
     pub budget: &'a dyn Budget,
     pub fetcher: &'a dyn SourceFetcher,
     pub store: &'a EvidenceStore,
@@ -78,8 +78,9 @@ async fn execute(
     scope: &ResearchScope,
     run_id: uuid::Uuid,
 ) -> Result<ResearchOutput> {
-    let gate = Gate {
-        policy: deps.policy,
+    let net = Network {
+        gate: deps.gate,
+        fetcher: deps.fetcher,
         task: run.task,
         trace: run.trace,
     };
@@ -92,7 +93,7 @@ async fn execute(
         max_cost: run.max_call_cost,
     };
 
-    let sources = capture_sources(&gate, deps.fetcher, scope).await?;
+    let sources = capture_sources(&net, scope).await?;
     for s in sources
         .iter()
         .filter(|s| s.duplicate_of.is_none())

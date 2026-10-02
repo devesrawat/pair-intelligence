@@ -1,16 +1,22 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use super::capture::{capture_sources, Network};
 use super::testdb::TestDb;
 use super::*;
-use crate::coding::testkit::{FakeBudget, FakePolicy, FnProvider};
+use crate::coding::testkit::{FakeBudget, FakePolicy, FixedPolicy, FnProvider};
 use async_trait::async_trait;
+use pair_core::types::Decision;
 use pair_core::{
     error::Result,
     ids::{TaskId, TraceId},
     money::Micros,
     types::TrustClass,
 };
+use pair_policy::Gate;
 use serde::Deserialize;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 const FIXTURE_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -88,7 +94,7 @@ struct Harness {
     out: ResearchOutput,
     provider: FnProvider,
     fetcher: FakeFetcher,
-    policy: FakePolicy,
+    policy: Arc<FakePolicy>,
 }
 
 /// Fake model: call 0 extracts the fixture claims (and obeys page injections like a naive
@@ -116,12 +122,13 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         pages: fx.pages.clone(),
         fetched: Mutex::new(Vec::new()),
     };
-    let policy = FakePolicy::default();
+    let policy = Arc::new(FakePolicy::default());
+    let gate = Gate::new(policy.clone(), None);
     let budget = FakeBudget::default();
     let store = EvidenceStore::new(db.pool.clone());
     let deps = ResearchDeps {
         provider: &provider,
-        policy: &policy,
+        gate: &gate,
         budget: &budget,
         fetcher: &fetcher,
         store: &store,
@@ -146,6 +153,93 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         fetcher,
         policy,
     }
+}
+
+const GATED_URL: &str = "https://example.com/page";
+
+#[derive(Default)]
+struct CountingFetcher {
+    searches: AtomicUsize,
+    fetches: AtomicUsize,
+}
+
+#[async_trait]
+impl SourceFetcher for CountingFetcher {
+    async fn search(&self, _query: &str) -> Result<Vec<Candidate>> {
+        self.searches.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![Candidate {
+            url: GATED_URL.into(),
+            title: "t".into(),
+        }])
+    }
+    async fn fetch(&self, _url: &str) -> Result<FetchOutcome> {
+        self.fetches.fetch_add(1, Ordering::SeqCst);
+        Ok(FetchOutcome::Page {
+            text: "body".into(),
+            revision: None,
+            published_at: None,
+        })
+    }
+}
+
+fn gated_scope() -> ResearchScope {
+    ResearchScope {
+        question: "q".into(),
+        queries: vec![],
+        max_sources: 3,
+    }
+}
+
+#[tokio::test]
+async fn research_network_access_only_happens_after_gate_allow() {
+    let scope = gated_scope();
+    // search denied: error, and the search service is never called
+    let fetcher = CountingFetcher::default();
+    let deny_all = Gate::new(
+        Arc::new(FixedPolicy(Decision::Deny {
+            reason: "no".into(),
+        })),
+        None,
+    );
+    let net = Network {
+        gate: &deny_all,
+        fetcher: &fetcher,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+    };
+    let err = capture_sources(&net, &scope).await.unwrap_err();
+    assert_eq!(err.code, pair_core::error::ErrorCode::PolicyDenied);
+    assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
+
+    // search needs approval (none supplied): same
+    let needs = Gate::new(
+        Arc::new(FixedPolicy(Decision::NeedsApproval {
+            payload_hash: "h".into(),
+        })),
+        None,
+    );
+    let net = Network {
+        gate: &needs,
+        ..net
+    };
+    assert!(capture_sources(&net, &scope).await.is_err());
+    assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
+
+    // search allowed, fetch destination denied: source is marked unavailable, page never fetched
+    let policy = FakePolicy {
+        denied_destinations: vec![GATED_URL.into()],
+        ..FakePolicy::default()
+    };
+    let gate = Gate::new(Arc::new(policy), None);
+    let net = Network { gate: &gate, ..net };
+    let sources = capture_sources(&net, &scope).await.unwrap();
+    assert_eq!(fetcher.searches.load(Ordering::SeqCst), 1);
+    assert_eq!(fetcher.fetches.load(Ordering::SeqCst), 0);
+    assert!(!sources[0].available);
+    assert!(sources[0]
+        .unavailable_reason
+        .as_deref()
+        .is_some_and(|r| r.contains("blocked by policy")));
 }
 
 fn rejected(h: &Harness) -> Vec<&Claim> {

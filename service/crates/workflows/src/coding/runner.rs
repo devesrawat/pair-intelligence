@@ -1,10 +1,11 @@
-//! Policy-gated command execution with a scrubbed environment.
+//! Gate-routed command execution with a scrubbed environment. A process is only spawned
+//! inside the `Gate::execute` closure, i.e. after `Allow` or a consumed matching approval.
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    traits::Policy,
-    types::{ActionRequest, DataClass, Decision, PolicyContext},
+    types::{ActionRequest, DataClass, PolicyContext},
 };
+use pair_policy::Gate;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, path::PathBuf, process::Stdio, time::Duration, time::Instant};
 use tokio::process::Command;
@@ -50,7 +51,7 @@ impl CmdReport {
 }
 
 pub struct Runner<'a> {
-    policy: &'a dyn Policy,
+    gate: &'a Gate,
     task: TaskId,
     trace: TraceId,
     ctx: PolicyContext,
@@ -64,7 +65,7 @@ impl<'a> Runner<'a> {
     /// `home` is an empty directory used as HOME so user-level credential stores
     /// (~/.aws, ~/.ssh, ~/.config/gh) are unreachable from the command.
     pub fn new(
-        policy: &'a dyn Policy,
+        gate: &'a Gate,
         task: TaskId,
         trace: TraceId,
         workspace_root: &Path,
@@ -82,7 +83,7 @@ impl<'a> Runner<'a> {
             policy_version: POLICY_VERSION_FALLBACK.to_string(),
         };
         Self {
-            policy,
+            gate,
             task,
             trace,
             ctx,
@@ -93,31 +94,20 @@ impl<'a> Runner<'a> {
         }
     }
 
-    fn authorize(&self, argv: &[String], cwd: &Path) -> Result<()> {
-        let Some(exe) = argv.first() else {
+    fn request(&self, argv: &[String], cwd: &Path) -> Result<ActionRequest> {
+        let Some((exe, args)) = argv.split_first() else {
             return Err(PairError::new(ErrorCode::InvalidInput, "empty command"));
         };
-        let req = ActionRequest {
+        Ok(ActionRequest {
             tool: SHELL_TOOL.to_string(),
             executable: Some(exe.clone()),
-            args: argv[1..].to_vec(),
+            args: args.to_vec(),
             paths: vec![cwd.display().to_string()],
             destination: None,
             data_class: DataClass::Personal,
             task: self.task,
             trace: self.trace,
-        };
-        match self.policy.authorize(&req, &self.ctx).decision {
-            Decision::Allow => Ok(()),
-            Decision::Deny { reason } => Err(PairError::new(
-                ErrorCode::PolicyDenied,
-                format!("{exe}: {reason}"),
-            )),
-            Decision::NeedsApproval { payload_hash } => Err(PairError::new(
-                ErrorCode::ApprovalRequired,
-                format!("{exe} needs approval (payload {payload_hash})"),
-            )),
-        }
+        })
     }
 
     fn scrubbed_env(&self) -> Vec<(String, String)> {
@@ -145,10 +135,17 @@ impl<'a> Runner<'a> {
         text
     }
 
-    /// Authorizes through Policy, then runs. Spawn failures and timeouts are reported
-    /// in the `CmdReport`, not as `Err`, so callers can classify them.
+    /// Runs through `Gate::execute`; the spawn closure is unreachable without Allow or a
+    /// consumed approval. Spawn failures and timeouts are reported in the `CmdReport`, not as
+    /// `Err`, so callers can classify them.
     pub async fn run(&self, argv: &[String], cwd: &Path) -> Result<CmdReport> {
-        self.authorize(argv, cwd)?;
+        let req = self.request(argv, cwd)?;
+        self.gate
+            .execute(&req, &self.ctx, || self.spawn(argv, cwd))
+            .await
+    }
+
+    async fn spawn(&self, argv: &[String], cwd: &Path) -> Result<CmdReport> {
         let started = Instant::now();
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..])

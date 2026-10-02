@@ -13,11 +13,12 @@ use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
     money::Micros,
-    traits::{Budget, ContextCompiler, Memory, Policy, Provider},
+    traits::{Budget, ContextCompiler, Memory, Provider},
     types::{
         DataClass, ModelLimits, ModelMessage, ModelRequest, RetrievalQuery, TaskContext, TrustClass,
     },
 };
+use pair_policy::Gate;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
@@ -53,7 +54,7 @@ pub enum CodingStatus {
 
 pub struct CodingDeps<'a> {
     pub provider: &'a dyn Provider,
-    pub policy: &'a dyn Policy,
+    pub gate: &'a Gate,
     pub budget: &'a dyn Budget,
     pub memory: &'a dyn Memory,
     pub compiler: &'a dyn ContextCompiler,
@@ -173,7 +174,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     std::fs::create_dir_all(&home)
         .map_err(|e| PairError::new(ErrorCode::Internal, format!("home dir: {e}")))?;
     let runner = Runner::new(
-        deps.policy,
+        deps.gate,
         task.id,
         task.trace,
         &task.workspaces_root,
@@ -299,12 +300,12 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
 
 /// Removes the task worktree (the branch and its commits-to-be remain for review).
 pub async fn discard_workspace(
-    policy: &dyn Policy,
+    gate: &Gate,
     task: &CodingTask,
     result: &CodingResult,
 ) -> Result<()> {
     let runner = Runner::new(
-        policy,
+        gate,
         task.id,
         task.trace,
         &task.workspaces_root,

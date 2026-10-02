@@ -1220,6 +1220,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "pair-core",
+ "pair-policy",
  "serde",
  "serde_json",
  "sha2",

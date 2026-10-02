@@ -3,32 +3,34 @@
 //! The query list and every URL fetched come only from the owner's scope and the search
 //! service. Text inside captured pages is never used to choose queries, URLs or tools.
 use super::{
-    fetch::{normalize_url, FetchOutcome, SourceFetcher},
+    fetch::{normalize_url, Candidate, FetchOutcome, SourceFetcher},
     types::{ResearchScope, Source},
 };
 use chrono::Utc;
 use pair_core::{
-    error::{ErrorCode, PairError, Result},
+    error::{ErrorCode, Result},
     ids::{SourceId, TaskId, TraceId},
-    traits::Policy,
-    types::{ActionRequest, DataClass, Decision, PolicyContext},
+    types::{ActionRequest, DataClass, PolicyContext},
 };
+use pair_policy::Gate;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 const MAX_QUERIES: usize = 8;
 const POLICY_VERSION: &str = "research-workflow";
 
-/// Policy gate for network actions.
-pub struct Gate<'a> {
-    pub policy: &'a dyn Policy,
+/// Network access for research. Every search and fetch runs inside `Gate::execute`, so the
+/// `SourceFetcher` is only called after policy allows it.
+pub struct Network<'a> {
+    pub gate: &'a Gate,
+    pub fetcher: &'a dyn SourceFetcher,
     pub task: TaskId,
     pub trace: TraceId,
 }
 
-impl Gate<'_> {
-    pub fn authorize(&self, tool: &str, destination: &str) -> Result<()> {
-        let req = ActionRequest {
+impl Network<'_> {
+    fn request(&self, tool: &str, destination: &str) -> ActionRequest {
+        ActionRequest {
             tool: tool.to_string(),
             executable: None,
             args: Vec::new(),
@@ -37,20 +39,29 @@ impl Gate<'_> {
             data_class: DataClass::Public,
             task: self.task,
             trace: self.trace,
-        };
-        let ctx = PolicyContext {
+        }
+    }
+
+    fn ctx() -> PolicyContext {
+        PolicyContext {
             workspace_root: String::new(),
             approvals: Vec::new(),
             policy_version: POLICY_VERSION.into(),
-        };
-        match self.policy.authorize(&req, &ctx).decision {
-            Decision::Allow => Ok(()),
-            Decision::Deny { reason } => Err(PairError::new(ErrorCode::PolicyDenied, reason)),
-            Decision::NeedsApproval { .. } => Err(PairError::new(
-                ErrorCode::ApprovalRequired,
-                format!("{tool} {destination}"),
-            )),
         }
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<Candidate>> {
+        let req = self.request("web_search", query);
+        self.gate
+            .execute(&req, &Self::ctx(), || self.fetcher.search(query))
+            .await
+    }
+
+    async fn fetch(&self, url: &str, normalized: &str) -> Result<FetchOutcome> {
+        let req = self.request("web_fetch", normalized);
+        self.gate
+            .execute(&req, &Self::ctx(), || self.fetcher.fetch(url))
+            .await
     }
 }
 
@@ -91,16 +102,11 @@ fn unavailable(url: &str, normalized: &str, reason: String) -> Source {
     }
 }
 
-async fn capture_one(
-    gate: &Gate<'_>,
-    fetcher: &dyn SourceFetcher,
-    url: &str,
-    normalized: &str,
-) -> Source {
-    if let Err(e) = gate.authorize("web_fetch", normalized) {
-        return unavailable(url, normalized, format!("blocked by policy: {}", e.message));
-    }
-    match fetcher.fetch(url).await {
+async fn capture_one(net: &Network<'_>, url: &str, normalized: &str) -> Source {
+    match net.fetch(url, normalized).await {
+        Err(e) if e.code == ErrorCode::PolicyDenied || e.code == ErrorCode::ApprovalRequired => {
+            unavailable(url, normalized, format!("blocked by policy: {}", e.message))
+        }
         Err(e) => unavailable(url, normalized, format!("fetch failed: {}", e.message)),
         Ok(FetchOutcome::Unavailable { reason }) => unavailable(url, normalized, reason),
         Ok(FetchOutcome::Page {
@@ -139,16 +145,11 @@ pub fn dedupe(sources: &mut [Source]) {
 }
 
 /// Discovery + capture + dedupe. Returns every attempted source, available or not.
-pub async fn capture_sources(
-    gate: &Gate<'_>,
-    fetcher: &dyn SourceFetcher,
-    scope: &ResearchScope,
-) -> Result<Vec<Source>> {
+pub async fn capture_sources(net: &Network<'_>, scope: &ResearchScope) -> Result<Vec<Source>> {
     let mut urls: Vec<(String, String)> = Vec::new();
     let mut seen = HashSet::new();
     for query in build_queries(scope) {
-        gate.authorize("web_search", &query)?;
-        for cand in fetcher.search(&query).await? {
+        for cand in net.search(&query).await? {
             match normalize_url(&cand.url) {
                 Ok(n) if seen.insert(n.clone()) => urls.push((cand.url, n)),
                 Ok(_) => {}
@@ -161,7 +162,7 @@ pub async fn capture_sources(
     urls.truncate(scope.max_sources);
     let mut sources = Vec::with_capacity(urls.len());
     for (url, normalized) in &urls {
-        sources.push(capture_one(gate, fetcher, url, normalized).await);
+        sources.push(capture_one(net, url, normalized).await);
     }
     dedupe(&mut sources);
     Ok(sources)

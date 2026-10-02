@@ -1,0 +1,57 @@
+{"id": "q01", "query": "What port does the dev Postgres use?", "project": "pair", "kind": "fact", "expect_memory": "pair-db-port", "expect_source": "compose-file", "held_out": false}
+{"id": "q02", "query": "Which queue technology did we pick?", "project": "pair", "kind": "decision", "expect_memory": "pair-queue-new", "expect_source": "adr-0012", "held_out": false}
+{"id": "q03", "query": "How are service requests authenticated?", "project": "pair", "kind": "decision", "expect_memory": "pair-auth", "expect_source": "adr-0009", "held_out": true}
+{"id": "q04", "query": "What is the daily cloud model budget cap?", "project": "pair", "kind": "fact", "expect_memory": "pair-budget", "expect_source": "budget-yaml", "held_out": false}
+{"id": "q05", "query": "Are we on self-hosted Temporal or Temporal Cloud?", "project": "pair", "kind": "decision", "expect_memory": "pair-temporal", "expect_source": "adr-0003", "held_out": false}
+{"id": "q06", "query": "What format are the logs and which id do they carry?", "project": "pair", "kind": "fact", "expect_memory": "pair-log", "expect_source": "runbook-logging", "held_out": false}
+{"id": "q07", "query": "How long do we retain audit events?", "project": "pair", "kind": "fact", "expect_memory": "pair-retention", "expect_source": "policy-retention", "held_out": true}
+{"id": "q08", "query": "Are we using embeddings yet?", "project": "pair", "kind": "decision", "expect_memory": "pair-embed", "expect_source": "adr-0015", "held_out": false}
+{"id": "q09", "query": "What continuous integration system do we run?", "project": "pair", "kind": "fact", "expect_memory": "pair-ci", "expect_source": "ci-yml", "held_out": false}
+{"id": "q10", "query": "Who owns the PAIR service?", "project": "pair", "kind": "person", "expect_memory": "pair-owner", "expect_source": "readme", "held_out": true}
+{"id": "q11", "query": "When is the first internal release due?", "project": "pair", "kind": "commitment", "expect_memory": "pair-release", "expect_source": "plan-doc", "held_out": false}
+{"id": "q12", "query": "What language is the implementation in?", "project": "pair", "kind": "decision", "expect_memory": "pair-lang", "expect_source": "adr-0001", "held_out": false}
+{"id": "q13", "query": "How do I rotate the signing key?", "project": "pair", "kind": "procedure", "expect_memory": "pair-rotate", "expect_source": "runbook-keys", "held_out": true}
+{"id": "q14", "query": "What did we say about the dead letter queue?", "project": "pair", "kind": "decision", "expect_memory": "pair-queue-new", "expect_source": "adr-0012", "held_out": false}
+{"id": "q15", "query": "Which warehouse engine do we use for events?", "project": "atlas", "kind": "decision", "expect_memory": "atlas-warehouse-new", "expect_source": "adr-a4", "held_out": false}
+{"id": "q16", "query": "When does the nightly ingestion start?", "project": "atlas", "kind": "fact", "expect_memory": "atlas-sched", "expect_source": "ingest-cron", "held_out": true}
+{"id": "q17", "query": "How are raw events partitioned?", "project": "atlas", "kind": "fact", "expect_memory": "atlas-schema", "expect_source": "schema-doc", "held_out": false}
+{"id": "q18", "query": "How fresh must dashboards be after ingestion?", "project": "atlas", "kind": "commitment", "expect_memory": "atlas-sla", "expect_source": "sla-doc", "held_out": false}
+{"id": "q19", "query": "Who is the atlas data owner?", "project": "atlas", "kind": "person", "expect_memory": "atlas-owner", "expect_source": "team-page", "held_out": true}
+{"id": "q20", "query": "How do we handle PII columns?", "project": "atlas", "kind": "decision", "expect_memory": "atlas-pii", "expect_source": "adr-a2", "held_out": false}
+{"id": "q21", "query": "How do I backfill a day of data?", "project": "atlas", "kind": "procedure", "expect_memory": "atlas-backfill", "expect_source": "runbook-backfill", "held_out": false}
+{"id": "q22", "query": "Which S3 bucket holds landing data?", "project": "atlas", "kind": "fact", "expect_memory": "atlas-bucket", "expect_source": "infra-doc", "held_out": true}
+{"id": "q23", "query": "Who gets paged when ingestion fails?", "project": "atlas", "kind": "fact", "expect_memory": "atlas-alert", "expect_source": "alert-doc", "held_out": false}
+{"id": "q24", "query": "What is the cost goal for ingestion?", "project": "atlas", "kind": "goal", "expect_memory": "atlas-goal", "expect_source": "okr-doc", "held_out": false}
+{"id": "q25", "query": "What is the retry policy?", "project": "atlas", "kind": "decision", "expect_memory": "atlas-retry", "expect_source": "adr-a3", "held_out": true}
+{"id": "q26", "query": "Which framework is the mobile app built with?", "project": "nova", "kind": "decision", "expect_memory": "nova-framework-new", "expect_source": "adr-n1", "held_out": false}
+{"id": "q27", "query": "How often does the app ship?", "project": "nova", "kind": "fact", "expect_memory": "nova-release", "expect_source": "release-doc", "held_out": false}
+{"id": "q28", "query": "What is the minimum iOS version?", "project": "nova", "kind": "fact", "expect_memory": "nova-min-ios", "expect_source": "support-matrix", "held_out": true}
+{"id": "q29", "query": "How do push notifications work?", "project": "nova", "kind": "decision", "expect_memory": "nova-push", "expect_source": "adr-n2", "held_out": false}
+{"id": "q30", "query": "Which tool collects crash reports?", "project": "nova", "kind": "fact", "expect_memory": "nova-crash", "expect_source": "tooling-doc", "held_out": false}
+{"id": "q31", "query": "Who is the designer for nova?", "project": "nova", "kind": "person", "expect_memory": "nova-design", "expect_source": "team-page", "held_out": true}
+{"id": "q32", "query": "What is the Android package name?", "project": "nova", "kind": "fact", "expect_memory": "nova-store", "expect_source": "store-doc", "held_out": false}
+{"id": "q33", "query": "How many conversations are cached offline?", "project": "nova", "kind": "decision", "expect_memory": "nova-offline", "expect_source": "adr-n3", "held_out": false}
+{"id": "q34", "query": "How do I turn on a feature flag?", "project": "nova", "kind": "procedure", "expect_memory": "nova-flag", "expect_source": "runbook-flags", "held_out": true}
+{"id": "q35", "query": "When is the beta launch event?", "project": "nova", "kind": "event", "expect_memory": "nova-event", "expect_source": "calendar", "held_out": false}
+{"id": "q36", "query": "What theme does the app default to?", "project": "nova", "kind": "fact", "expect_memory": "nova-theme", "expect_source": "ux-doc", "held_out": false}
+{"id": "q37", "query": "Do tablets get their own layout?", "project": "nova", "kind": "open_loop", "expect_memory": "nova-loop", "expect_source": "backlog", "held_out": true}
+{"id": "q38", "query": "Which languages do I prefer?", "project": "pair", "kind": "preference", "expect_memory": "g-lang", "expect_source": "me-profile", "held_out": false}
+{"id": "q39", "query": "How should replies be formatted?", "project": "pair", "kind": "preference", "expect_memory": "g-reply", "expect_source": "me-profile", "held_out": false}
+{"id": "q40", "query": "What commit message style do I use?", "project": "pair", "kind": "preference", "expect_memory": "g-commit", "expect_source": "me-profile", "held_out": true}
+{"id": "q41", "query": "What timezone am I in?", "project": "pair", "kind": "fact", "expect_memory": "g-tz", "expect_source": "me-profile", "held_out": false}
+{"id": "q42", "query": "Which editor do I use?", "project": "pair", "kind": "preference", "expect_memory": "g-editor", "expect_source": "me-profile", "held_out": false}
+{"id": "q43", "query": "How big should pull requests be?", "project": "pair", "kind": "preference", "expect_memory": "g-review", "expect_source": "me-profile", "held_out": true}
+{"id": "q44", "query": "Can I deploy on a Friday?", "project": "pair", "kind": "procedure", "expect_memory": "g-deploy", "expect_source": "me-profile", "held_out": false}
+{"id": "q45", "query": "When does the user like to meet?", "project": "pair", "kind": "fact", "expect_memory": "g-meeting", "expect_source": "chat-2026-03", "held_out": true}
+{"id": "u01", "query": "What is the production database password?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u02", "query": "Who won the football match last night?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": true}
+{"id": "u03", "query": "What is the office wifi name?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u04", "query": "Which cloud region hosts the staging cluster?", "project": "atlas", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u05", "query": "What is the capital of Australia?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": true}
+{"id": "u06", "query": "How many users signed up last month?", "project": "nova", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u07", "query": "What is the CEO's phone number?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u08", "query": "Which payment provider do we use?", "project": "nova", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": true}
+{"id": "u09", "query": "What is the Kubernetes version in production?", "project": "atlas", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u10", "query": "When is the next company holiday?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": true}
+{"id": "u11", "query": "What color is the logo?", "project": "nova", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": false}
+{"id": "u12", "query": "What did we decide about GraphQL?", "project": "pair", "kind": "unknown", "expect_memory": null, "expect_source": null, "held_out": true}

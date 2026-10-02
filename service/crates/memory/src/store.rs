@@ -2,16 +2,14 @@
 use crate::{
     audit,
     error::{db_err, not_found},
-    model::{CandidateDraft, MemoryRecord},
+    model::MemoryRecord,
     read::load_memories,
 };
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{CandidateId, MemoryId},
-    traits::Memory,
-    types::{EvidenceRef, EvidenceItem, MemoryCandidate, RetrievalQuery},
+    types::EvidenceRef,
 };
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -147,19 +145,4 @@ async fn insert_chunk(conn: &mut PgConnection, memory: MemoryId, source: Option<
         .await
         .map_err(db_err)?;
     Ok(())
-}
-
-#[async_trait]
-impl Memory for PgMemory {
-    async fn propose(&self, c: MemoryCandidate) -> Result<CandidateId> {
-        Ok(self.propose_with_outcome(CandidateDraft::new(c)).await?.id)
-    }
-
-    async fn accept(&self, id: CandidateId, actor: &str) -> Result<MemoryId> {
-        self.accept_with(id, actor, AcceptMode::default()).await
-    }
-
-    async fn retrieve(&self, _q: RetrievalQuery) -> Result<Vec<EvidenceItem>> {
-        Err(PairError::new(ErrorCode::Internal, "retrieval is implemented in Task 8"))
-    }
 }

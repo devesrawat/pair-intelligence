@@ -20,12 +20,12 @@ pub struct TestDb {
 
 fn migrations_dir() -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let service_level = root.join("../../migrations");
-    if service_level.is_dir() {
-        service_level
-    } else {
-        root.join("../../../migrations")
-    }
+    // Repo-root `migrations/` is canonical (spec section 15); accept `service/migrations` too,
+    // but only when it actually holds the memory migrations.
+    [root.join("../../../migrations"), root.join("../../migrations")]
+        .into_iter()
+        .find(|dir| dir.join("020_sources.sql").is_file())
+        .expect("memory migrations (020_sources.sql) not found in ../../../migrations or ../../migrations")
 }
 
 impl TestDb {

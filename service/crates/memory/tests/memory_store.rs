@@ -110,7 +110,11 @@ async fn deleted_source_is_not_retrievable() {
 
     let pending = mem.propose(candidate("fact", "Another fact from the doc", None, only.id, "x")).await.unwrap();
 
+    let probe = |text: &str| pair_core::types::RetrievalQuery { text: text.into(), project: None, as_of: chrono::Utc::now(), limit: 0 };
+    assert_eq!(mem.retrieve_detailed(probe("vault passphrase hint")).await.unwrap().len(), 1);
+
     let report = mem.delete_source(only.id, "owner").await.unwrap();
+    assert!(mem.retrieve_detailed(probe("vault passphrase hint")).await.unwrap().is_empty(), "deleted source is not retrievable");
     assert_eq!(report.invalidated, vec![doomed]);
 
     let doomed_rec = mem.get_memory(doomed).await.unwrap();

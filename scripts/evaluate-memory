@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Retrieval evaluation on the fixture corpus: recall@8 and unsupported-answer rate (dev + held-out).
+# Fixture-corpus numbers only; they are not a measure of real usage.
+set -euo pipefail
+cd "$(dirname "$0")/../service"
+export DATABASE_URL="${DATABASE_URL:-postgres://pair:pair@127.0.0.1:55432/pair}"
+cargo test -p pair-memory --test evaluate_memory -- --nocapture

@@ -1,0 +1,22 @@
+{
+  "description": "One synthetic work week, Mon 2026-09-28 to Sun 2026-10-04, Asia/Kolkata. No real data.",
+  "loops": [
+    {"key": "acme", "title": "Send Acme proposal draft", "owner": "me", "kind": "commitment", "status": "open", "delegable": false, "due_at": "2026-09-30T18:00:00+05:30", "source_ref": "gmail:msg-acme-1"},
+    {"key": "pr42", "title": "Review PR 42", "owner": "me", "kind": "commitment", "status": "open", "delegable": false, "due_at": "2026-10-03T12:00:00+05:30", "source_ref": "github:pr-42"},
+    {"key": "invoice", "title": "Prepare September invoice", "owner": "me", "kind": "commitment", "status": "open", "delegable": true, "due_at": "2026-10-05T12:00:00+05:30", "source_ref": "gmail:msg-inv-7"},
+    {"key": "recruiter", "title": "Maybe reply to recruiter", "owner": "me", "kind": "inference", "status": "open", "delegable": false, "due_at": "2026-09-29T12:00:00+05:30", "source_ref": "gmail:msg-rec-3"},
+    {"key": "authmig", "title": "Ship auth migration", "owner": "me", "kind": "commitment", "status": "blocked", "delegable": false, "due_at": "2026-10-06T12:00:00+05:30", "source_ref": "linear:PAIR-31", "relationship": "blocked by infra access request"},
+    {"key": "flights", "title": "Book conference flights", "owner": "me", "kind": "commitment", "status": "open", "delegable": true, "due_at": null, "source_ref": "gmail:msg-conf-2"}
+  ],
+  "events": [
+    {"kind": "meeting", "at": "2026-09-28T10:00:00+05:30", "summary": "Weekly standup", "loop": null, "source_ref": "cal:evt-standup-0928"},
+    {"kind": "intent", "at": "2026-09-29T21:00:00+05:30", "summary": "I will send the Acme proposal tonight", "loop": "acme", "source_ref": "chat:2026-09-29-1"},
+    {"kind": "observed_work", "at": "2026-09-30T15:00:00+05:30", "summary": "Edited acme-proposal.md (3 commits)", "loop": "acme", "source_ref": "git:acme-proposal@a1b2c3"},
+    {"kind": "intent", "at": "2026-10-01T09:00:00+05:30", "summary": "Plan to finish the invoice today", "loop": "invoice", "source_ref": "chat:2026-10-01-1"},
+    {"kind": "observed_work", "at": "2026-10-01T14:00:00+05:30", "summary": "Reviewed PR 42, left 6 comments", "loop": "pr42", "source_ref": "github:pr-42-review"},
+    {"kind": "observed_completion", "at": "2026-10-01T16:00:00+05:30", "summary": "PR 42 review submitted", "loop": "pr42", "source_ref": "github:pr-42-review-submitted"},
+    {"kind": "meeting", "at": "2026-10-02T11:00:00+05:30", "summary": "Design sync", "loop": null, "source_ref": "cal:evt-design-1002"},
+    {"kind": "meeting", "at": "2026-10-02T15:00:00+05:30", "summary": "1:1 with manager", "loop": null, "source_ref": "cal:evt-1on1-1002"},
+    {"kind": "decision", "at": "2026-10-02T16:30:00+05:30", "summary": "Defer auth migration until infra access is granted", "loop": "authmig", "source_ref": "chat:2026-10-02-4"}
+  ]
+}

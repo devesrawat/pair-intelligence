@@ -1,5 +1,5 @@
 use super::disconnect::{apply_deletion_choice, disconnect, export};
-use super::fake::{deleted, upsert, FakeClient};
+use super::fake::{deleted, upsert, upsert_at, FakeClient};
 use super::store::{self, AccountState};
 use super::{attempt_write, ingest_account, DeletionChoice, ExternalWrite, Provider};
 use crate::daily::testdb::TestDb;
@@ -84,6 +84,45 @@ async fn stale_event_updated() -> TestResult {
         bundle.sources[0].content,
         Some(serde_json::json!({ "title": "Design sync 14:00" }))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn older_revision_replay_does_not_overwrite_newer() -> TestResult {
+    let db = TestDb::new().await?;
+    let id = account(&db.pool, Provider::Calendar, &["primary"]).await?;
+    let client = FakeClient::default();
+    client.push("primary", vec![upsert_at("ev1", "etag-1", "old 11:00", 1)]);
+    client.push("primary", vec![upsert_at("ev1", "etag-2", "new 14:00", 2)]);
+    ingest_account(&db.pool, &client, id).await?;
+
+    // a replayed older page arrives after the newer one: ignored and recorded as skipped
+    client.push("primary", vec![upsert_at("ev1", "etag-1", "old 11:00", 1)]);
+    let stats = ingest_account(&db.pool, &client, id).await?;
+    assert_eq!(
+        (stats.skipped_stale, stats.updated, stats.inserted),
+        (1, 0, 0)
+    );
+    let bundle = export(&db.pool, id).await?;
+    assert_eq!(bundle.sources[0].revision, "etag-2");
+    assert_eq!(
+        bundle.sources[0].content,
+        Some(serde_json::json!({ "title": "new 14:00" }))
+    );
+
+    // an exact replay of the newest revision stays idempotent
+    client.push("primary", vec![upsert_at("ev1", "etag-2", "new 14:00", 2)]);
+    let stats = ingest_account(&db.pool, &client, id).await?;
+    assert_eq!(
+        (stats.unchanged, stats.skipped_stale, stats.updated),
+        (1, 0, 0)
+    );
+
+    // an older revision must not resurrect a tombstoned source either
+    client.push("primary", vec![deleted("ev1")]);
+    client.push("primary", vec![upsert_at("ev1", "etag-1", "old 11:00", 1)]);
+    ingest_account(&db.pool, &client, id).await?;
+    assert_eq!(store::active_source_count(&db.pool, id).await?, 0);
     Ok(())
 }
 

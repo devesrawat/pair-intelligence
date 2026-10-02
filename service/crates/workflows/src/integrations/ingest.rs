@@ -2,6 +2,7 @@ use super::client::{ChangeBatch, ClientError, Provider, SourceChange, SourceClie
 use super::store::{self, AccountState, IntegrationAccount};
 use super::MAX_PAGES_PER_SCOPE;
 use crate::daily::store::db_err;
+use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -12,6 +13,8 @@ pub struct IngestStats {
     pub updated: u32,
     pub tombstoned: u32,
     pub unchanged: u32,
+    /// Replayed items older than what is already stored; ignored.
+    pub skipped_stale: u32,
 }
 
 impl IngestStats {
@@ -20,6 +23,7 @@ impl IngestStats {
         self.updated += o.updated;
         self.tombstoned += o.tombstoned;
         self.unchanged += o.unchanged;
+        self.skipped_stale += o.skipped_stale;
     }
 }
 
@@ -110,6 +114,7 @@ async fn apply_batch(
                     scope,
                     &item.external_id,
                     &item.revision,
+                    item.source_updated_at,
                     &item.content,
                 )
                 .await?;
@@ -117,6 +122,7 @@ async fn apply_batch(
                     Outcome::Inserted => stats.inserted += 1,
                     Outcome::Updated => stats.updated += 1,
                     Outcome::Unchanged => stats.unchanged += 1,
+                    Outcome::SkippedStale => stats.skipped_stale += 1,
                     Outcome::Tombstoned => {}
                 }
             }
@@ -146,6 +152,7 @@ enum Outcome {
     Inserted,
     Updated,
     Unchanged,
+    SkippedStale,
     Tombstoned,
 }
 
@@ -156,9 +163,10 @@ async fn upsert(
     scope: &str,
     external_id: &str,
     revision: &str,
+    source_updated_at: DateTime<Utc>,
     content: &serde_json::Value,
 ) -> Result<Outcome> {
-    let existing = sqlx::query("SELECT revision FROM integration_sources WHERE account_id = $1 AND external_id = $2 FOR UPDATE")
+    let existing = sqlx::query("SELECT revision, source_updated_at FROM integration_sources WHERE account_id = $1 AND external_id = $2 FOR UPDATE")
         .bind(account)
         .bind(external_id)
         .fetch_optional(&mut **tx)
@@ -166,13 +174,14 @@ async fn upsert(
         .map_err(db_err)?;
     let Some(row) = existing else {
         sqlx::query(
-            "INSERT INTO integration_sources (account_id, external_id, scope, kind, revision, content) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO integration_sources (account_id, external_id, scope, kind, revision, source_updated_at, content) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(account)
         .bind(external_id)
         .bind(scope)
         .bind(provider.source_kind().as_str())
         .bind(revision)
+        .bind(source_updated_at)
         .bind(content)
         .execute(&mut **tx)
         .await
@@ -183,13 +192,19 @@ async fn upsert(
     if current == revision {
         return Ok(Outcome::Unchanged);
     }
+    let stored_at: DateTime<Utc> = row.try_get("source_updated_at").map_err(db_err)?;
+    if source_updated_at < stored_at {
+        tracing::warn!(%account, external_id, revision, current, "stale revision replay ignored");
+        return Ok(Outcome::SkippedStale);
+    }
     sqlx::query(
-        "UPDATE integration_sources SET revision = $3, content = $4, state = 'active', updated_at = now()
+        "UPDATE integration_sources SET revision = $3, source_updated_at = $4, content = $5, state = 'active', updated_at = now()
          WHERE account_id = $1 AND external_id = $2",
     )
     .bind(account)
     .bind(external_id)
     .bind(revision)
+    .bind(source_updated_at)
     .bind(content)
     .execute(&mut **tx)
     .await

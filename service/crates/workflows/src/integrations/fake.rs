@@ -1,6 +1,7 @@
 //! Fixture-backed `SourceClient`. Replays scripted pages per scope and records calls.
 use super::client::{ChangeBatch, ClientError, Provider, RemoteItem, SourceChange, SourceClient};
 use async_trait::async_trait;
+use chrono::DateTime;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -30,10 +31,17 @@ impl FakeClient {
     }
 }
 
+/// Upsert stamped with a fixed provider time (all such items tie, so the later one applies).
 pub(crate) fn upsert(id: &str, revision: &str, title: &str) -> SourceChange {
+    upsert_at(id, revision, title, 0)
+}
+
+/// Upsert whose provider modification time is `secs` after the epoch.
+pub(crate) fn upsert_at(id: &str, revision: &str, title: &str, secs: i64) -> SourceChange {
     SourceChange::Upsert(RemoteItem {
         external_id: id.to_string(),
         revision: revision.to_string(),
+        source_updated_at: DateTime::from_timestamp(secs, 0).unwrap_or_default(),
         content: serde_json::json!({ "title": title }),
     })
 }

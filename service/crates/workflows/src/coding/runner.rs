@@ -1,5 +1,6 @@
 //! Gate-routed command execution with a scrubbed environment. A process is only spawned
 //! inside the `Gate::execute` closure, i.e. after `Allow` or a consumed matching approval.
+use crate::tools::SHELL_EXEC;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
@@ -23,8 +24,6 @@ const SECRET_NAME_MARKERS: [&str; 8] = [
     "AUTH",
     "COOKIE",
 ];
-const POLICY_VERSION_FALLBACK: &str = "coding-workflow";
-const SHELL_TOOL: &str = "shell";
 
 /// True for environment variable names that look like credentials.
 pub fn looks_secret_name(name: &str) -> bool {
@@ -64,11 +63,13 @@ pub struct Runner<'a> {
 impl<'a> Runner<'a> {
     /// `home` is an empty directory used as HOME so user-level credential stores
     /// (~/.aws, ~/.ssh, ~/.config/gh) are unreachable from the command.
+    /// `ctx` carries the active policy version, the policy workspace root and the approval
+    /// ids offered for this task (normally empty).
     pub fn new(
         gate: &'a Gate,
         task: TaskId,
         trace: TraceId,
-        workspace_root: &Path,
+        ctx: PolicyContext,
         home: PathBuf,
         timeout: Duration,
         passthrough: Vec<String>,
@@ -77,11 +78,6 @@ impl<'a> Runner<'a> {
             .filter(|(k, v)| looks_secret_name(k) && v.len() >= MIN_REDACTABLE_LEN)
             .map(|(_, v)| v)
             .collect();
-        let ctx = PolicyContext {
-            workspace_root: workspace_root.display().to_string(),
-            approvals: Vec::new(),
-            policy_version: POLICY_VERSION_FALLBACK.to_string(),
-        };
         Self {
             gate,
             task,
@@ -94,16 +90,22 @@ impl<'a> Runner<'a> {
         }
     }
 
-    fn request(&self, argv: &[String], cwd: &Path) -> Result<ActionRequest> {
+    fn request(
+        &self,
+        tool: &str,
+        argv: &[String],
+        cwd: &Path,
+        destination: Option<&str>,
+    ) -> Result<ActionRequest> {
         let Some((exe, args)) = argv.split_first() else {
             return Err(PairError::new(ErrorCode::InvalidInput, "empty command"));
         };
         Ok(ActionRequest {
-            tool: SHELL_TOOL.to_string(),
+            tool: tool.to_string(),
             executable: Some(exe.clone()),
             args: args.to_vec(),
             paths: vec![cwd.display().to_string()],
-            destination: None,
+            destination: destination.map(str::to_string),
             data_class: DataClass::Personal,
             task: self.task,
             trace: self.trace,
@@ -139,7 +141,20 @@ impl<'a> Runner<'a> {
     /// consumed approval. Spawn failures and timeouts are reported in the `CmdReport`, not as
     /// `Err`, so callers can classify them.
     pub async fn run(&self, argv: &[String], cwd: &Path) -> Result<CmdReport> {
-        let req = self.request(argv, cwd)?;
+        self.run_tool(SHELL_EXEC, argv, cwd, None).await
+    }
+
+    /// Like `run` but under another registered tool (e.g. `git.push`) with the declared
+    /// egress `destination`. External-write tools execute only if the Gate consumes one of
+    /// the approvals in the context for this exact request.
+    pub async fn run_tool(
+        &self,
+        tool: &str,
+        argv: &[String],
+        cwd: &Path,
+        destination: Option<&str>,
+    ) -> Result<CmdReport> {
+        let req = self.request(tool, argv, cwd, destination)?;
         self.gate
             .execute(&req, &self.ctx, || self.spawn(argv, cwd))
             .await

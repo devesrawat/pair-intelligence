@@ -1,6 +1,7 @@
 //! Remote writes (push, PR) are never executed by this crate. They resolve to an
 //! approval request bound to the exact payload hash; execution belongs to the caller
 //! after `Approvals::consume`.
+use crate::tools::{GIT_PUSH, PR_CREATE};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{ApprovalId, TaskId, TraceId},
@@ -21,6 +22,8 @@ pub enum RemoteKind {
 pub struct RemoteAction {
     pub kind: RemoteKind,
     pub remote: String,
+    /// Egress host of the remote (e.g. `github.com`); must be on the policy egress list.
+    pub host: String,
     pub branch: String,
     pub head_sha: String,
     pub diff_sha256: String,
@@ -50,8 +53,8 @@ impl RemoteAction {
 
     fn tool(&self) -> &'static str {
         match self.kind {
-            RemoteKind::Push => "git_push",
-            RemoteKind::OpenPr => "open_pr",
+            RemoteKind::Push => GIT_PUSH,
+            RemoteKind::OpenPr => PR_CREATE,
         }
     }
 }
@@ -59,6 +62,7 @@ impl RemoteAction {
 pub fn request_remote_write(
     policy: &dyn Policy,
     workspace_root: &str,
+    policy_version: &str,
     task: TaskId,
     trace: TraceId,
     action: &RemoteAction,
@@ -73,7 +77,7 @@ pub fn request_remote_write(
             action.branch.clone(),
         ],
         paths: Vec::new(),
-        destination: Some(action.remote.clone()),
+        destination: Some(action.host.clone()),
         data_class: DataClass::Personal,
         task,
         trace,
@@ -81,7 +85,7 @@ pub fn request_remote_write(
     let ctx = PolicyContext {
         workspace_root: workspace_root.to_string(),
         approvals: approvals.to_vec(),
-        policy_version: "coding-workflow".to_string(),
+        policy_version: policy_version.to_string(),
     };
     match policy.authorize(&req, &ctx).decision {
         Decision::Deny { reason } => Err(PairError::new(ErrorCode::PolicyDenied, reason)),

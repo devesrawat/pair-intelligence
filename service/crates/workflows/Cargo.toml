@@ -20,5 +20,8 @@ sha2 = "0.10"
 serde_yaml_ng = "0.10"
 chrono-tz = "0.10.4"
 
+[dev-dependencies]
+pair-jobs = { path = "../jobs" }
+
 [lints]
 workspace = true

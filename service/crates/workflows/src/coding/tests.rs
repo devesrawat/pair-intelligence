@@ -111,6 +111,7 @@ async fn run(
         budget: &budget,
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
+        policy: fake_ctx(&fx_task.workspaces_root),
     };
     run_coding_task(&deps, fx_task).await
 }
@@ -130,7 +131,7 @@ async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
     assert!(res.branch.starts_with("pair/"));
     // every executed command went through policy, and none was a remote write
     let seen = policy.seen.lock().unwrap();
-    assert!(seen.iter().all(|r| r.tool == "shell"));
+    assert!(seen.iter().all(|r| r.tool == crate::tools::SHELL_EXEC));
     assert!(seen.iter().all(|r| !r.args.iter().any(|a| a == "push")));
     // original checkout untouched
     assert_eq!(
@@ -296,7 +297,7 @@ fn test_runner<'a>(gate: &'a Gate, dir: &Path) -> Runner<'a> {
         gate,
         TaskId::new(),
         TraceId::new(),
-        dir,
+        fake_ctx(dir),
         dir.join("home"),
         std::time::Duration::from_secs(2),
         Vec::new(),
@@ -386,6 +387,7 @@ fn remote_write_requires_approval() {
     let action = RemoteAction {
         kind: RemoteKind::Push,
         remote: "origin".into(),
+        host: "github.com".into(),
         branch: "pair/x".into(),
         head_sha: "abc".into(),
         diff_sha256: "def".into(),
@@ -397,7 +399,7 @@ fn remote_write_requires_approval() {
             kind,
             ..action.clone()
         };
-        let out = request_remote_write(&strict, "/ws", task, trace, &a, &[]).unwrap();
+        let out = request_remote_write(&strict, "/ws", "v", task, trace, &a, &[]).unwrap();
         assert!(
             matches!(out, RemoteOutcome::NeedsApproval { .. }),
             "{kind:?}"
@@ -408,10 +410,10 @@ fn remote_write_requires_approval() {
         allow_remote_writes: true,
         ..FakePolicy::default()
     };
-    let out = request_remote_write(&lax, "/ws", task, trace, &action, &[]).unwrap();
+    let out = request_remote_write(&lax, "/ws", "v", task, trace, &action, &[]).unwrap();
     assert!(matches!(out, RemoteOutcome::NeedsApproval { .. }));
     let out =
-        request_remote_write(&lax, "/ws", task, trace, &action, &[ApprovalId::new()]).unwrap();
+        request_remote_write(&lax, "/ws", "v", task, trace, &action, &[ApprovalId::new()]).unwrap();
     assert!(matches!(out, RemoteOutcome::Authorized { .. }));
     // payload hash binds the exact payload
     let changed = RemoteAction {

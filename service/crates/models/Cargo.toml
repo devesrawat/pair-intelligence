@@ -14,7 +14,16 @@ async-trait.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["json"] }
+pair-telemetry = { path = "../telemetry" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+serde_yaml = "0.9"
+url = "2"
+bytes = "1"
+
+[dev-dependencies]
+axum = "0.7"
 
 [lints]
 workspace = true

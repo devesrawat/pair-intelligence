@@ -6,17 +6,13 @@ use super::jev::estimate_input_tokens;
 use super::questions::QuestionSet;
 use crate::router::{ConfigRouter, RouteConstraints, RoutePlan};
 use pair_core::error::Result;
-use pair_core::ids::{ReservationId, TaskId};
+use pair_core::ids::ReservationId;
 use pair_core::money::{Micros, Price};
-use pair_core::traits::{Budget, Classifier};
+use pair_core::traits::{BudgetEx, Classifier};
 use pair_core::types::{
-    ClassificationInput, DataClass, TaskClassification, TaskProfile, UsageReport,
+    ClassificationInput, DataClass, ReserveRequest, TaskClassification, TaskProfile, UsageReport,
 };
 use std::sync::Arc;
-
-/// Prefix on `UsageReport.price_version` marking classifier spend. STOPGAP: `Budget` has no category
-/// parameter, so the sub-cap category is carried in-band until the contract gains one.
-pub const CLASSIFIER_CATEGORY_TAG: &str = "classifier:jev:";
 
 pub struct PipelineRequest {
     pub input: ClassificationInput,
@@ -83,7 +79,7 @@ impl RoutingPipeline {
 
     pub async fn route(
         &self,
-        budget: &dyn Budget,
+        budget: &dyn BudgetEx,
         req: PipelineRequest,
     ) -> Result<PipelineOutcome> {
         let rules = classify_by_rules(&req.input.request);
@@ -129,14 +125,13 @@ impl RoutingPipeline {
 
     async fn classify_accounted(
         &self,
-        budget: &dyn Budget,
+        budget: &dyn BudgetEx,
         input: &ClassificationInput,
     ) -> Result<(Option<TaskClassification>, String, Option<Micros>)> {
         let Some(classifier) = &self.classifier else {
             return Ok((None, "no classifier configured".into(), None));
         };
         let price = self.price();
-        let tag = format!("{CLASSIFIER_CATEGORY_TAG}{}", price.version);
         let est_tokens = estimate_input_tokens(input, &self.questions);
         let Some(max_cost) = price.max_cost(est_tokens, 0) else {
             return Ok((
@@ -145,7 +140,14 @@ impl RoutingPipeline {
                 None,
             ));
         };
-        let reservation: ReservationId = match budget.reserve(task_of(input), max_cost).await {
+        let reservation: ReservationId = match budget
+            .reserve_with(ReserveRequest::classifier(
+                input.task,
+                max_cost,
+                price.version.clone(),
+            ))
+            .await
+        {
             Ok(id) => id,
             Err(e) => {
                 tracing::warn!(code = ?e.code, "classifier skipped: sub-cap reservation refused");
@@ -159,7 +161,7 @@ impl RoutingPipeline {
                     input_tokens: c.input_tokens,
                     output_tokens: 0,
                     actual_cost: Some(actual),
-                    price_version: tag,
+                    price_version: price.version.clone(),
                 };
                 budget.reconcile(reservation, usage).await?;
                 Ok((Some(c), "classifier ok".into(), Some(actual)))
@@ -177,42 +179,37 @@ impl RoutingPipeline {
     }
 }
 
-fn task_of(input: &ClassificationInput) -> TaskId {
-    input.task
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::classification::config::test_config;
     use crate::classification::jev::{ApiKey, JevClassifier, JevSettings};
     use crate::classification::questions::test_questions;
+    use crate::classification::test_db::{budget_yaml, TestDb};
     use crate::classification::test_support::{ok_body, spawn, Behavior};
     use async_trait::async_trait;
     use pair_core::error::{ErrorCode, PairError};
     use pair_core::ids::LedgerEntryId;
-    use pair_core::types::LedgerEntry;
+    use pair_core::ids::TaskId;
+    use pair_core::traits::{Budget, BudgetEx};
+    use pair_core::types::{BudgetCategory, LedgerEntry, ReserveRequest, TaskKind};
     use std::sync::Mutex;
     use std::time::Duration;
 
     #[derive(Default)]
     struct FakeBudget {
-        reserved: Mutex<Vec<Micros>>,
+        reserved: Mutex<Vec<ReserveRequest>>,
         reconciled: Mutex<Vec<UsageReport>>,
         refuse: bool,
     }
 
     #[async_trait]
     impl Budget for FakeBudget {
-        async fn reserve(&self, _task: TaskId, max_cost: Micros) -> Result<ReservationId> {
-            if self.refuse {
-                return Err(PairError::new(
-                    ErrorCode::BudgetExceeded,
-                    "classifier sub-cap exhausted",
-                ));
-            }
-            self.reserved.lock().expect("lock").push(max_cost);
-            Ok(ReservationId::new())
+        async fn reserve(&self, _task: TaskId, _max_cost: Micros) -> Result<ReservationId> {
+            Err(PairError::new(
+                ErrorCode::Internal,
+                "pipeline must reserve through BudgetEx::reserve_with",
+            ))
         }
         async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
             let amount = usage.actual_cost.unwrap_or(Micros::ZERO);
@@ -223,6 +220,20 @@ mod tests {
                 amount,
                 settled: true,
             })
+        }
+    }
+
+    #[async_trait]
+    impl BudgetEx for FakeBudget {
+        async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
+            if self.refuse {
+                return Err(PairError::new(
+                    ErrorCode::BudgetExceeded,
+                    "classifier sub-cap exhausted",
+                ));
+            }
+            self.reserved.lock().expect("lock").push(req);
+            Ok(ReservationId::new())
         }
     }
 
@@ -309,7 +320,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn classifier_cost_counts_toward_budget() {
+    async fn classifier_reservation_carries_category_not_a_string_tag() {
         let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.95))).await;
         let p = pipeline(&mock.url, 1000, ClassifierMode::Shadow);
         let budget = FakeBudget::default();
@@ -317,16 +328,18 @@ mod tests {
             .route(&budget, request("fix the failing test"))
             .await
             .expect("route");
+        let reserved = budget.reserved.lock().expect("lock");
+        assert_eq!(reserved.len(), 1, "worst case reserved before the call");
+        assert_eq!(reserved[0].category, BudgetCategory::Classifier);
+        assert_eq!(reserved[0].kind, TaskKind::Default);
         assert_eq!(
-            budget.reserved.lock().expect("lock").len(),
-            1,
-            "worst case reserved before the call"
+            reserved[0].price_version.as_deref(),
+            Some("jev-2026-10-02"),
+            "plain price version, no in-band prefix"
         );
         let reconciled = budget.reconciled.lock().expect("lock");
         assert_eq!(reconciled.len(), 1);
-        assert!(reconciled[0]
-            .price_version
-            .starts_with(CLASSIFIER_CATEGORY_TAG));
+        assert_eq!(reconciled[0].price_version, "jev-2026-10-02");
         assert_eq!(reconciled[0].input_tokens, 300);
         assert_eq!(
             reconciled[0].actual_cost,
@@ -334,6 +347,149 @@ mod tests {
             "ceil(300 * 42000 / 1e6)"
         );
         assert_eq!(out.classifier_cost, Some(Micros(13)));
+    }
+
+    const PRICE_VERSION: &str = "jev-2026-10-02";
+    const CLASSIFIER_ACTUAL_MICROS: i64 = 13;
+    const ONE_CENT_MICROS: i64 = 10_000;
+
+    async fn counted_where(db: &TestDb, filter: &str) -> i64 {
+        sqlx::query_scalar(&format!(
+            "SELECT COALESCE(SUM(counted_micros), 0)::BIGINT FROM budget_reservations WHERE {filter}"
+        ))
+        .fetch_one(&db.pool)
+        .await
+        .expect("sum")
+    }
+
+    fn metered(micros: i64) -> ReserveRequest {
+        ReserveRequest::metered(
+            TaskId::new(),
+            Micros(micros),
+            TaskKind::Default,
+            PRICE_VERSION.to_owned(),
+        )
+    }
+
+    fn classifier(micros: i64) -> ReserveRequest {
+        ReserveRequest::classifier(TaskId::new(), Micros(micros), PRICE_VERSION.to_owned())
+    }
+
+    #[tokio::test]
+    async fn classifier_cost_counts_toward_budget() {
+        let db = TestDb::create().await;
+        // month $20, day $1, classifier sub-cap one cent, task cap $0.10
+        let budget = db.budget(&budget_yaml(2000, 100, 1, 10), PRICE_VERSION);
+        let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.95))).await;
+        let p = pipeline(&mock.url, 1000, ClassifierMode::Shadow);
+        let out = p
+            .route(&budget, request("fix the failing test"))
+            .await
+            .expect("route");
+        assert_eq!(out.classifier_cost, Some(Micros(CLASSIFIER_ACTUAL_MICROS)));
+        assert!(out.classification.is_some());
+
+        // Recorded under the classifier category, settled at the actual cost.
+        let row: (String, String, i64) =
+            sqlx::query_as("SELECT category, state, counted_micros FROM budget_reservations")
+                .fetch_one(&db.pool)
+                .await
+                .expect("one row");
+        assert_eq!(
+            row,
+            (
+                "classifier".into(),
+                "settled".into(),
+                CLASSIFIER_ACTUAL_MICROS
+            )
+        );
+
+        // Counts under the classifier monthly sub-cap: only the unspent remainder fits.
+        let remaining = ONE_CENT_MICROS - CLASSIFIER_ACTUAL_MICROS;
+        let err = budget
+            .reserve_with(classifier(remaining + 1))
+            .await
+            .expect_err("sub-cap includes pipeline spend");
+        assert_eq!(err.code, ErrorCode::BudgetExceeded);
+        budget
+            .reserve_with(classifier(remaining))
+            .await
+            .expect("exactly the remainder fits");
+    }
+
+    #[tokio::test]
+    async fn classifier_cost_counts_toward_daily_cap() {
+        let db = TestDb::create().await;
+        // daily cap one cent; month $20; classifier sub-cap $1
+        let budget = db.budget(&budget_yaml(2000, 1, 100, 10), PRICE_VERSION);
+        let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.95))).await;
+        let p = pipeline(&mock.url, 1000, ClassifierMode::Shadow);
+        p.route(&budget, request("fix the failing test"))
+            .await
+            .expect("route");
+        let remaining = ONE_CENT_MICROS - CLASSIFIER_ACTUAL_MICROS;
+        let err = budget
+            .reserve_with(metered(remaining + 1))
+            .await
+            .expect_err("daily cap includes classifier spend");
+        assert_eq!(err.code, ErrorCode::BudgetExceeded);
+        assert!(err.message.contains("daily"), "{}", err.message);
+        budget
+            .reserve_with(metered(remaining))
+            .await
+            .expect("remainder fits");
+    }
+
+    #[tokio::test]
+    async fn classifier_cost_counts_toward_monthly_cap() {
+        let db = TestDb::create().await;
+        // month cap one cent; day cap one cent (daily may not exceed monthly); sub-cap $1 is clamped by month
+        let budget = db.budget(&budget_yaml(1, 1, 1, 10), PRICE_VERSION);
+        let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.95))).await;
+        let p = pipeline(&mock.url, 1000, ClassifierMode::Shadow);
+        p.route(&budget, request("fix the failing test"))
+            .await
+            .expect("route");
+        assert_eq!(
+            counted_where(&db, "category = 'classifier'").await,
+            CLASSIFIER_ACTUAL_MICROS
+        );
+        let remaining = ONE_CENT_MICROS - CLASSIFIER_ACTUAL_MICROS;
+        let err = budget
+            .reserve_with(metered(remaining + 1))
+            .await
+            .expect_err("monthly cap includes classifier spend");
+        assert_eq!(err.code, ErrorCode::BudgetExceeded);
+    }
+
+    #[tokio::test]
+    async fn classifier_subcap_exceeded_falls_back_to_baseline_not_error() {
+        let db = TestDb::create().await;
+        let budget = db.budget(&budget_yaml(2000, 100, 1, 10), PRICE_VERSION);
+        // Exhaust the one-cent classifier sub-cap.
+        budget
+            .reserve_with(classifier(ONE_CENT_MICROS))
+            .await
+            .expect("fills sub-cap");
+        let mock = spawn(Behavior::Reply(ok_body("coding", "deep", 0.99))).await;
+        let p = pipeline(&mock.url, 1000, ClassifierMode::Active);
+        let out = p
+            .route(&budget, request("fix the failing test"))
+            .await
+            .expect("sub-cap refusal degrades, never errors");
+        assert_eq!(mock.hits(), 0, "classifier not called without budget");
+        assert!(out.classification.is_none());
+        assert!(out.classifier_note.contains("skipped"));
+        assert_eq!(out.classifier_cost, None);
+        assert_eq!(
+            out.plan.decision.model_id,
+            baseline_model("fix the failing test").await
+        );
+        // Metered spend is unaffected by the classifier sub-cap.
+        budget
+            .reserve_with(metered(ONE_CENT_MICROS))
+            .await
+            .expect("metered category still has room");
     }
 
     #[tokio::test]

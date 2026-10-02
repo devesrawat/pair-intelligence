@@ -1,13 +1,12 @@
 //! `PgBudget`: the Postgres-backed implementation of `pair_core::traits::Budget`.
-use crate::reserve::{ReserveRequest, TaskKind};
 use crate::{BudgetConfig, PriceBook};
 use async_trait::async_trait;
 use chrono::Utc;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{ReservationId, TaskId};
 use pair_core::money::Micros;
-use pair_core::traits::Budget;
-use pair_core::types::{LedgerEntry, UsageReport};
+use pair_core::traits::{Budget, BudgetEx};
+use pair_core::types::{BudgetCategory, LedgerEntry, ReserveRequest, TaskKind, UsageReport};
 use sqlx::PgPool;
 
 #[derive(Debug, Clone)]
@@ -23,6 +22,17 @@ impl PgBudget {
             pool,
             config,
             prices,
+        }
+    }
+
+    /// Explicit version if given, else the book's current one.
+    pub(crate) fn resolve_price_version(&self, requested: Option<&str>) -> Result<String> {
+        match requested.or_else(|| self.prices.current()) {
+            Some(v) => Ok(v.to_owned()),
+            None => Err(PairError::new(
+                ErrorCode::BudgetUnknownPrice,
+                "no current price version configured",
+            )),
         }
     }
 
@@ -42,26 +52,24 @@ pub(crate) fn db_err(context: &str, e: sqlx::Error) -> PairError {
 #[async_trait]
 impl Budget for PgBudget {
     async fn reserve(&self, task: TaskId, max_cost: Micros) -> Result<ReservationId> {
-        let price_version = self
-            .prices
-            .current()
-            .ok_or_else(|| {
-                PairError::new(
-                    ErrorCode::BudgetUnknownPrice,
-                    "no current price version configured",
-                )
-            })?
-            .to_owned();
-        self.reserve_with(ReserveRequest::metered(
+        self.reserve_with(ReserveRequest {
             task,
             max_cost,
-            TaskKind::Default,
-            price_version,
-        ))
+            kind: TaskKind::Default,
+            category: BudgetCategory::Metered,
+            price_version: None,
+        })
         .await
     }
 
     async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
         self.reconcile_at(id, usage, Utc::now()).await
+    }
+}
+
+#[async_trait]
+impl BudgetEx for PgBudget {
+    async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
+        PgBudget::reserve_with(self, req).await
     }
 }

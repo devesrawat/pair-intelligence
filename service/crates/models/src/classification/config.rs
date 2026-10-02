@@ -1,4 +1,4 @@
-//! Typed view of the `routing:` section of `config/routing.yaml`.
+//! Typed view of the `routing:` section of `config/models.yaml`.
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::types::DataClass;
 use serde::Deserialize;
@@ -142,8 +142,8 @@ impl RoutingConfig {
 
 #[cfg(test)]
 pub(crate) fn test_config() -> RoutingConfig {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/routing.yaml");
-    RoutingConfig::from_path(&path).expect("config/routing.yaml loads")
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml");
+    RoutingConfig::from_path(&path).expect("config/models.yaml loads")
 }
 
 #[cfg(test)]
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_from_yaml_unknown_tier_rejected() {
         let bad = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/routing.yaml"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml"),
         )
         .expect("read")
         .replace("default_tier: strong", "default_tier: bogus");

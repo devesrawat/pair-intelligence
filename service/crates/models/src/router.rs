@@ -224,7 +224,8 @@ impl ConfigRouter {
         let deepest = exclusions.iter().map(|e| e.stage).max();
         let code = match deepest {
             Some(Stage::Provider) => ErrorCode::ProviderDisallowed,
-            Some(Stage::Capability) | None => ErrorCode::InvalidInput,
+            Some(Stage::Capability) => ErrorCode::CapabilityMismatch,
+            None => ErrorCode::InvalidInput,
             Some(Stage::Context) => ErrorCode::ContextOverflow,
             Some(Stage::Availability) => ErrorCode::ProviderUnavailable,
             Some(Stage::Budget) => ErrorCode::BudgetExceeded,
@@ -434,7 +435,7 @@ mod tests {
         let mut k = r.default_constraints();
         k.extra_capabilities = vec!["vision".into()];
         let err = r.plan(&p, None, &k).expect_err("nobody has vision");
-        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert_eq!(err.code, ErrorCode::CapabilityMismatch);
         assert!(err.message.contains("vision"));
     }
 

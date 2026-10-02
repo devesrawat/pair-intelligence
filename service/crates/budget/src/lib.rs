@@ -11,8 +11,8 @@ mod reserve;
 
 pub use config::BudgetConfig;
 pub use ledger::PgBudget;
+pub use pair_core::types::{BudgetCategory, ReserveRequest, TaskKind};
 pub use pricebook::PriceBook;
-pub use reserve::{BudgetCategory, ReserveRequest, TaskKind};
 
 /// Migrations shared by the whole workspace (`migrations/` at the repo root).
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");

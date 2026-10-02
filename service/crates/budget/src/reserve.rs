@@ -5,73 +5,10 @@ use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{ReservationId, TaskId};
 use pair_core::money::Micros;
+use pair_core::types::{BudgetCategory, ReserveRequest};
 
 /// Single global lock key serializing all reservations (single-owner system).
 const RESERVE_LOCK_KEY: i64 = 0x5041_4952_4255_4447; // "PAIRBUDG"
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskKind {
-    Default,
-    Research,
-    Coding,
-}
-
-impl TaskKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Research => "research",
-            Self::Coding => "coding",
-        }
-    }
-}
-
-/// `Classifier` spend also counts toward day/month totals but has its own monthly sub-cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BudgetCategory {
-    Metered,
-    Classifier,
-}
-
-impl BudgetCategory {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Metered => "metered",
-            Self::Classifier => "classifier",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ReserveRequest {
-    pub task: TaskId,
-    pub max_cost: Micros,
-    pub kind: TaskKind,
-    pub category: BudgetCategory,
-    pub price_version: String,
-}
-
-impl ReserveRequest {
-    pub fn metered(task: TaskId, max_cost: Micros, kind: TaskKind, price_version: String) -> Self {
-        Self {
-            task,
-            max_cost,
-            kind,
-            category: BudgetCategory::Metered,
-            price_version,
-        }
-    }
-
-    pub fn classifier(task: TaskId, max_cost: Micros, price_version: String) -> Self {
-        Self {
-            task,
-            max_cost,
-            kind: TaskKind::Default,
-            category: BudgetCategory::Classifier,
-            price_version,
-        }
-    }
-}
 
 struct Totals {
     task: i64,
@@ -107,10 +44,11 @@ impl PgBudget {
         req: ReserveRequest,
         now: DateTime<Utc>,
     ) -> Result<ReservationId> {
-        if !self.prices.is_known(&req.price_version) {
+        let price_version = self.resolve_price_version(req.price_version.as_deref())?;
+        if !self.prices.is_known(&price_version) {
             return Err(PairError::new(
                 ErrorCode::BudgetUnknownPrice,
-                format!("unknown price version {:?}", req.price_version),
+                format!("unknown price version {price_version:?}"),
             ));
         }
         if req.max_cost <= Micros::ZERO {
@@ -155,7 +93,7 @@ impl PgBudget {
         .bind(req.task.0)
         .bind(req.category.as_str())
         .bind(req.kind.as_str())
-        .bind(&req.price_version)
+        .bind(&price_version)
         .bind(period.day)
         .bind(period.month)
         .bind(req.max_cost.0)

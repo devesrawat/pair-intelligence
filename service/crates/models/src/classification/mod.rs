@@ -8,4 +8,6 @@ pub mod pipeline;
 pub mod questions;
 pub mod state;
 #[cfg(test)]
+pub(crate) mod test_db;
+#[cfg(test)]
 pub(crate) mod test_support;

@@ -16,7 +16,7 @@ scripts/evaluate jev        # additionally calls Jev; requires TYPESAFE_API_KEY 
 scripts/check routing       # clippy + tests for the router and classifier
 ```
 
-`baseline` reports intent/difficulty agreement with the **draft** labels, **modeled** generation cost (placeholder prices in `config/routing.yaml`, 500 assumed output tokens, no retries) and local compute latency. The fixed baseline predicts no labels, so its accuracy is N/A. `jev` sends only `data_class: public` cases to the vendor and reports classifier latency, classifier cost from returned usage, and agreement with draft labels. It does **not** measure downstream acceptance.
+`baseline` reports intent/difficulty agreement with the **draft** labels, **modeled** generation cost (placeholder prices in `config/models.yaml`, 500 assumed output tokens, no retries) and local compute latency. The fixed baseline predicts no labels, so its accuracy is N/A. `jev` sends only `data_class: public` cases to the vendor and reports classifier latency, classifier cost from returned usage, and agreement with draft labels. It does **not** measure downstream acceptance.
 
 ## What still needs the owner
 

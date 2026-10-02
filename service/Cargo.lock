@@ -1162,6 +1162,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "pair-budget",
  "pair-core",
  "pair-telemetry",
  "reqwest",

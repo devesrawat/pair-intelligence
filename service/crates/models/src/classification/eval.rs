@@ -309,7 +309,7 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/../../../evals/datasets/routing.held_out.sha256"
     );
-    const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/routing.yaml");
+    const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/models.yaml");
 
     fn dataset() -> Dataset {
         Dataset::load(Path::new(DATASET)).expect("dataset loads")

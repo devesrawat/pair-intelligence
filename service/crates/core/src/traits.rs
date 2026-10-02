@@ -19,6 +19,11 @@ pub trait Budget: Send + Sync {
     async fn reserve(&self, task: TaskId, max_cost: Micros) -> Result<ReservationId>;
     async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry>;
 }
+/// Budget with category-aware reservations. A separate trait so plain `Budget` impls keep compiling.
+#[async_trait]
+pub trait BudgetEx: Budget {
+    async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId>;
+}
 #[async_trait]
 pub trait Memory: Send + Sync {
     async fn propose(&self, c: MemoryCandidate) -> Result<CandidateId>;

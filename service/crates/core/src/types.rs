@@ -60,6 +60,74 @@ pub struct UsageReport {
     pub actual_cost: Option<Micros>,
     pub price_version: String,
 }
+/// Per-task cap selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    Default,
+    Research,
+    Coding,
+}
+
+impl TaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Research => "research",
+            Self::Coding => "coding",
+        }
+    }
+}
+
+/// `Classifier` spend also counts toward day/month totals but has its own monthly sub-cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetCategory {
+    Metered,
+    Classifier,
+}
+
+impl BudgetCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Metered => "metered",
+            Self::Classifier => "classifier",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReserveRequest {
+    pub task: TaskId,
+    pub max_cost: Micros,
+    pub kind: TaskKind,
+    pub category: BudgetCategory,
+    /// `None` selects the budget's current price version.
+    pub price_version: Option<String>,
+}
+
+impl ReserveRequest {
+    pub fn metered(task: TaskId, max_cost: Micros, kind: TaskKind, price_version: String) -> Self {
+        Self {
+            task,
+            max_cost,
+            kind,
+            category: BudgetCategory::Metered,
+            price_version: Some(price_version),
+        }
+    }
+
+    pub fn classifier(task: TaskId, max_cost: Micros, price_version: String) -> Self {
+        Self {
+            task,
+            max_cost,
+            kind: TaskKind::Default,
+            category: BudgetCategory::Classifier,
+            price_version: Some(price_version),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerEntry {
     pub id: LedgerEntryId,

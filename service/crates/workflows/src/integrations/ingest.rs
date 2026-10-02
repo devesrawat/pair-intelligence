@@ -1,4 +1,4 @@
-use super::client::{ChangeBatch, ClientError, Provider, SourceChange, SourceClient};
+use super::client::{ChangeBatch, ClientError, RemoteItem, SourceChange, SourceClient};
 use super::store::{self, AccountState, IntegrationAccount};
 use super::MAX_PAGES_PER_SCOPE;
 use crate::daily::store::db_err;
@@ -107,17 +107,7 @@ async fn apply_batch(
     for change in &batch.changes {
         match change {
             SourceChange::Upsert(item) => {
-                let o = upsert(
-                    &mut tx,
-                    account.id,
-                    account.provider,
-                    scope,
-                    &item.external_id,
-                    &item.revision,
-                    item.source_updated_at,
-                    &item.content,
-                )
-                .await?;
+                let o = upsert(&mut tx, account, scope, item).await?;
                 match o {
                     Outcome::Inserted => stats.inserted += 1,
                     Outcome::Updated => stats.updated += 1,
@@ -158,14 +148,18 @@ enum Outcome {
 
 async fn upsert(
     tx: &mut Transaction<'_, Postgres>,
-    account: Uuid,
-    provider: Provider,
+    acct: &IntegrationAccount,
     scope: &str,
-    external_id: &str,
-    revision: &str,
-    source_updated_at: DateTime<Utc>,
-    content: &serde_json::Value,
+    item: &RemoteItem,
 ) -> Result<Outcome> {
+    let (account, provider) = (acct.id, acct.provider);
+    let RemoteItem {
+        external_id,
+        revision,
+        source_updated_at,
+        content,
+    } = item;
+    let source_updated_at = *source_updated_at;
     let existing = sqlx::query("SELECT revision, source_updated_at FROM integration_sources WHERE account_id = $1 AND external_id = $2 FOR UPDATE")
         .bind(account)
         .bind(external_id)
@@ -189,7 +183,7 @@ async fn upsert(
         return Ok(Outcome::Inserted);
     };
     let current: String = row.try_get("revision").map_err(db_err)?;
-    if current == revision {
+    if current == *revision {
         return Ok(Outcome::Unchanged);
     }
     let stored_at: DateTime<Utc> = row.try_get("source_updated_at").map_err(db_err)?;

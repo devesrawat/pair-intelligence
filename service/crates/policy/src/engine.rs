@@ -76,7 +76,11 @@ impl PolicyEngine {
     }
 
     fn check_paths(&self, req: &ActionRequest, workspace: &Path) -> Result<(), String> {
-        let arg_paths = req.args.iter().filter_map(|a| path_like(a));
+        let arg_paths = req
+            .args
+            .iter()
+            .flat_map(|a| arg_values(a))
+            .filter_map(path_like);
         req.paths
             .iter()
             .map(String::as_str)
@@ -85,7 +89,11 @@ impl PolicyEngine {
     }
 
     fn check_destinations(&self, req: &ActionRequest) -> Result<(), String> {
-        let arg_urls = req.args.iter().filter_map(|a| url_like(a));
+        let arg_urls = req
+            .args
+            .iter()
+            .flat_map(|a| arg_values(a))
+            .filter_map(url_like);
         req.destination
             .as_deref()
             .into_iter()
@@ -109,22 +117,34 @@ impl Policy for PolicyEngine {
 }
 
 /// The value part of an argument (`--flag=value` or `KEY=value` gives `value`).
-fn arg_value(arg: &str) -> &str {
+fn assigned_value(arg: &str) -> &str {
     match arg.split_once('=') {
         Some((name, value)) if !name.contains('/') => value,
         _ => arg,
     }
 }
 
-/// Arguments that could name a filesystem location are treated as paths (fail closed).
-fn path_like(arg: &str) -> Option<&str> {
-    let value = arg_value(arg);
+/// Every value an argument could carry: the argument itself, its `=` value, and for a short
+/// flag with an attached value (`-o/etc/x`) the text after the flag letter.
+fn arg_values(arg: &str) -> impl Iterator<Item = &str> {
+    let attached = arg
+        .strip_prefix('-')
+        .filter(|rest| !rest.starts_with('-'))
+        .and_then(|rest| rest.chars().next().map(|flag| &rest[flag.len_utf8()..]))
+        .filter(|value| !value.is_empty());
+    [Some(arg), attached]
+        .into_iter()
+        .flatten()
+        .map(assigned_value)
+}
+
+/// Values that could name a filesystem location are treated as paths (fail closed).
+fn path_like(value: &str) -> Option<&str> {
     let is_path = !value.contains(URL_SEPARATOR)
         && (value.contains('/') || value.starts_with('~') || value == "..");
     is_path.then_some(value)
 }
 
-fn url_like(arg: &str) -> Option<&str> {
-    let value = arg_value(arg);
+fn url_like(value: &str) -> Option<&str> {
     value.contains(URL_SEPARATOR).then_some(value)
 }

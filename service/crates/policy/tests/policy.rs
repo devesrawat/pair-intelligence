@@ -241,6 +241,56 @@ fn malformed_config_fails_closed() {
     .is_err());
 }
 
+fn exec_with(f: &common::Fixture, args: &[&str]) -> Decision {
+    let mut r = request("shell.exec");
+    r.executable = Some("cat".into());
+    r.args = args.iter().map(ToString::to_string).collect();
+    f.engine.authorize(&r, &f.ctx).decision
+}
+
+#[test]
+fn attached_flag_path_is_checked() {
+    let f = fixture();
+    for arg in [
+        "-o/etc/x",
+        "--output=/etc/x",
+        "-o../escape",
+        "-o..",
+        "-o~/.ssh/id_rsa",
+        "-O=/etc/x",
+    ] {
+        assert!(
+            matches!(exec_with(&f, &[arg]), Decision::Deny { .. }),
+            "{arg} must be denied"
+        );
+    }
+    std::fs::write(f.workspace.join("a.txt"), "x").expect("write");
+    for arg in ["-oa.txt", "-osub/new.txt", "--output=a.txt", "-n", "-5"] {
+        assert_eq!(
+            exec_with(&f, &[arg]),
+            Decision::Allow,
+            "{arg} is in-workspace"
+        );
+    }
+}
+
+#[test]
+fn attached_flag_url_is_checked() {
+    let f = fixture();
+    for arg in [
+        "-ohttps://evil.example.com/x",
+        "--url=https://evil.example.com/x",
+        "-Ipath/x=https://evil.example.com/x",
+    ] {
+        assert!(
+            matches!(exec_with(&f, &[arg]), Decision::Deny { .. }),
+            "{arg} must be denied"
+        );
+    }
+    let ok = "-ohttps://api.github.com/repos";
+    assert_eq!(exec_with(&f, &[ok]), Decision::Allow);
+}
+
 const MINIMAL_POLICY: &str = r#"
 # comment at top
 version: "t1"   # trailing comment

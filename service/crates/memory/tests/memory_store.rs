@@ -108,6 +108,8 @@ async fn deleted_source_is_not_retrievable() {
     let c2 = mem.propose(two).await.unwrap();
     let survivor = mem.accept(c2, "owner").await.unwrap();
 
+    let pending = mem.propose(candidate("fact", "Another fact from the doc", None, only.id, "x")).await.unwrap();
+
     let report = mem.delete_source(only.id, "owner").await.unwrap();
     assert_eq!(report.invalidated, vec![doomed]);
 
@@ -123,8 +125,9 @@ async fn deleted_source_is_not_retrievable() {
     assert_eq!(mem.get_memory(survivor).await.unwrap().status, MemoryStatus::Accepted);
 
     // Accepting a candidate whose only source is deleted is refused.
-    let c3 = mem.propose(candidate("fact", "Another fact from the deleted doc", None, only.id, "x")).await.unwrap();
-    assert_eq!(mem.accept(c3, "owner").await.unwrap_err().code, ErrorCode::SourceDeleted);
+    assert_eq!(mem.accept(pending, "owner").await.unwrap_err().code, ErrorCode::SourceDeleted);
+    let late = mem.propose(candidate("fact", "Yet another fact", None, only.id, "x")).await;
+    assert_eq!(late.unwrap_err().code, ErrorCode::SourceDeleted);
 
     let audit: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action = 'memory.invalidated'")
         .fetch_one(&db.pool)

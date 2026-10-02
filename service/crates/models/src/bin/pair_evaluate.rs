@@ -18,7 +18,7 @@ async fn run(mode: &str) -> Result<String, String> {
     let root = root();
     let dataset =
         Dataset::load(&root.join("evals/datasets/routing.jsonl")).map_err(|e| e.to_string())?;
-    let router = load_router(&root.join("config/routing.yaml")).map_err(|e| e.to_string())?;
+    let router = load_router(&root.join("config/models.yaml")).map_err(|e| e.to_string())?;
     let mut reports: Vec<StrategyReport> = Vec::new();
     for (name, split) in [("dev", Split::Dev), ("held_out", Split::HeldOut)] {
         let cases = dataset.split(split);

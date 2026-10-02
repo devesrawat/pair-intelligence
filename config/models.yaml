@@ -55,3 +55,41 @@ models:
     data_policy: not_logged_not_trained_per_pricing_page
     allowed_data_classes: [public]
     health: healthy
+
+# ---- Routing (Task 10) ----
+# Read by pair-models' RoutingConfig (the `routing:` key only); ProviderRegistry reads `models:` only.
+# Model IDs, prices and context sizes below are PLACEHOLDERS until docs/provider-billing.md rows
+# are verified; they are not vendor figures.
+routing:
+  classifier:
+    mode: shadow                      # disabled | shadow | active
+    endpoint: https://api.typesafe.ai/v1/systemone
+    model: jev-1.13.0                 # UNVERIFIED pin (billing sheet); the returned `model` is recorded on every call
+    deadline_ms: 1000                 # spec 6.1; no synchronous retry
+    input_price_micros_per_mtok: 42000   # $0.042 / M input tokens, output free
+    price_version: jev-2026-10-02
+    questions_path: config/jev-questions.json
+    allowed_data_classes: [public, personal]   # sensitive/employer never sent to the classifier
+    active_categories: []             # intents allowed to change the tier in active mode; empty until gates pass
+  max_model_attempts: 3
+  task_cap_micros: 100000             # default_task_cap, $0.10
+  max_output_tokens: 4096
+  tier_order: [routine, strong, deep]
+  tier_by_difficulty: {routine: routine, substantial: strong, deep: deep}
+  baseline:
+    default_tier: strong
+    by_intent: {coding: strong, research: strong, planning: strong, memory_recall: routine, transformation: routine, mixed: strong, uncertain: strong}
+  # Per (returned model version, questionVersion) thresholds. No entry => below threshold => baseline.
+  # Values are placeholders; calibrate on the dev split only, then freeze.
+  thresholds:
+    - {model_version: jev-1.13.0, question_version: "2026-10-03.1", intent: 0.90, difficulty: 0.90}
+  data_class_providers:
+    public: [ollama_cloud, anthropic, openai]
+    personal: [ollama_cloud, anthropic]
+    sensitive: [anthropic]
+    employer: [anthropic]
+  candidates:
+    - {id: "gemma4:31b", provider: ollama_cloud, tier: routine, capabilities: [text], context_tokens: 128000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}
+    - {id: placeholder-strong-a, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 3000000, output_price_micros_per_mtok: 15000000}
+    - {id: placeholder-strong-b, provider: ollama_cloud, tier: strong, capabilities: [text, tools], context_tokens: 128000, available: true, input_price_micros_per_mtok: 800000, output_price_micros_per_mtok: 2400000}
+    - {id: placeholder-deep-a, provider: anthropic, tier: deep, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 15000000, output_price_micros_per_mtok: 75000000}

@@ -5,3 +5,4 @@ upstream/
 !.env.example
 node_modules/
 target/
+.claude/

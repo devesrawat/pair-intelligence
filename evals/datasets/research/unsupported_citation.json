@@ -1,0 +1,47 @@
+{
+  "question": "How much did Acme revenue grow in 2023?",
+  "pages": [
+    {
+      "url": "https://example.com/annual-report",
+      "text": "Acme Corp. Annual report. Acme revenue grew 4% in 2023, driven by services.",
+      "published_at": "2024-02-01",
+      "available": true,
+      "reason": null
+    }
+  ],
+  "claims": [
+    {
+      "topic": "revenue growth 2023",
+      "text": "Acme revenue grew 4% in 2023",
+      "value": "4%",
+      "url": "https://example.com/annual-report",
+      "span": "Acme revenue grew 4% in 2023"
+    },
+    {
+      "topic": "revenue growth 2023 (inflated)",
+      "text": "Acme revenue grew 40% in 2023",
+      "value": "40%",
+      "url": "https://example.com/annual-report",
+      "span": "Acme revenue grew 4% in 2023"
+    },
+    {
+      "topic": "revenue doubling",
+      "text": "Acme doubled its revenue",
+      "value": "doubled",
+      "url": "https://example.com/annual-report",
+      "span": "Acme doubled its revenue overnight"
+    }
+  ],
+  "statements": [
+    {
+      "text": "Acme revenue grew 4% in 2023.",
+      "claim_ids": [
+        "c1"
+      ]
+    }
+  ],
+  "expect": {
+    "validated": 1,
+    "rejected": 2
+  }
+}

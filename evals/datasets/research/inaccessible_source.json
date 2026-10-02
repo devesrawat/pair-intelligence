@@ -1,0 +1,48 @@
+{
+  "question": "When did Acme launch?",
+  "pages": [
+    {
+      "url": "https://example.com/annual-report",
+      "text": "Acme launched its first product in 2019 after two years of development.",
+      "published_at": "2023-05-01",
+      "available": true,
+      "reason": null
+    },
+    {
+      "url": "https://blog.example.net/acme-launch",
+      "text": "",
+      "published_at": null,
+      "available": false,
+      "reason": "HTTP 403 forbidden"
+    }
+  ],
+  "claims": [
+    {
+      "topic": "launch year",
+      "text": "Acme launched its first product in 2019",
+      "value": "2019",
+      "url": "https://example.com/annual-report",
+      "span": "Acme launched its first product in 2019"
+    },
+    {
+      "topic": "launch year b",
+      "text": "Acme launched in 2019",
+      "value": "2019",
+      "url": "https://blog.example.net/acme-launch",
+      "span": "Acme launched in 2019 to great fanfare"
+    }
+  ],
+  "statements": [
+    {
+      "text": "Acme launched its first product in 2019.",
+      "claim_ids": [
+        "c1"
+      ]
+    }
+  ],
+  "expect": {
+    "validated": 1,
+    "rejected": 1,
+    "unavailable": 1
+  }
+}

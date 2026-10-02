@@ -14,7 +14,8 @@ async-trait.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 chrono.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+serde_yaml_ng = "0.10.0"
 
 [lints]
 workspace = true

@@ -51,11 +51,18 @@ struct EntryConfig {
     quota_requests_per_minute: Option<u32>,
     #[serde(default)]
     health: Health,
+    /// False when the model id has not been confirmed against the provider catalog.
+    #[serde(default = "default_id_verified")]
+    id_verified: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct RegistryConfig {
     models: Vec<EntryConfig>,
+}
+
+fn default_id_verified() -> bool {
+    true
 }
 
 fn default_modalities() -> Vec<String> {
@@ -78,6 +85,8 @@ pub struct ModelEntry {
     pub allowed_data_classes: Vec<DataClass>,
     pub quota_requests_per_minute: Option<u32>,
     pub health: Health,
+    /// False means the id is a guess; `generate` refuses unless explicitly overridden.
+    pub id_verified: bool,
 }
 
 impl ModelEntry {
@@ -111,7 +120,28 @@ impl ProviderRegistry {
                 format!("read {}: {e}", path.display()),
             )
         })?;
-        Self::from_yaml_str(&text)
+        let registry = Self::from_yaml_str(&text)?;
+        registry.warn_unverified();
+        Ok(registry)
+    }
+
+    /// Ids whose catalog verification is still pending.
+    pub fn unverified_ids(&self) -> Vec<String> {
+        self.iter()
+            .filter(|e| !e.id_verified)
+            .map(|e| e.id.clone())
+            .collect()
+    }
+
+    /// Startup warning for every unverified model id.
+    pub fn warn_unverified(&self) {
+        for id in self.unverified_ids() {
+            tracing::warn!(
+                model = %id,
+                "model id is unverified (id_verified: false); calls are refused unless {}=1",
+                super::common::ALLOW_UNVERIFIED_ENV
+            );
+        }
     }
 
     /// Parse and validate. Every endpoint passes the cloud-only guard.
@@ -194,6 +224,7 @@ fn build_entry(e: EntryConfig, endpoint: Endpoint) -> Result<ModelEntry> {
         allowed_data_classes: e.allowed_data_classes,
         quota_requests_per_minute: e.quota_requests_per_minute,
         health: e.health,
+        id_verified: e.id_verified,
     })
 }
 

@@ -1,6 +1,9 @@
 //! Ollama Cloud adapter: `POST {base}/api/chat` with Bearer auth, NDJSON streaming.
 //! The base URL comes from the registry entry and must pass the cloud-only guard.
-use super::common::{http_error, net_error, read_lines, usage_report, vet_request, with_deadline};
+use super::common::{
+    allow_unverified_from_env, http_error, net_error, read_lines, usage_report, vet_request,
+    with_deadline,
+};
 use super::guard::{guarded_client, GuardedResolver};
 use super::registry::{ModelEntry, ProviderKind, ProviderRegistry};
 use async_trait::async_trait;
@@ -22,6 +25,7 @@ pub struct OllamaCloudProvider {
     key: Secret,
     registry: Arc<ProviderRegistry>,
     redactor: Redactor,
+    allow_unverified: bool,
 }
 
 impl std::fmt::Debug for OllamaCloudProvider {
@@ -47,7 +51,15 @@ impl OllamaCloudProvider {
             key,
             registry,
             redactor,
+            allow_unverified: allow_unverified_from_env(),
         })
+    }
+
+    /// Override the `PAIR_ALLOW_UNVERIFIED_MODEL_IDS` environment decision.
+    #[must_use]
+    pub fn with_allow_unverified_ids(mut self, allow: bool) -> Self {
+        self.allow_unverified = allow;
+        self
     }
 
     pub fn from_env(registry: Arc<ProviderRegistry>) -> Result<Self> {
@@ -112,7 +124,12 @@ impl OllamaCloudProvider {
 #[async_trait]
 impl Provider for OllamaCloudProvider {
     async fn generate(&self, req: ModelRequest) -> Result<ModelResponse> {
-        let entry = vet_request(&self.registry, &req, ProviderKind::OllamaCloud)?;
+        let entry = vet_request(
+            &self.registry,
+            &req,
+            ProviderKind::OllamaCloud,
+            self.allow_unverified,
+        )?;
         let trace = req.trace;
         let result = with_deadline(req.deadline_ms, self.call(&entry, &req)).await;
         match &result {

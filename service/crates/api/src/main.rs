@@ -5,8 +5,10 @@ use std::time::Duration;
 use pair_api::config::{self, Config};
 use pair_api::healthcheck;
 use pair_api::state::AppState;
+use pair_models::provider::ProviderRegistry;
 use sqlx::migrate::Migrator;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 const POOL_MAX_CONNECTIONS: u32 = 10;
@@ -41,9 +43,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(dir = %cfg.migrations_dir.display(), "migrations applied");
     }
 
-    let state = AppState::new(pool, cfg.service_token.as_str())
+    let mut state = AppState::new(pool, cfg.service_token.as_str())
         .with_migrations_dir(cfg.migrations_dir)
         .with_data_dir(cfg.data_dir);
+    // Fails fast on an invalid registry; logs a warning per unverified model id.
+    if cfg.models_config.is_file() {
+        let registry = ProviderRegistry::load(&cfg.models_config)?;
+        tracing::info!(path = %cfg.models_config.display(), "provider registry loaded");
+        state = state.with_providers(Arc::new(registry));
+    }
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
     tracing::info!(bind = %cfg.bind, "pair-api listening");
     axum::serve(listener, pair_api::router(state))

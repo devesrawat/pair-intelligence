@@ -1,0 +1,5 @@
+{"ts":"2026-10-02T20:35:39.295Z","hook":"before_model_resolve","promptPreview":"do it SCENARIO:approve","providerOverride":"mock","modelOverride":"mock-routed"}
+{"ts":"2026-10-02T20:35:41.765Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:35:41.824Z","hook":"before_tool_call","error":"Error: injected policy error","decision":"deny-on-error"}
+{"ts":"2026-10-02T20:35:41.953Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:35:41.994Z","hook":"llm_output","provider":"mock","model":"mock-routed","usage":{"input":22,"output":14,"cacheRead":0,"cacheWrite":0,"total":36,"cost":{"total":0}}}

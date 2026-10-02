@@ -19,8 +19,9 @@ pub const DEFAULT_LIMIT: usize = 8;
 pub const MAX_LIMIT: usize = 32;
 /// Reciprocal rank fusion constant.
 const RRF_K: f64 = 60.0;
-/// Fraction of (non-stop-word) query terms a memory must match to be returned. Keeps
-/// single-word overlaps from producing unsupported answers.
+/// Fraction of (non-stop-word) query terms a memory must match to be returned, counted over the
+/// union of all its chunks (memory text and evidence spans). Keeps single-word overlaps from
+/// producing unsupported answers.
 const MIN_TERM_COVERAGE: f64 = 0.5;
 const MAX_QUERY_TERMS: usize = 24;
 const MAX_CANDIDATES: i64 = 200;
@@ -174,7 +175,9 @@ async fn fulltext_hits(
         .max(1.0) as i64;
     let sql = format!(
         "SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
-                max((SELECT count(*) FROM unnest($1::text[]) t WHERE c.search_vector @@ plainto_tsquery('english', t))) AS matched \
+                (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
+                    SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
+                      AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
          FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
          WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
          GROUP BY m.id ORDER BY rank DESC, m.id LIMIT {MAX_CANDIDATES}",

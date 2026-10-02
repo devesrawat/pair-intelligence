@@ -560,3 +560,36 @@ async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
         .chain(&auth)
         .all(|i| !i.content.starts_with('[') && !i.inferred));
 }
+
+#[tokio::test]
+async fn coverage_counts_across_chunks() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    // Two query terms live in the memory text, two others only in the evidence span.
+    let (id, _) = accept_fact(
+        &mem,
+        "fact",
+        "Kubernetes deployment",
+        None,
+        "k8s",
+        "frankfurt region",
+    )
+    .await;
+    // Five terms need three matches; no single chunk has more than two.
+    let hits = mem
+        .retrieve_detailed(query(
+            "kubernetes deployment frankfurt region unrelated",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].item.memory, id);
+
+    // Terms matched in no chunk still do not count: 2 of 5 stays below the gate.
+    let weak = mem
+        .retrieve_detailed(query("kubernetes frankfurt alpha beta gamma", None))
+        .await
+        .unwrap();
+    assert!(weak.is_empty());
+}

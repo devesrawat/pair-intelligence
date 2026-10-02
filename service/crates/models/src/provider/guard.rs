@@ -1,6 +1,9 @@
 //! Endpoint guard: PAIR is cloud-only. Local, private and local-inference endpoints are rejected.
+use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use url::{Host, Url};
 
 /// Default port of a local Ollama daemon; never a valid cloud endpoint.
@@ -79,6 +82,14 @@ fn check_domain(d: &str) -> Result<()> {
     Ok(())
 }
 
+/// Single source of truth for the forbidden address ranges (static URL check and connect-time check).
+pub fn check_ip(ip: IpAddr) -> Result<()> {
+    match ip {
+        IpAddr::V4(v4) => check_v4(v4),
+        IpAddr::V6(v6) => check_v6(v6),
+    }
+}
+
 fn check_v4(ip: Ipv4Addr) -> Result<()> {
     let [a, b, ..] = ip.octets();
     let cgnat = a == 100 && (64..128).contains(&b);
@@ -105,6 +116,87 @@ fn check_v6(ip: Ipv6Addr) -> Result<()> {
         return Err(disallowed(format!("address {ip} is local or private")));
     }
     Ok(())
+}
+
+/// Host name -> IP addresses. Injectable so DNS-rebinding behaviour is testable offline.
+#[async_trait]
+pub trait HostLookup: Send + Sync {
+    async fn lookup(&self, host: &str) -> std::io::Result<Vec<IpAddr>>;
+}
+
+/// System resolver via tokio.
+#[derive(Debug, Default)]
+pub struct SystemLookup;
+
+#[async_trait]
+impl HostLookup for SystemLookup {
+    async fn lookup(&self, host: &str) -> std::io::Result<Vec<IpAddr>> {
+        let addrs = tokio::net::lookup_host((host, 0)).await?;
+        Ok(addrs.map(|a| a.ip()).collect())
+    }
+}
+
+/// DNS resolver that rejects the whole answer set if ANY address is non-public.
+/// Installed on every provider HTTP client so the check applies at connect time,
+/// defeating DNS rebinding and hostile records for otherwise public-looking names.
+#[derive(Clone)]
+pub struct GuardedResolver {
+    inner: Arc<dyn HostLookup>,
+}
+
+impl GuardedResolver {
+    pub fn new(inner: Arc<dyn HostLookup>) -> Self {
+        Self { inner }
+    }
+
+    pub fn system() -> Self {
+        Self::new(Arc::new(SystemLookup))
+    }
+
+    /// Resolve and vet; any private/local answer rejects the host.
+    pub async fn resolve_checked(&self, host: &str) -> Result<Vec<SocketAddr>> {
+        let ips = self.inner.lookup(host).await.map_err(|e| {
+            PairError::new(
+                ErrorCode::ProviderUnavailable,
+                format!("dns lookup for {host} failed: {e}"),
+            )
+        })?;
+        if ips.is_empty() {
+            return Err(PairError::new(
+                ErrorCode::ProviderUnavailable,
+                format!("dns lookup for {host} returned no addresses"),
+            ));
+        }
+        for ip in &ips {
+            check_ip(*ip).map_err(|e| {
+                disallowed(format!(
+                    "host {host} resolves to non-public address: {}",
+                    e.message
+                ))
+            })?;
+        }
+        Ok(ips.into_iter().map(|ip| SocketAddr::new(ip, 0)).collect())
+    }
+}
+
+impl Resolve for GuardedResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let this = self.clone();
+        Box::pin(async move {
+            let addrs = this.resolve_checked(name.as_str()).await?;
+            let iter: Addrs = Box::new(addrs.into_iter());
+            Ok(iter)
+        })
+    }
+}
+
+/// HTTP client for provider calls: redirects disabled, connect-time DNS guard installed.
+pub fn guarded_client(resolver: GuardedResolver) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .dns_resolver(Arc::new(resolver))
+        .build()
+        .map_err(|e| PairError::new(ErrorCode::Internal, format!("http client: {e}")))
 }
 
 #[cfg(test)]
@@ -137,6 +229,78 @@ mod tests {
             let err = Endpoint::parse(raw).expect_err(raw);
             assert_eq!(err.code, ErrorCode::ProviderDisallowed, "{raw}");
         }
+    }
+
+    struct StubLookup(Vec<IpAddr>);
+
+    #[async_trait]
+    impl HostLookup for StubLookup {
+        async fn lookup(&self, _host: &str) -> std::io::Result<Vec<IpAddr>> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn resolver(ips: &[&str]) -> GuardedResolver {
+        let ips = ips.iter().map(|s| s.parse().expect("ip literal")).collect();
+        GuardedResolver::new(Arc::new(StubLookup(ips)))
+    }
+
+    #[tokio::test]
+    async fn hostname_resolving_to_private_ip_rejected() {
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "169.254.169.254",
+            "100.64.0.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:192.168.0.1",
+        ] {
+            let err = resolver(&[ip])
+                .resolve_checked("api.example.com")
+                .await
+                .expect_err(ip);
+            assert_eq!(err.code, ErrorCode::ProviderDisallowed, "{ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn hostname_resolving_to_public_ip_allowed() {
+        let addrs = resolver(&["160.79.104.10", "2606:4700::1111"])
+            .resolve_checked("api.example.com")
+            .await
+            .expect("public ok");
+        assert_eq!(addrs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn mixed_answers_with_any_private_ip_rejected() {
+        let err = resolver(&["160.79.104.10", "10.0.0.7"])
+            .resolve_checked("api.example.com")
+            .await
+            .expect_err("mixed");
+        assert_eq!(err.code, ErrorCode::ProviderDisallowed);
+    }
+
+    #[tokio::test]
+    async fn client_refuses_to_connect_when_dns_answers_private() {
+        let client = guarded_client(resolver(&["127.0.0.1"])).expect("client");
+        let err = client
+            .get("http://rebind.example.com:9/")
+            .send()
+            .await
+            .expect_err("must not connect");
+        assert!(err.is_connect(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn empty_answer_rejected() {
+        let err = resolver(&[])
+            .resolve_checked("api.example.com")
+            .await
+            .expect_err("empty");
+        assert_eq!(err.code, ErrorCode::ProviderUnavailable);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Ollama Cloud adapter: `POST {base}/api/chat` with Bearer auth, NDJSON streaming.
 //! The base URL comes from the registry entry and must pass the cloud-only guard.
 use super::common::{http_error, net_error, read_lines, usage_report, vet_request, with_deadline};
+use super::guard::{guarded_client, GuardedResolver};
 use super::registry::{ModelEntry, ProviderKind, ProviderRegistry};
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
@@ -39,10 +40,7 @@ impl OllamaCloudProvider {
                 "empty Ollama API key",
             ));
         }
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| PairError::new(ErrorCode::Internal, format!("http client: {e}")))?;
+        let client = guarded_client(GuardedResolver::system())?;
         let redactor = Redactor::new().with_secret(&key);
         Ok(Self {
             client,

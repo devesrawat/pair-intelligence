@@ -1,7 +1,7 @@
 //! Budget configuration read from `config/budget.yaml`. Caps are immutable once loaded.
-use crate::TaskKind;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::money::Micros;
+use pair_core::types::TaskKind;
 use serde::de::{self, Deserializer, Visitor};
 use serde::Deserialize;
 use std::fmt;

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# PAIR PostgreSQL backup: pg_dump custom format, age-encrypted, 7 daily + 4 weekly retention.
+#
+#   scripts/backup               dump + prune
+#   scripts/backup --prune-only  prune only (no database needed)
+#
+# Env: DATABASE_URL, PAIR_BACKUP_DB (default: db in URL), PAIR_BACKUP_DIR (default var/backups),
+#      PAIR_BACKUP_AGE_RECIPIENT (age public key; required unless unencrypted),
+#      PAIR_BACKUP_UNENCRYPTED=1 (explicit opt-out; never use on the production host).
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/retention.sh
+source "$ROOT/scripts/lib/retention.sh"
+BACKUP_DIR="${PAIR_BACKUP_DIR:-$ROOT/var/backups}"
+mkdir -p "$BACKUP_DIR"
+
+if [ "${1:-}" = "--prune-only" ]; then
+  retention_prune "$BACKUP_DIR"; exit 0
+fi
+
+# shellcheck source=lib/pgtools.sh
+source "$ROOT/scripts/lib/pgtools.sh"
+pg_init
+DB="${PAIR_BACKUP_DB:-$PG_DEFAULT_DB}"
+
+encrypt=1
+if [ "${PAIR_BACKUP_UNENCRYPTED:-0}" = "1" ]; then
+  encrypt=0
+  echo "backup: WARNING writing UNENCRYPTED backup (PAIR_BACKUP_UNENCRYPTED=1)" >&2
+else
+  if ! command -v age >/dev/null; then
+    echo "backup: FATAL 'age' not installed; install it or set PAIR_BACKUP_UNENCRYPTED=1 (non-production only)" >&2; exit 1
+  fi
+  if [ -z "${PAIR_BACKUP_AGE_RECIPIENT:-}" ]; then
+    echo "backup: FATAL PAIR_BACKUP_AGE_RECIPIENT not set (age public key)" >&2; exit 1
+  fi
+fi
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+out="$BACKUP_DIR/pair-$ts.dump"
+[ "$encrypt" -eq 1 ] && out="$out.age"
+partial="$out.partial"
+trap 'rm -f "$partial"' EXIT
+
+if [ "$encrypt" -eq 1 ]; then
+  pg_dump_custom "$DB" | age -r "$PAIR_BACKUP_AGE_RECIPIENT" > "$partial"
+else
+  pg_dump_custom "$DB" > "$partial"
+fi
+[ -s "$partial" ] || { echo "backup: FATAL empty dump" >&2; exit 1; }
+mv "$partial" "$out"
+chmod 600 "$out"
+echo "backup: wrote $out ($(wc -c < "$out" | tr -d ' ') bytes)"
+retention_prune "$BACKUP_DIR"

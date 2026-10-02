@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Restore a PAIR backup into a target database.
+#
+#   scripts/restore <backup-file> --target-db NAME [--drop-existing]
+#
+# Env: DATABASE_URL (server + credentials), PAIR_BACKUP_AGE_IDENTITY (age identity file,
+#      required for *.age backups).
+# Safety: the target must differ from the live database named in DATABASE_URL unless
+#      PAIR_RESTORE_CONFIRM_LIVE=<that db name> is set. A non-empty target is refused
+#      unless --drop-existing is passed.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/pgtools.sh
+source "$ROOT/scripts/lib/pgtools.sh"
+
+file="${1:-}"; shift || true
+target="" ; drop_existing=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target-db) target="${2:-}"; shift 2 ;;
+    --drop-existing) drop_existing=1; shift ;;
+    *) echo "restore: unknown arg $1" >&2; exit 2 ;;
+  esac
+done
+[ -f "$file" ] || { echo "usage: scripts/restore <backup-file> --target-db NAME [--drop-existing]" >&2; exit 2; }
+[[ "$target" =~ ^[a-z_][a-z0-9_]*$ ]] || { echo "restore: --target-db must match [a-z_][a-z0-9_]*" >&2; exit 2; }
+
+pg_init
+if [ "$target" = "$PG_DEFAULT_DB" ] && [ "${PAIR_RESTORE_CONFIRM_LIVE:-}" != "$target" ]; then
+  echo "restore: refusing to restore over live database '$target' (set PAIR_RESTORE_CONFIRM_LIVE=$target)" >&2; exit 1
+fi
+
+exists="$(pg_psql postgres -At -c "SELECT 1 FROM pg_database WHERE datname = '$target'")"
+if [ "$exists" = "1" ]; then
+  tables="$(pg_psql "$target" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')")"
+  if [ "$tables" != "0" ] && [ "$drop_existing" -ne 1 ]; then
+    echo "restore: target '$target' has $tables table(s); pass --drop-existing to replace it" >&2; exit 1
+  fi
+  if [ "$drop_existing" -eq 1 ]; then
+    pg_psql postgres -c "DROP DATABASE \"$target\" WITH (FORCE)"
+    exists=""
+  fi
+fi
+[ "$exists" = "1" ] || pg_psql postgres -c "CREATE DATABASE \"$target\""
+
+start=$SECONDS
+if [[ "$file" == *.age ]]; then
+  command -v age >/dev/null || { echo "restore: FATAL age not installed" >&2; exit 1; }
+  [ -n "${PAIR_BACKUP_AGE_IDENTITY:-}" ] || { echo "restore: FATAL PAIR_BACKUP_AGE_IDENTITY not set" >&2; exit 1; }
+  age -d -i "$PAIR_BACKUP_AGE_IDENTITY" "$file" | pg_restore_stdin "$target"
+else
+  pg_restore_stdin "$target" < "$file"
+fi
+echo "restore: restored $file into '$target' in $((SECONDS - start))s"

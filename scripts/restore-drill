@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Restore drill: back up a source DB, restore into a scratch DB, compare exact row
+# counts of every user table, then drop the scratch DB. Non-zero exit on any mismatch.
+#
+#   scripts/restore-drill [--source-db NAME] [--seed-demo]
+#
+# --seed-demo creates a throwaway source database with sample data (pair_drill_src_<ts>),
+# used to prove the tooling when the real database is empty. Scratch databases are always
+# named pair_drill_*; nothing else is ever dropped.
+# Env: as scripts/backup and scripts/restore (PAIR_BACKUP_UNENCRYPTED=1 for local drills).
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/pgtools.sh
+source "$ROOT/scripts/lib/pgtools.sh"
+pg_init
+
+src="" ; seed=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source-db) src="${2:-}"; shift 2 ;;
+    --seed-demo) seed=1; shift ;;
+    *) echo "drill: unknown arg $1" >&2; exit 2 ;;
+  esac
+done
+stamp="$(date -u +%Y%m%d%H%M%S)"
+scratch="pair_drill_${stamp}"
+created_src=""
+work="$(mktemp -d)"
+
+cleanup() {
+  pg_psql postgres -c "DROP DATABASE IF EXISTS \"$scratch\" WITH (FORCE)" >/dev/null 2>&1 || true
+  [ -z "$created_src" ] || pg_psql postgres -c "DROP DATABASE IF EXISTS \"$created_src\" WITH (FORCE)" >/dev/null 2>&1 || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+if [ "$seed" -eq 1 ]; then
+  src="pair_drill_src_${stamp}"; created_src="$src"
+  pg_psql postgres -c "CREATE DATABASE \"$src\""
+  pg_psql "$src" <<'SQL'
+CREATE TABLE memories (id bigserial PRIMARY KEY, body text NOT NULL, source_ref text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE ledger_entries (id bigserial PRIMARY KEY, reservation_id uuid NOT NULL DEFAULT gen_random_uuid(), micro_usd bigint NOT NULL);
+CREATE TABLE jobs (id bigserial PRIMARY KEY, state text NOT NULL, payload jsonb NOT NULL DEFAULT '{}');
+CREATE TABLE empty_table (id int);
+INSERT INTO memories (body, source_ref) SELECT 'memory ' || g, 'src:' || g FROM generate_series(1, 1234) g;
+INSERT INTO ledger_entries (micro_usd) SELECT g * 1000 FROM generate_series(1, 5678) g;
+INSERT INTO jobs (state, payload) SELECT (ARRAY['queued','running','succeeded'])[1 + g % 3], jsonb_build_object('n', g) FROM generate_series(1, 321) g;
+SQL
+fi
+src="${src:-$PG_DEFAULT_DB}"
+
+counts_sql="SELECT table_schema || '.' || table_name || '|' ||
+  (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name), false, true, '')))[1]::text
+  FROM information_schema.tables
+  WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema')
+  ORDER BY 1"
+
+start=$SECONDS
+echo "drill: source=$src scratch=$scratch"
+PAIR_BACKUP_DIR="$work" PAIR_BACKUP_DB="$src" "$ROOT/scripts/backup"
+backup_file="$(find "$work" -maxdepth 1 -type f -name 'pair-*.dump*' | head -n1)"
+[ -n "$backup_file" ] || { echo "drill: FAIL no backup produced" >&2; exit 1; }
+backup_done=$((SECONDS - start))
+"$ROOT/scripts/restore" "$backup_file" --target-db "$scratch"
+restore_done=$((SECONDS - start))
+
+pg_psql "$src" -At -c "$counts_sql" > "$work/src.counts"
+pg_psql "$scratch" -At -c "$counts_sql" > "$work/dst.counts"
+
+[ -s "$work/src.counts" ] || { echo "drill: FAIL source has no tables; nothing to verify" >&2; exit 1; }
+echo "drill: row counts (table|rows)"
+echo "--- source"; cat "$work/src.counts"
+echo "--- restored"; cat "$work/dst.counts"
+if diff -u "$work/src.counts" "$work/dst.counts" >/dev/null; then
+  echo "drill: PASS ($(wc -l < "$work/src.counts" | tr -d ' ') tables identical) backup=${backup_done}s backup+restore=${restore_done}s"
+else
+  echo "drill: FAIL row counts differ" >&2
+  diff -u "$work/src.counts" "$work/dst.counts" >&2 || true
+  exit 1
+fi

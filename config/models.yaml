@@ -1,0 +1,57 @@
+# Provider registry (spec section 5). Loaded by pair-models; endpoints must pass the cloud-only guard.
+# A missing `price` means unknown price: automatic paid execution is disabled for that model.
+# Prices verified 2026-10-03 (docs/provider-billing.md). Micro-USD per million tokens.
+# Context/output limits are CONSERVATIVE placeholders pending catalog verification (GET /v1/models).
+models:
+  - id: claude-opus-5-5
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 16000
+    tools: true
+    structured_output: true
+    price: { version: "2026-10-03", input_per_mtok_micros: 4000000, output_per_mtok_micros: 20000000 }
+    data_policy: retention_30d_no_training_unverified
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+  - id: claude-sonnet-5-5
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 16000
+    tools: true
+    structured_output: true
+    price: { version: "2026-10-03", input_per_mtok_micros: 2000000, output_per_mtok_micros: 10000000 }
+    data_policy: retention_30d_no_training_unverified
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+  - id: claude-haiku-4-5
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 8192
+    tools: true
+    structured_output: true
+    price: { version: "2026-10-03", input_per_mtok_micros: 1000000, output_per_mtok_micros: 5000000 }
+    data_policy: retention_30d_no_training_unverified
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+  # Ollama Cloud: per-model token prices and ToS for server automation are UNVERIFIED,
+  # so price is omitted and paid execution stays disabled until the owner configures it.
+  - id: gemma4:31b
+    provider: ollama_cloud
+    endpoint: https://ollama.com
+    modalities: [text]
+    context_tokens: 128000
+    max_output_tokens: 8192
+    tools: false
+    structured_output: false
+    data_policy: not_logged_not_trained_per_pricing_page
+    allowed_data_classes: [public]
+    health: healthy

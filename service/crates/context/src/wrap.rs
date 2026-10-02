@@ -38,6 +38,17 @@ fn neutralise(content: &str) -> String {
 
 /// Wrap external content as inert data with source, trust class, length and an id.
 pub fn wrap_external(source: &str, trust: TrustClass, content: &str) -> String {
+    wrap_external_attrs(source, trust, &[], content)
+}
+
+/// Like [`wrap_external`], with extra header attributes written by the compiler (never by the
+/// content). Keys must be fixed identifiers; values are sanitized like the source label.
+pub fn wrap_external_attrs(
+    source: &str,
+    trust: TrustClass,
+    attrs: &[(&str, String)],
+    content: &str,
+) -> String {
     let body = neutralise(content);
     let id = sha256_hex(content)
         .chars()
@@ -46,8 +57,12 @@ pub fn wrap_external(source: &str, trust: TrustClass, content: &str) -> String {
     let source = sanitize_label(source);
     let trust = trust_label(trust);
     let len = body.len();
+    let extra: String = attrs
+        .iter()
+        .map(|(k, v)| format!(" {k}={}", sanitize_label(v)))
+        .collect();
     format!(
-        "{DATA_OPEN} id={id} source={source} trust={trust} bytes={len}>>>\n{body}\n{DATA_CLOSE} id={id}>>>"
+        "{DATA_OPEN} id={id} source={source} trust={trust}{extra} bytes={len}>>>\n{body}\n{DATA_CLOSE} id={id}>>>"
     )
 }
 

@@ -1,8 +1,8 @@
 //! Candidate context items and the trimming policy.
 use crate::hashing::sha256_hex;
-use crate::wrap::wrap_external;
+use crate::wrap::{wrap_external, wrap_external_attrs};
 use crate::TokenCounter;
-use pair_core::types::{EvidenceItem, ManifestEntry, ModelMessage, TrustClass};
+use pair_core::types::{EvidenceItem, EvidenceStatus, ManifestEntry, ModelMessage, TrustClass};
 
 pub const SECTION_POLICY: &str = "policy";
 pub const SECTION_MEMORY: &str = "memory";
@@ -64,9 +64,30 @@ impl Item {
     }
 }
 
+/// Status, supersession, conflicts and inference flag, as compiler-written header attributes.
+fn memory_attrs(e: &EvidenceItem) -> Vec<(&'static str, String)> {
+    let mut attrs = Vec::new();
+    match e.status {
+        EvidenceStatus::Current => {}
+        EvidenceStatus::Superseded => attrs.push(("status", "superseded".to_string())),
+        EvidenceStatus::Conflicting => attrs.push(("status", "conflicting".to_string())),
+    }
+    if let Some(by) = e.superseded_by {
+        attrs.push(("superseded_by", by.to_string()));
+    }
+    if !e.conflicts_with.is_empty() {
+        let ids: Vec<String> = e.conflicts_with.iter().map(ToString::to_string).collect();
+        attrs.push(("conflicts_with", ids.join(":")));
+    }
+    if e.inferred {
+        attrs.push(("inferred", "true".to_string()));
+    }
+    attrs
+}
+
 pub fn memory_item(index: usize, e: &EvidenceItem, c: &dyn TokenCounter) -> Item {
     let source = format!("memory:{}", e.memory.0);
-    let content = wrap_external(&source, TrustClass::Untrusted, &e.content);
+    let content = wrap_external_attrs(&source, TrustClass::Untrusted, &memory_attrs(e), &e.content);
     let message = ModelMessage {
         role: ROLE_USER.into(),
         content,

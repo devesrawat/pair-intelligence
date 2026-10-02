@@ -70,6 +70,8 @@ impl World {
                 "user.name=t",
                 "-c",
                 "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
                 "commit",
                 "-q",
                 "-m",

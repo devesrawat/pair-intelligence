@@ -279,3 +279,52 @@ async fn readyz_provider_outage_degrades_but_stays_ready() {
     assert_eq!(check(&body, "providers")["level"], "warn");
     db.drop_db().await;
 }
+
+const REGISTRY_YAML: &str = r#"
+models:
+  - id: m-a
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    context_tokens: 200000
+    max_output_tokens: 8192
+    data_policy: p
+    allowed_data_classes: [public]
+  - id: m-o
+    provider: ollama_cloud
+    endpoint: https://ollama.com
+    context_tokens: 128000
+    max_output_tokens: 8192
+    data_policy: p
+    allowed_data_classes: [public]
+"#;
+
+#[tokio::test]
+async fn readyz_unhealthy_registry_entry_degrades_but_stays_ready() {
+    use pair_models::provider::{Health, ProviderRegistry};
+    let db = TestDb::create().await;
+    let healthy = ProviderRegistry::from_yaml_str(REGISTRY_YAML).expect("registry");
+    let app = app_with(state_for(&db).with_providers(Arc::new(healthy.clone())));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(check(&body, "providers")["level"], "ok");
+    assert_eq!(body["providers"].as_array().map(Vec::len), Some(2));
+
+    let degraded = healthy.with_health("m-a", Health::Degraded);
+    let app = app_with(state_for(&db).with_providers(Arc::new(degraded)));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "provider outage must not 503"
+    );
+    assert_eq!(check(&body, "providers")["level"], "warn");
+
+    let disabled = healthy
+        .with_health("m-a", Health::Disabled)
+        .with_health("m-o", Health::Disabled);
+    let app = app_with(state_for(&db).with_providers(Arc::new(disabled)));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(check(&body, "providers")["level"], "warn");
+    db.drop_db().await;
+}

@@ -1,40 +1,49 @@
-{
-  "version": "2026-10-03.1",
-  "tools": {
-    "fs.read": "read",
-    "fs.search": "read",
-    "fs.write": "local_edit",
-    "fs.edit": "local_edit",
-    "shell.exec": "local_edit",
-    "git.commit": "local_commit",
-    "message.send": "external_write",
-    "git.push": "external_write",
-    "pr.create": "external_write",
-    "calendar.modify_event": "external_write",
-    "pr.merge": "high_risk",
-    "deploy.run": "high_risk",
-    "fs.delete_recursive": "high_risk",
-    "payment.send": "high_risk"
-  },
-  "executables_allow": ["git", "cargo", "rustc", "python3", "uv", "node", "npm", "pnpm", "ls", "cat", "grep", "rg", "sed", "make"],
-  "denied_paths": [
-    "~/.ssh",
-    "~/.aws",
-    "~/.azure",
-    "~/.config/gcloud",
-    "~/.kube",
-    "~/.gnupg",
-    "~/.docker",
-    "~/.netrc",
-    "/var/run/docker.sock",
-    "/run/docker.sock"
-  ],
-  "egress": [
-    { "host": "api.github.com", "data_classes": ["public", "personal"] },
-    { "host": "github.com", "data_classes": ["public", "personal"] },
-    { "host": "static.crates.io", "data_classes": ["public"] },
-    { "host": "index.crates.io", "data_classes": ["public"] },
-    { "host": "pypi.org", "data_classes": ["public"] },
-    { "host": "files.pythonhosted.org", "data_classes": ["public"] }
-  ]
-}
+# PAIR tool policy (spec section 9). Parsed by pair_policy::PolicyConfig; any parse or
+# validation error means no policy engine exists, so every action is refused (fail closed).
+# Unknown keys are rejected. Bump `version` whenever this file changes.
+version: "2026-10-03.1"
+
+# Risk class per registered tool. A tool that is not listed here is denied.
+# read | local_edit | local_commit run unprompted inside the workspace;
+# external_write | high_risk need a single-use approval bound to the exact payload.
+tools:
+  fs.read: read
+  fs.search: read
+  fs.write: local_edit
+  fs.edit: local_edit
+  shell.exec: local_edit
+  git.commit: local_commit
+  message.send: external_write
+  git.push: external_write
+  pr.create: external_write
+  calendar.modify_event: external_write
+  pr.merge: high_risk
+  deploy.run: high_risk
+  fs.delete_recursive: high_risk
+  payment.send: high_risk
+
+# Executables a request may name. Anything else is denied.
+executables_allow: [git, cargo, rustc, python3, uv, node, npm, pnpm, ls, cat, grep, rg, sed, make]
+
+# Host credential locations; `~` is the real home directory. Must not be empty.
+denied_paths:
+  - "~/.ssh"
+  - "~/.aws"
+  - "~/.azure"
+  - "~/.config/gcloud"
+  - "~/.kube"
+  - "~/.gnupg"
+  - "~/.docker"
+  - "~/.netrc"
+  - /var/run/docker.sock
+  - /run/docker.sock
+
+# Default-deny egress: a destination passes only if a rule names its host and the data class.
+# Hosts are exact lowercase, or `*.example.com` for subdomains only.
+egress:
+  - { host: api.github.com, data_classes: [public, personal] }
+  - { host: github.com, data_classes: [public, personal] }
+  - { host: static.crates.io, data_classes: [public] }
+  - { host: index.crates.io, data_classes: [public] }
+  - { host: pypi.org, data_classes: [public] }
+  - { host: files.pythonhosted.org, data_classes: [public] }

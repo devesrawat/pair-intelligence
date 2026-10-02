@@ -5,10 +5,13 @@ use pair_core::{
     error::ErrorCode,
     ids::{ApprovalId, TaskId, TraceId},
     money::Micros,
+    types::Decision,
 };
+use pair_policy::Gate;
 use std::{
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 const SECRET_ENV_VALUE: &str = "tok_live_9f8e7d6c5b4a_do_not_leak";
@@ -98,12 +101,13 @@ fn provider_with_edit(edit: String) -> FnProvider {
 async fn run(
     fx_task: &CodingTask,
     provider: &FnProvider,
-    policy: &FakePolicy,
+    policy: &Arc<FakePolicy>,
 ) -> pair_core::error::Result<CodingResult> {
     let budget = FakeBudget::default();
+    let gate = Gate::new(policy.clone(), None);
     let deps = CodingDeps {
         provider,
-        policy,
+        gate: &gate,
         budget: &budget,
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
@@ -115,7 +119,7 @@ async fn run(
 async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
     let fx = Fixture::new(PASS_ACCEPTANCE);
     let task = fx.task(&["src/"]);
-    let policy = FakePolicy::default();
+    let policy = Arc::new(FakePolicy::default());
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
     let res = run(&task, &provider, &policy).await.unwrap();
     assert_eq!(res.status, CodingStatus::Succeeded);
@@ -168,7 +172,7 @@ async fn repository_mutation_during_run_stops_task() {
             "text".into()
         })
     }));
-    let err = run(&task, &provider, &FakePolicy::default())
+    let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::Conflict);
@@ -190,7 +194,9 @@ async fn hidden_credentials_not_exposed() {
     let fx = Fixture::new(acceptance);
     let task = fx.task(&["src/"]);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&task, &provider, &FakePolicy::default()).await.unwrap();
+    let res = run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap();
     let out = format!("{}{}", res.commands[0].stdout, res.commands[0].stderr);
     assert!(
         !out.contains(SECRET_ENV_VALUE),
@@ -211,7 +217,7 @@ async fn hidden_credentials_not_exposed() {
     let fx2 = Fixture::new(PASS_ACCEPTANCE);
     let task2 = fx2.task(&["src/", ".env"]);
     let provider2 = provider_with_edit(edit_json(&[(".env", "X=1\n")]));
-    let err = run(&task2, &provider2, &FakePolicy::default())
+    let err = run(&task2, &provider2, &Arc::new(FakePolicy::default()))
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
@@ -222,7 +228,9 @@ async fn failed_acceptance_tests_reported_not_hidden() {
     let fx = Fixture::new(r#"["sh","-c","echo ASSERTION_FAILED_MARKER >&2; exit 1"]"#);
     let task = fx.task(&["src/"]);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&task, &provider, &FakePolicy::default()).await.unwrap();
+    let res = run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap();
     assert_eq!(res.status, CodingStatus::Failed);
     assert_eq!(res.failure_class, Some(FailureClass::ImplementationDefect));
     assert!(res
@@ -242,16 +250,24 @@ async fn failed_acceptance_tests_reported_not_hidden() {
 async fn missing_command_and_timeout_are_environment_failures() {
     let fx = Fixture::new(r#"["pair-no-such-binary-xyz"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
-        .await
-        .unwrap();
+    let res = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap();
     assert_eq!(res.failure_class, Some(FailureClass::Environment));
 
     let fx = Fixture::new(r#"["sleep","30"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
-        .await
-        .unwrap();
+    let res = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap();
     assert!(res.commands[0].timed_out);
     assert_eq!(res.failure_class, Some(FailureClass::Environment));
 }
@@ -259,10 +275,10 @@ async fn missing_command_and_timeout_are_environment_failures() {
 #[tokio::test]
 async fn policy_denied_command_never_executes() {
     let fx = Fixture::new(r#"["sh","-c","touch ran.marker"]"#);
-    let policy = FakePolicy {
+    let policy = Arc::new(FakePolicy {
         denied_exes: vec!["sh".into()],
         ..FakePolicy::default()
-    };
+    });
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
     let task = fx.task(&["src/"]);
     let err = run(&task, &provider, &policy).await.unwrap_err();
@@ -275,6 +291,48 @@ async fn policy_denied_command_never_executes() {
         .exists());
 }
 
+fn test_runner<'a>(gate: &'a Gate, dir: &Path) -> Runner<'a> {
+    Runner::new(
+        gate,
+        TaskId::new(),
+        TraceId::new(),
+        dir,
+        dir.join("home"),
+        std::time::Duration::from_secs(2),
+        Vec::new(),
+    )
+}
+
+#[tokio::test]
+async fn runner_cannot_execute_without_gate_allow() {
+    let dir = std::env::temp_dir().join(format!("pair_t_gate_{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let argv: Vec<String> = ["sh", "-c", "touch ran.marker"]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let denied = Decision::Deny {
+        reason: "no".into(),
+    };
+    let needs_approval = Decision::NeedsApproval {
+        payload_hash: "h".into(),
+    };
+    for (decision, code) in [
+        (denied, ErrorCode::PolicyDenied),
+        (needs_approval, ErrorCode::ApprovalRequired),
+    ] {
+        let gate = Gate::new(Arc::new(FixedPolicy(decision)), None);
+        let err = test_runner(&gate, &dir).run(&argv, &dir).await.unwrap_err();
+        assert_eq!(err.code, code);
+        assert!(!dir.join("ran.marker").exists());
+    }
+    let gate = Gate::new(Arc::new(FixedPolicy(Decision::Allow)), None);
+    let report = test_runner(&gate, &dir).run(&argv, &dir).await.unwrap();
+    assert!(report.passed());
+    assert!(dir.join("ran.marker").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[tokio::test]
 async fn patch_output_is_scoped() {
     // 1. one out-of-scope file rejects the whole edit set, nothing is written
@@ -284,7 +342,7 @@ async fn patch_output_is_scoped() {
         ("src/lib.txt", "new\n"),
         ("README.md", "pwned\n"),
     ]));
-    let err = run(&task, &provider, &FakePolicy::default())
+    let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
@@ -299,18 +357,26 @@ async fn patch_output_is_scoped() {
     for bad in ["../escape.txt", "/etc/passwd", "src/../../x"] {
         let fx = Fixture::new(PASS_ACCEPTANCE);
         let provider = provider_with_edit(edit_json(&[(bad, "x")]));
-        let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
-            .await
-            .unwrap_err();
+        let err = run(
+            &fx.task(&["src/"]),
+            &provider,
+            &Arc::new(FakePolicy::default()),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.code, ErrorCode::PolicyDenied, "{bad}");
     }
 
     // 3. a verify command that writes outside scope is caught in the final patch check
     let fx = Fixture::new(r#"["sh","-c","echo x > stray.txt; grep -q new src/lib.txt"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
-        .await
-        .unwrap_err();
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
     assert!(err.message.contains("stray.txt"));
 }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +56,9 @@ impl SourceKind {
 pub struct RemoteItem {
     pub external_id: String,
     pub revision: String,
+    /// Provider-side modification time (Gmail internalDate, Calendar `updated`). Revisions of
+    /// one source are applied in this order; an older item never replaces a newer one.
+    pub source_updated_at: DateTime<Utc>,
     pub content: serde_json::Value,
 }
 

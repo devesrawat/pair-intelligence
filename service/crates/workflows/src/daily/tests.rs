@@ -193,6 +193,30 @@ fn schedule_uses_kolkata_timezone() -> TestResult {
 }
 
 #[test]
+fn schedule_yaml_comment_is_accepted() -> TestResult {
+    let text = "# top\nroutines:\n  # first\n  - name: a # inline\n    kind: briefing\n    local_time: \"07:30\"\n    timezone: Asia/Kolkata\n    max_runtime_secs: 60\n";
+    let routines = parse_schedule(text)?;
+    assert_eq!(routines.len(), 1);
+    assert_eq!(routines[0].max_runtime, std::time::Duration::from_secs(60));
+    Ok(())
+}
+
+#[test]
+fn schedule_malformed_yaml_fails_closed() {
+    for bad in [
+        "routines: [",
+        "",
+        "routines: []\n",
+        "routines:\n  - name: a\n    kind: nap\n    local_time: \"07:30\"\n    timezone: Asia/Kolkata\n    max_runtime_secs: 1\n",
+        "routines:\n  - name: a\n    kind: review\n    local_time: \"7pm\"\n    timezone: Asia/Kolkata\n    max_runtime_secs: 1\n",
+        "routines:\n  - name: a\n    kind: review\n    local_time: \"07:30\"\n    timezone: Mars/Base\n    max_runtime_secs: 1\n",
+        "routines:\n  - name: a\n    kind: review\n    local_time: \"07:30\"\n    timezone: UTC\n",
+    ] {
+        assert!(parse_schedule(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
 fn schedule_next_run_is_dst_safe() -> TestResult {
     let ny = |time: &str| Routine {
         name: "ny".into(),

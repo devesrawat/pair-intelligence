@@ -241,6 +241,89 @@ fn malformed_config_fails_closed() {
     .is_err());
 }
 
+fn exec_with(f: &common::Fixture, args: &[&str]) -> Decision {
+    let mut r = request("shell.exec");
+    r.executable = Some("cat".into());
+    r.args = args.iter().map(ToString::to_string).collect();
+    f.engine.authorize(&r, &f.ctx).decision
+}
+
+#[test]
+fn attached_flag_path_is_checked() {
+    let f = fixture();
+    for arg in [
+        "-o/etc/x",
+        "--output=/etc/x",
+        "-o../escape",
+        "-o..",
+        "-o~/.ssh/id_rsa",
+        "-O=/etc/x",
+    ] {
+        assert!(
+            matches!(exec_with(&f, &[arg]), Decision::Deny { .. }),
+            "{arg} must be denied"
+        );
+    }
+    std::fs::write(f.workspace.join("a.txt"), "x").expect("write");
+    for arg in ["-oa.txt", "-osub/new.txt", "--output=a.txt", "-n", "-5"] {
+        assert_eq!(
+            exec_with(&f, &[arg]),
+            Decision::Allow,
+            "{arg} is in-workspace"
+        );
+    }
+}
+
+#[test]
+fn attached_flag_url_is_checked() {
+    let f = fixture();
+    for arg in [
+        "-ohttps://evil.example.com/x",
+        "--url=https://evil.example.com/x",
+        "-Ipath/x=https://evil.example.com/x",
+    ] {
+        assert!(
+            matches!(exec_with(&f, &[arg]), Decision::Deny { .. }),
+            "{arg} must be denied"
+        );
+    }
+    let ok = "-ohttps://api.github.com/repos";
+    assert_eq!(exec_with(&f, &[ok]), Decision::Allow);
+}
+
+const MINIMAL_POLICY: &str = r#"
+# comment at top
+version: "t1"   # trailing comment
+tools:
+  fs.read: read   # read-only
+executables_allow: [git]
+denied_paths: ["~/.ssh"]
+egress: []
+"#;
+
+#[test]
+fn yaml_comment_is_accepted() {
+    let home = std::path::Path::new("/tmp");
+    assert!(pair_policy::PolicyEngine::from_config_str(MINIMAL_POLICY, home).is_ok());
+}
+
+#[test]
+fn malformed_yaml_fails_closed() {
+    let home = std::path::Path::new("/tmp");
+    for bad in [
+        "version: [unclosed",
+        "version: 1\n  tools: bad indent: :",
+        "",
+        "version: t\ntools: {}\nexecutables_allow: []\ndenied_paths: []\negress: []\n",
+        "version: t\nsurprise: 1\n",
+    ] {
+        assert!(
+            pair_policy::PolicyEngine::from_config_str(bad, home).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
 #[test]
 fn model_supplied_safe_label_is_ignored() {
     let f = fixture();

@@ -102,6 +102,18 @@ impl Policy for FakePolicy {
     }
 }
 
+/// Policy that answers every request with the same decision.
+pub struct FixedPolicy(pub Decision);
+
+impl Policy for FixedPolicy {
+    fn authorize(&self, _req: &ActionRequest, _ctx: &PolicyContext) -> PolicyOutcome {
+        PolicyOutcome {
+            decision: self.0.clone(),
+            policy_version: "fixed-1".into(),
+        }
+    }
+}
+
 pub struct FakeBudget {
     pub reserved: AtomicUsize,
     pub reconciled: AtomicUsize,

@@ -7,7 +7,7 @@ use crate::{
         find_candidate_contradictions, find_memory_contradictions, insert_candidate, prepare,
         NewCandidateRow,
     },
-    model::{CandidateDraft, MemoryRecord},
+    model::{CandidateDraft, MemoryRecord, VerifiedSpans},
     policy,
     store::{AcceptMode, PgMemory},
 };
@@ -48,6 +48,7 @@ struct OriginalCandidate {
     topic: Option<String>,
     extraction_version: String,
     evidence: Vec<EvidenceRef>,
+    verified: VerifiedSpans,
 }
 
 async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<OriginalCandidate> {
@@ -68,16 +69,14 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
         ));
     }
     let evidence = sqlx::query(
-        "SELECT e.source_id, e.span FROM memory_candidate_evidence e JOIN sources s ON s.id = e.source_id \
+        "SELECT e.source_id, e.span, e.span_verified FROM memory_candidate_evidence e JOIN sources s ON s.id = e.source_id \
          WHERE e.candidate_id = $1 AND s.deletion_state = 'active' ORDER BY e.id",
     )
     .bind(id.0)
     .fetch_all(&mut *conn)
     .await
-    .map_err(db_err)?
-    .iter()
-    .map(|r| Ok(EvidenceRef { source: SourceId(r.try_get("source_id").map_err(db_err)?), span: r.try_get("span").map_err(db_err)? }))
-    .collect::<Result<Vec<_>>>()?;
+    .map_err(db_err)?;
+    let (evidence, verified) = split_evidence(&evidence)?;
     Ok(OriginalCandidate {
         kind: row.try_get("kind").map_err(db_err)?,
         content: row.try_get("content").map_err(db_err)?,
@@ -87,7 +86,25 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
         topic: row.try_get("topic_key").map_err(db_err)?,
         extraction_version: row.try_get("extraction_version").map_err(db_err)?,
         evidence,
+        verified,
     })
+}
+
+/// Evidence refs plus the set of (source, span) pairs flagged `span_verified`.
+fn split_evidence(rows: &[sqlx::postgres::PgRow]) -> Result<(Vec<EvidenceRef>, VerifiedSpans)> {
+    let mut evidence = Vec::with_capacity(rows.len());
+    let mut verified = VerifiedSpans::new();
+    for r in rows {
+        let ev = EvidenceRef {
+            source: SourceId(r.try_get("source_id").map_err(db_err)?),
+            span: r.try_get("span").map_err(db_err)?,
+        };
+        if r.try_get::<bool, _>("span_verified").map_err(db_err)? {
+            verified.insert((ev.source, ev.span.clone()));
+        }
+        evidence.push(ev);
+    }
+    Ok((evidence, verified))
 }
 
 impl PgMemory {
@@ -156,6 +173,7 @@ impl PgMemory {
             original.topic
         };
         draft.extraction_version = original.extraction_version;
+        draft.carried_verified = original.verified;
 
         let prepared = prepare(&mut tx, draft, None).await?;
         let c = &prepared.draft.candidate;
@@ -238,17 +256,15 @@ impl PgMemory {
         .await
         .map_err(db_err)?
         .ok_or_else(|| PairError::new(ErrorCode::Conflict, format!("memory {id} is not an active accepted memory")))?;
-        let mut evidence: Vec<EvidenceRef> = sqlx::query(
-            "SELECT e.source_id, e.span FROM memory_evidence e JOIN sources s ON s.id = e.source_id \
+        let evidence_rows = sqlx::query(
+            "SELECT e.source_id, e.span, e.span_verified FROM memory_evidence e JOIN sources s ON s.id = e.source_id \
              WHERE e.memory_id = $1 AND s.deletion_state = 'active' ORDER BY e.id",
         )
         .bind(id.0)
         .fetch_all(&mut *tx)
         .await
-        .map_err(db_err)?
-        .iter()
-        .map(|r| Ok(EvidenceRef { source: SourceId(r.try_get("source_id").map_err(db_err)?), span: r.try_get("span").map_err(db_err)? }))
-        .collect::<Result<Vec<_>>>()?;
+        .map_err(db_err)?;
+        let (mut evidence, verified) = split_evidence(&evidence_rows)?;
         evidence.extend(patch.extra_evidence);
         if patch.content.trim().is_empty() {
             return Err(invalid("correction content must not be empty"));
@@ -266,6 +282,7 @@ impl PgMemory {
         });
         draft.topic = original.try_get("topic_key").map_err(db_err)?;
         draft.reason = Some(CORRECTION_REASON.to_string());
+        draft.carried_verified = verified;
         let prepared = prepare(&mut tx, draft, Some(&id.to_string())).await?;
         let candidate = insert_candidate(
             &mut tx,

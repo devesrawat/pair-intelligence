@@ -183,9 +183,9 @@ pub(crate) async fn accept_in_tx(
 async fn live_evidence(
     conn: &mut PgConnection,
     id: CandidateId,
-) -> Result<(Vec<EvidenceRef>, Vec<TrustClass>)> {
+) -> Result<(Vec<(EvidenceRef, bool)>, Vec<TrustClass>)> {
     let rows = sqlx::query(
-        "SELECT e.source_id, e.span, s.deletion_state, s.trust FROM memory_candidate_evidence e \
+        "SELECT e.source_id, e.span, e.span_verified, s.deletion_state, s.trust FROM memory_candidate_evidence e \
          JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
     )
     .bind(id.0)
@@ -202,10 +202,13 @@ async fn live_evidence(
     let mut trusts = Vec::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? == "active" {
-            live.push(EvidenceRef {
-                source: SourceId(row.try_get("source_id").map_err(db_err)?),
-                span: row.try_get("span").map_err(db_err)?,
-            });
+            live.push((
+                EvidenceRef {
+                    source: SourceId(row.try_get("source_id").map_err(db_err)?),
+                    span: row.try_get("span").map_err(db_err)?,
+                },
+                row.try_get("span_verified").map_err(db_err)?,
+            ));
             trusts.push(parse_trust(
                 &row.try_get::<String, _>("trust").map_err(db_err)?,
             )?);

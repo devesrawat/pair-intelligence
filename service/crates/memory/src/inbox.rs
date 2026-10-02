@@ -2,9 +2,10 @@
 //! reviewer-facing views. Review actions (reject/edit/correct) live in `review`.
 use crate::{
     error::{db_err, invalid, not_found},
-    model::{parse_data_class, parse_trust, validate_kind, CandidateDraft},
+    model::{parse_data_class, parse_trust, validate_kind, CandidateDraft, VerifiedSpans},
     normalize::{normalize_content, topic_of},
     policy::{self, SourceFacts, AUTO_ACCEPT_ACTOR},
+    spans::span_in_text,
     store::{AcceptMode, PgMemory, MAX_CONTENT_CHARS},
 };
 use chrono::{DateTime, Utc};
@@ -39,6 +40,8 @@ pub struct InboxEvidence {
     pub external_id: String,
     pub trust: TrustClass,
     pub span: Option<String>,
+    /// Span was found in source text supplied at propose time; false = never checked.
+    pub span_verified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,6 +89,8 @@ pub(crate) struct Prepared {
     pub topic: Option<String>,
     pub dedupe_key: String,
     pub facts: Vec<SourceFacts>,
+    /// Evidence (source, span) pairs whose span was verified against supplied text.
+    pub verified: VerifiedSpans,
 }
 
 pub(crate) async fn prepare(
@@ -143,6 +148,7 @@ pub(crate) async fn prepare(
             data_class: parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
         });
     }
+    let verified = verify_spans(&draft)?;
     let material = format!(
         "{}\n{}\n{}",
         key_salt.unwrap_or(""),
@@ -161,7 +167,36 @@ pub(crate) async fn prepare(
         topic,
         dedupe_key,
         facts,
+        verified,
     })
+}
+
+/// Check every span against the supplied text of its source. A span missing from supplied text is
+/// an `InvalidInput`; evidence without supplied text (or without a span) is left unverified.
+fn verify_spans(draft: &CandidateDraft) -> Result<VerifiedSpans> {
+    let mut verified = VerifiedSpans::new();
+    for ev in &draft.candidate.evidence {
+        let key = (ev.source, ev.span.clone());
+        if draft.carried_verified.contains(&key) {
+            verified.insert(key);
+            continue;
+        }
+        let (Some(text), Some(span)) = (draft.source_texts.get(&ev.source), ev.span.as_deref())
+        else {
+            continue;
+        };
+        if span.trim().is_empty() {
+            continue;
+        }
+        if !span_in_text(span, text) {
+            return Err(invalid(format!(
+                "evidence span for source {} is not in the supplied source text",
+                ev.source
+            )));
+        }
+        verified.insert(key);
+    }
+    Ok(verified)
 }
 
 /// Accepted, currently valid memories on the same topic with different content.
@@ -257,10 +292,12 @@ pub(crate) async fn insert_candidate(
     .await
     .map_err(db_err)?;
     for ev in &c.evidence {
-        sqlx::query("INSERT INTO memory_candidate_evidence (candidate_id, source_id, span) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+        let span_verified = p.verified.contains(&(ev.source, ev.span.clone()));
+        sqlx::query("INSERT INTO memory_candidate_evidence (candidate_id, source_id, span, span_verified) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING")
             .bind(id.0)
             .bind(ev.source.0)
             .bind(&ev.span)
+            .bind(span_verified)
             .execute(&mut *conn)
             .await
             .map_err(db_err)?;
@@ -400,7 +437,7 @@ impl PgMemory {
         .ok_or_else(|| not_found("candidate", id))?;
 
         let evidence = sqlx::query(
-            "SELECT e.source_id, e.span, s.kind, s.external_id, s.trust, s.deletion_state FROM memory_candidate_evidence e \
+            "SELECT e.source_id, e.span, e.span_verified, s.kind, s.external_id, s.trust, s.deletion_state FROM memory_candidate_evidence e \
              JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
         )
         .bind(id.0)
@@ -421,6 +458,7 @@ impl PgMemory {
                     external_id: r.try_get("external_id").map_err(db_err)?,
                     trust: parse_trust(&r.try_get::<String, _>("trust").map_err(db_err)?)?,
                     span: r.try_get("span").map_err(db_err)?,
+                    span_verified: r.try_get("span_verified").map_err(db_err)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;

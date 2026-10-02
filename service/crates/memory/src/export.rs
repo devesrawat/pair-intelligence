@@ -79,11 +79,16 @@ pub fn render_markdown(export: &MemoryExport) -> String {
         for ev in &m.evidence {
             let _ = writeln!(
                 out,
-                "- {}:{} r{} {} span: {}",
+                "- {}:{} r{} {} span{}: {}",
                 ev.source_kind,
                 ev.external_id,
                 ev.revision,
                 ev.uri.as_deref().unwrap_or(""),
+                if ev.span_verified {
+                    ""
+                } else {
+                    " (unverified)"
+                },
                 ev.span.as_deref().unwrap_or("(none)"),
             );
         }

@@ -14,6 +14,7 @@ pub mod read;
 pub mod retrieval;
 pub mod review;
 pub mod sources;
+pub mod spans;
 pub mod store;
 
 pub use model::{

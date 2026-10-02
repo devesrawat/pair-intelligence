@@ -163,23 +163,25 @@ impl PgMemory {
 }
 
 /// Persist evidence rows and search chunks (memory text plus each distinct evidence span).
+/// Each evidence reference carries whether its span was verified at propose time.
 pub(crate) async fn insert_evidence_and_chunks(
     conn: &mut PgConnection,
     memory: MemoryId,
     content: &str,
-    evidence: &[EvidenceRef],
+    evidence: &[(EvidenceRef, bool)],
     extraction_version: &str,
 ) -> Result<()> {
     insert_chunk(conn, memory, None, content).await?;
-    for ev in evidence {
+    for (ev, verified) in evidence {
         sqlx::query(
-            "INSERT INTO memory_evidence (memory_id, source_id, span, extraction_version) VALUES ($1, $2, $3, $4) \
-             ON CONFLICT DO NOTHING",
+            "INSERT INTO memory_evidence (memory_id, source_id, span, extraction_version, span_verified) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
         )
         .bind(memory.0)
         .bind(ev.source.0)
         .bind(&ev.span)
         .bind(extraction_version)
+        .bind(verified)
         .execute(&mut *conn)
         .await
         .map_err(db_err)?;

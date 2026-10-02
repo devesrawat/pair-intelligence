@@ -25,6 +25,7 @@ pub(crate) fn evidence_from_row(row: &PgRow) -> Result<EvidenceRecord> {
         extraction_version: row.try_get("extraction_version").map_err(db_err)?,
         source_deleted: row.try_get::<String, _>("deletion_state").map_err(db_err)? == "deleted",
         source_hidden: row.try_get::<String, _>("visibility").map_err(db_err)? == "hidden",
+        span_verified: row.try_get("span_verified").map_err(db_err)?,
     })
 }
 
@@ -46,7 +47,7 @@ pub(crate) async fn load_memories(
     .map_err(db_err)?;
 
     let ev_rows = sqlx::query(
-        "SELECT e.memory_id, e.source_id, e.span, e.extraction_version, \
+        "SELECT e.memory_id, e.source_id, e.span, e.span_verified, e.extraction_version, \
                 s.kind, s.external_id, s.revision, s.uri, s.deletion_state, s.visibility \
          FROM memory_evidence e JOIN sources s ON s.id = e.source_id \
          WHERE e.memory_id = ANY($1) ORDER BY e.id",

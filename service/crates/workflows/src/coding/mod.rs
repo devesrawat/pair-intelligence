@@ -19,7 +19,9 @@ pub use llm::budgeted_generate;
 pub use remote::{request_remote_write, RemoteAction, RemoteKind, RemoteOutcome};
 pub use runner::{CmdReport, Runner};
 pub use scope::{is_secret_path, Scope};
-pub use workflow::{discard_workspace, run_coding_task, CodingDeps, CodingResult, CodingStatus, CodingTask, Stage};
+pub use workflow::{
+    discard_workspace, run_coding_task, CodingDeps, CodingResult, CodingStatus, CodingTask, Stage,
+};
 
 #[cfg(test)]
 pub(crate) mod testkit;

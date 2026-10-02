@@ -20,7 +20,10 @@ impl PathGuard {
             }
             denied.push(expanded);
         }
-        Self { home: home.to_path_buf(), denied }
+        Self {
+            home: home.to_path_buf(),
+            denied,
+        }
     }
 
     /// Returns the fully resolved path, or the reason it is refused. `workspace` must be canonical.

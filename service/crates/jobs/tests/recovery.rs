@@ -6,7 +6,9 @@ use common::{fast_cfg, wait_lease_expiry, TestDb};
 use pair_core::ids::{IdempotencyKey, RunId};
 use pair_core::traits::Workflows;
 use pair_core::types::{RunState, WorkflowInput};
-use pair_jobs::{EffectError, JobConfig, Reconciliation, StepCtx, StepError, StepHandler, StepOutcome, Worker};
+use pair_jobs::{
+    EffectError, JobConfig, Reconciliation, StepCtx, StepError, StepHandler, StepOutcome, Worker,
+};
 use serde_json::{json, Value};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::SeqCst};
@@ -14,7 +16,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn input(kind: &str) -> WorkflowInput {
-    WorkflowInput { kind: kind.to_owned(), payload: json!({"n": 1}) }
+    WorkflowInput {
+        kind: kind.to_owned(),
+        payload: json!({"n": 1}),
+    }
 }
 
 async fn wait_until(cond: impl Fn() -> bool) {
@@ -45,7 +50,11 @@ impl StepHandler for ThreeSteps {
         }
         let name = format!("s{i}");
         let output = json!({ "step": i });
-        Ok(if i == 2 { StepOutcome::Finish { name, output } } else { StepOutcome::Next { name, output } })
+        Ok(if i == 2 {
+            StepOutcome::Finish { name, output }
+        } else {
+            StepOutcome::Next { name, output }
+        })
     }
 }
 
@@ -55,7 +64,10 @@ async fn restart_resumes_checkpoint() {
     let store = db.store(fast_cfg());
     let handler = Arc::new(ThreeSteps::default());
     handler.block_step1.store(true, SeqCst);
-    let id = store.start(input("t"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("t"), IdempotencyKey::new())
+        .await
+        .unwrap();
 
     let w1 = Worker::new(store.clone(), "w1").with_handler("t", handler.clone());
     let task = tokio::spawn(async move { w1.run_once().await });
@@ -71,9 +83,16 @@ async fn restart_resumes_checkpoint() {
 
     handler.block_step1.store(false, SeqCst);
     let w2 = Worker::new(store.clone(), "w2").with_handler("t", handler.clone());
-    assert_eq!(w2.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
+    assert_eq!(
+        w2.run_once().await.unwrap(),
+        Some((id, RunState::Succeeded))
+    );
 
-    assert_eq!(handler.runs[0].load(SeqCst), 1, "completed step must not re-run");
+    assert_eq!(
+        handler.runs[0].load(SeqCst),
+        1,
+        "completed step must not re-run"
+    );
     assert_eq!(handler.runs[1].load(SeqCst), 2);
     assert_eq!(handler.runs[2].load(SeqCst), 1);
     assert_eq!(store.steps(id).await.unwrap().len(), 3);
@@ -83,7 +102,10 @@ async fn restart_resumes_checkpoint() {
 async fn resume_of_expired_running_run_requeues_directly() {
     let db = TestDb::new().await;
     let store = db.store(fast_cfg());
-    let id = store.start(input("t"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("t"), IdempotencyKey::new())
+        .await
+        .unwrap();
     assert!(store.claim("ghost").await.unwrap().is_some());
     wait_lease_expiry().await;
     assert_eq!(store.resume(id).await.unwrap(), RunState::Queued);
@@ -152,7 +174,9 @@ impl StepHandler for Sender {
                     self.sent.fetch_add(1, SeqCst);
                     match self.mode() {
                         Mode::CrashAfterEffect => self.crash_here().await,
-                        Mode::AmbiguousApplied => return Err(EffectError::Ambiguous("timeout after send".into())),
+                        Mode::AmbiguousApplied => {
+                            return Err(EffectError::Ambiguous("timeout after send".into()))
+                        }
                         _ => {}
                     }
                     Ok(json!({"message_id": "m-1"}))
@@ -171,14 +195,20 @@ impl StepHandler for Sender {
         if self.mode() == Mode::CrashAfterCompleted {
             self.crash_here().await;
         }
-        Ok(StepOutcome::Finish { name: "send".into(), output: result })
+        Ok(StepOutcome::Finish {
+            name: "send".into(),
+            output: result,
+        })
     }
 }
 
 /// Run the handler in a worker, crash it once `reached`, recover and finish with a second worker.
 async fn crash_and_recover(db: &TestDb, sender: &Arc<Sender>) -> (RunId, RunState) {
     let store = db.store(fast_cfg());
-    let id = store.start(input("send"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("send"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let w1 = Worker::new(store.clone(), "w1").with_handler("send", sender.clone());
     let task = tokio::spawn(async move { w1.run_once().await });
     wait_until(|| sender.reached.load(SeqCst)).await;
@@ -201,7 +231,11 @@ async fn crash_before_side_effect_runs_it_once() {
     let (_, state) = crash_and_recover(&db, &sender).await;
     assert_eq!(state, RunState::Succeeded);
     assert_eq!(sender.sent.load(SeqCst), 1);
-    assert_eq!(sender.reconciles.load(SeqCst), 0, "no intent existed, nothing to reconcile");
+    assert_eq!(
+        sender.reconciles.load(SeqCst),
+        0,
+        "no intent existed, nothing to reconcile"
+    );
 }
 
 #[tokio::test]
@@ -221,7 +255,11 @@ async fn crash_after_side_effect_does_not_repeat_it() {
     let (_, state) = crash_and_recover(&db, &sender).await;
     assert_eq!(state, RunState::Succeeded);
     assert_eq!(sender.sent.load(SeqCst), 1);
-    assert_eq!(sender.reconciles.load(SeqCst), 0, "completed intent is replayed from storage");
+    assert_eq!(
+        sender.reconciles.load(SeqCst),
+        0,
+        "completed intent is replayed from storage"
+    );
 }
 
 #[tokio::test]
@@ -246,10 +284,17 @@ async fn ambiguous_side_effect_is_reconciled() {
     let db = TestDb::new().await;
     let store = db.store(retry_cfg());
     let sender = Sender::new(Mode::AmbiguousApplied);
-    let id = store.start(input("send"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("send"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let w = Worker::new(store.clone(), "w").with_handler("send", sender.clone());
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
-    assert_eq!(sender.sent.load(SeqCst), 1, "applied effect must not be re-executed");
+    assert_eq!(
+        sender.sent.load(SeqCst),
+        1,
+        "applied effect must not be re-executed"
+    );
     assert_eq!(sender.reconciles.load(SeqCst), 1);
 }
 
@@ -258,7 +303,10 @@ async fn ambiguous_side_effect_not_applied_is_executed_after_reconcile() {
     let db = TestDb::new().await;
     let store = db.store(retry_cfg());
     let sender = Sender::new(Mode::AmbiguousNotApplied);
-    let id = store.start(input("send"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("send"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let w = Worker::new(store.clone(), "w").with_handler("send", sender.clone());
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
     assert_eq!(sender.sent.load(SeqCst), 1);
@@ -276,11 +324,26 @@ async fn start_is_idempotent() {
     let (a, b) = (a.unwrap(), b.unwrap());
     assert_eq!(a, b);
     assert_eq!(store.start(input("t"), key).await.unwrap(), a);
-    let other = WorkflowInput { kind: "t".into(), payload: json!({"n": 2}) };
-    assert!(store.start(other, key).await.is_err(), "same key, different input is a conflict");
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_runs").fetch_one(&db.pool).await.unwrap();
+    let other = WorkflowInput {
+        kind: "t".into(),
+        payload: json!({"n": 2}),
+    };
+    assert!(
+        store.start(other, key).await.is_err(),
+        "same key, different input is a conflict"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_runs")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
     assert_eq!(rows, 1);
-    assert_ne!(store.start(input("t"), IdempotencyKey::new()).await.unwrap(), a);
+    assert_ne!(
+        store
+            .start(input("t"), IdempotencyKey::new())
+            .await
+            .unwrap(),
+        a
+    );
 }
 
 #[tokio::test]
@@ -290,7 +353,10 @@ async fn concurrent_workers_do_not_double_claim() {
     let db = TestDb::new().await;
     let store = db.store(JobConfig::default());
     for _ in 0..RUNS {
-        store.start(input("t"), IdempotencyKey::new()).await.unwrap();
+        store
+            .start(input("t"), IdempotencyKey::new())
+            .await
+            .unwrap();
     }
     let mut tasks = Vec::new();
     for w in 0..WORKERS {
@@ -321,7 +387,10 @@ impl StepHandler for ToolHog {
         for _ in 0..21 {
             ctx.record_tool_call().await?;
         }
-        Ok(StepOutcome::Finish { name: "x".into(), output: Value::Null })
+        Ok(StepOutcome::Finish {
+            name: "x".into(),
+            output: Value::Null,
+        })
     }
 }
 
@@ -329,7 +398,10 @@ impl StepHandler for ToolHog {
 async fn tool_call_cap_fails_the_run_at_20() {
     let db = TestDb::new().await;
     let store = db.store(fast_cfg());
-    let id = store.start(input("hog"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("hog"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let w = Worker::new(store.clone(), "w").with_handler("hog", Arc::new(ToolHog));
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Failed)));
     assert_eq!(store.get(id).await.unwrap().tool_calls, 20);
@@ -340,16 +412,25 @@ struct Sleeper;
 impl StepHandler for Sleeper {
     async fn step(&self, _ctx: &StepCtx) -> Result<StepOutcome, StepError> {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        Ok(StepOutcome::Finish { name: "x".into(), output: Value::Null })
+        Ok(StepOutcome::Finish {
+            name: "x".into(),
+            output: Value::Null,
+        })
     }
 }
 
 #[tokio::test]
 async fn deadline_fails_the_run() {
     let db = TestDb::new().await;
-    let cfg = JobConfig { interactive_timeout: Duration::from_millis(150), ..fast_cfg() };
+    let cfg = JobConfig {
+        interactive_timeout: Duration::from_millis(150),
+        ..fast_cfg()
+    };
     let store = db.store(cfg);
-    let id = store.start(input("sleep"), IdempotencyKey::new()).await.unwrap();
+    let id = store
+        .start(input("sleep"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let w = Worker::new(store.clone(), "w").with_handler("sleep", Arc::new(Sleeper));
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Failed)));
 }
@@ -358,9 +439,15 @@ async fn deadline_fails_the_run() {
 async fn research_runs_get_the_longer_timeout() {
     let db = TestDb::new().await;
     let store = db.store(JobConfig::default());
-    let research = WorkflowInput { kind: "r".into(), payload: json!({"run_class": "research"}) };
+    let research = WorkflowInput {
+        kind: "r".into(),
+        payload: json!({"run_class": "research"}),
+    };
     let a = store.start(research, IdempotencyKey::new()).await.unwrap();
-    let b = store.start(input("i"), IdempotencyKey::new()).await.unwrap();
+    let b = store
+        .start(input("i"), IdempotencyKey::new())
+        .await
+        .unwrap();
     let now = chrono::Utc::now();
     let (ra, rb) = (store.get(a).await.unwrap(), store.get(b).await.unwrap());
     assert!(ra.deadline_at - now > chrono::Duration::minutes(29));
@@ -374,7 +461,10 @@ impl StepHandler for Flaky {
         if self.0.fetch_add(1, SeqCst) < 2 {
             return Err(StepError::Transient("blip".into()));
         }
-        Ok(StepOutcome::Finish { name: "x".into(), output: Value::Null })
+        Ok(StepOutcome::Finish {
+            name: "x".into(),
+            output: Value::Null,
+        })
     }
 }
 
@@ -384,8 +474,12 @@ async fn transient_errors_retry_with_capped_backoff_then_succeed() {
     let mut cfg = fast_cfg();
     cfg.retry.base = Duration::from_millis(5);
     let store = db.store(cfg);
-    let id = store.start(input("flaky"), IdempotencyKey::new()).await.unwrap();
-    let w = Worker::new(store.clone(), "w").with_handler("flaky", Arc::new(Flaky(AtomicU32::new(0))));
+    let id = store
+        .start(input("flaky"), IdempotencyKey::new())
+        .await
+        .unwrap();
+    let w =
+        Worker::new(store.clone(), "w").with_handler("flaky", Arc::new(Flaky(AtomicU32::new(0))));
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
 }
 

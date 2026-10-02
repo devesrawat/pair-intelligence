@@ -31,7 +31,10 @@ impl CostState {
             "unpriced" => Ok(Self::Unpriced),
             "priced" => Ok(Self::Priced),
             "reconciled" => Ok(Self::Reconciled),
-            other => Err(PairError::new(ErrorCode::Internal, format!("corrupt cost_state {other}"))),
+            other => Err(PairError::new(
+                ErrorCode::Internal,
+                format!("corrupt cost_state {other}"),
+            )),
         }
     }
 }
@@ -84,7 +87,11 @@ impl ModelCallRecord {
         conversation: Option<ConversationId>,
         resp: &ModelResponse,
     ) -> Self {
-        let cost_state = if resp.usage.actual_cost.is_some() { CostState::Priced } else { CostState::Unpriced };
+        let cost_state = if resp.usage.actual_cost.is_some() {
+            CostState::Priced
+        } else {
+            CostState::Unpriced
+        };
         Self {
             id: ModelCallId::new(),
             conversation,
@@ -143,7 +150,8 @@ impl ModelCallRecord {
 }
 
 fn to_i64(v: u64, what: &str) -> Result<i64> {
-    i64::try_from(v).map_err(|_| PairError::new(ErrorCode::InvalidInput, format!("{what} out of range")))
+    i64::try_from(v)
+        .map_err(|_| PairError::new(ErrorCode::InvalidInput, format!("{what} out of range")))
 }
 
 impl ConversationStore {
@@ -186,7 +194,9 @@ impl ConversationStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| db_err(&e))?
-            .ok_or_else(|| PairError::new(ErrorCode::NotFound, format!("model call {id} not found")))?;
+            .ok_or_else(|| {
+                PairError::new(ErrorCode::NotFound, format!("model call {id} not found"))
+            })?;
         let g = |e: sqlx::Error| db_err(&e);
         let cost_state: String = row.try_get("cost_state").map_err(g)?;
         let status: String = row.try_get("status").map_err(g)?;
@@ -195,23 +205,36 @@ impl ConversationStore {
         let latency: i64 = row.try_get("latency_ms").map_err(g)?;
         Ok(ModelCallRecord {
             id,
-            conversation: row.try_get::<Option<Uuid>, _>("conversation_id").map_err(g)?.map(ConversationId),
+            conversation: row
+                .try_get::<Option<Uuid>, _>("conversation_id")
+                .map_err(g)?
+                .map(ConversationId),
             response_message_id: row.try_get("response_message_id").map_err(g)?,
             task: TaskId(row.try_get("task_id").map_err(g)?),
             trace: TraceId(row.try_get("trace_id").map_err(g)?),
-            reservation: row.try_get::<Option<Uuid>, _>("reservation_id").map_err(g)?.map(ReservationId),
+            reservation: row
+                .try_get::<Option<Uuid>, _>("reservation_id")
+                .map_err(g)?
+                .map(ReservationId),
             provider: row.try_get("provider").map_err(g)?,
             requested_model: row.try_get("requested_model").map_err(g)?,
             resolved_model: row.try_get("resolved_model").map_err(g)?,
             provider_request_id: row.try_get("provider_request_id").map_err(g)?,
             input_tokens: u64::try_from(input).unwrap_or(0),
             output_tokens: u64::try_from(output).unwrap_or(0),
-            cost: row.try_get::<Option<i64>, _>("cost_micros").map_err(g)?.map(Micros),
+            cost: row
+                .try_get::<Option<i64>, _>("cost_micros")
+                .map_err(g)?
+                .map(Micros),
             price_version: row.try_get("price_version").map_err(g)?,
             cost_state: CostState::parse(&cost_state)?,
             route_reason: row.try_get("route_reason").map_err(g)?,
             latency_ms: u64::try_from(latency).unwrap_or(0),
-            status: if status == "ok" { CallStatus::Ok } else { CallStatus::Error },
+            status: if status == "ok" {
+                CallStatus::Ok
+            } else {
+                CallStatus::Error
+            },
             error_code: row.try_get("error_code").map_err(g)?,
             verification: row.try_get("verification").map_err(g)?,
         })
@@ -219,15 +242,20 @@ impl ConversationStore {
 
     /// Mark a call as settled in the budget ledger.
     pub async fn mark_reconciled(&self, id: ModelCallId, reservation: ReservationId) -> Result<()> {
-        let n = sqlx::query("UPDATE model_calls SET cost_state = 'reconciled', reservation_id = $2 WHERE id = $1")
-            .bind(id.0)
-            .bind(reservation.0)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| db_err(&e))?
-            .rows_affected();
+        let n = sqlx::query(
+            "UPDATE model_calls SET cost_state = 'reconciled', reservation_id = $2 WHERE id = $1",
+        )
+        .bind(id.0)
+        .bind(reservation.0)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| db_err(&e))?
+        .rows_affected();
         if n == 0 {
-            return Err(PairError::new(ErrorCode::NotFound, format!("model call {id} not found")));
+            return Err(PairError::new(
+                ErrorCode::NotFound,
+                format!("model call {id} not found"),
+            ));
         }
         Ok(())
     }
@@ -242,7 +270,14 @@ impl ConversationStore {
         Ok(())
     }
 
-    pub async fn record_audit_event(&self, trace: TraceId, actor: &str, kind: &str, subject: &str, detail: &Value) -> Result<Uuid> {
+    pub async fn record_audit_event(
+        &self,
+        trace: TraceId,
+        actor: &str,
+        kind: &str,
+        subject: &str,
+        detail: &Value,
+    ) -> Result<Uuid> {
         let id = Uuid::now_v7();
         sqlx::query("INSERT INTO audit_events (id, trace_id, actor, kind, subject, detail) VALUES ($1,$2,$3,$4,$5,$6)")
             .bind(id)

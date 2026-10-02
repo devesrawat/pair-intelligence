@@ -28,7 +28,12 @@ struct StatementSet {
 }
 
 fn short_ids(claims: &[Claim]) -> Vec<(String, &Claim)> {
-    claims.iter().filter(|c| c.is_valid()).enumerate().map(|(i, c)| (format!("c{}", i + 1), c)).collect()
+    claims
+        .iter()
+        .filter(|c| c.is_valid())
+        .enumerate()
+        .map(|(i, c)| (format!("c{}", i + 1), c))
+        .collect()
 }
 
 pub async fn synthesize(
@@ -43,13 +48,19 @@ pub async fn synthesize(
     }
     let mut body = String::new();
     for (sid, c) in &ids {
-        body.push_str(&format!("{sid} [{}] {} (value: {}; source: {})\n", c.raw.topic, c.raw.text, c.raw.value, c.raw.url));
+        body.push_str(&format!(
+            "{sid} [{}] {} (value: {}; source: {})\n",
+            c.raw.topic, c.raw.text, c.raw.value, c.raw.url
+        ));
     }
     for k in conflicts {
         body.push_str(&format!("CONFLICT on topic {:?}\n", k.topic));
     }
     let set: StatementSet = llm
-        .ask_json(vec![owner_msg(format!("{SYNTH_INSTRUCTIONS}\nQuestion: {question}")), untrusted_msg(body)])
+        .ask_json(vec![
+            owner_msg(format!("{SYNTH_INSTRUCTIONS}\nQuestion: {question}")),
+            untrusted_msg(body),
+        ])
         .await?;
     Ok(validate_statements(set, &ids, conflicts))
 }
@@ -65,8 +76,14 @@ fn validate_statements(
     for st in set.statements {
         let verdict = check_statement(&st, &by_short, &conflicted);
         match verdict {
-            Ok(claim_ids) => ok.push(Statement { text: st.text, claim_ids }),
-            Err(reason) => bad.push(RejectedStatement { text: st.text, reason }),
+            Ok(claim_ids) => ok.push(Statement {
+                text: st.text,
+                claim_ids,
+            }),
+            Err(reason) => bad.push(RejectedStatement {
+                text: st.text,
+                reason,
+            }),
         }
     }
     (ok, bad)
@@ -82,17 +99,31 @@ fn check_statement(
     }
     let mut cited = Vec::new();
     for sid in &st.claim_ids {
-        cited.push(*by_short.get(sid.as_str()).ok_or_else(|| format!("cites unknown or rejected claim {sid:?}"))?);
+        cited.push(
+            *by_short
+                .get(sid.as_str())
+                .ok_or_else(|| format!("cites unknown or rejected claim {sid:?}"))?,
+        );
     }
     let spans: Vec<&str> = cited.iter().map(|c| c.raw.span.as_str()).collect();
     if !statement_supported(&st.text, &spans) {
         return Err("statement is not supported by the spans of the claims it cites".into());
     }
-    for topic in cited.iter().map(|c| norm_key(&c.raw.topic)).filter(|t| conflicted.contains(t.as_str())).collect::<BTreeSet<_>>() {
-        let values: BTreeSet<String> =
-            cited.iter().filter(|c| norm_key(&c.raw.topic) == topic).map(|c| norm_key(&c.raw.value)).collect();
+    for topic in cited
+        .iter()
+        .map(|c| norm_key(&c.raw.topic))
+        .filter(|t| conflicted.contains(t.as_str()))
+        .collect::<BTreeSet<_>>()
+    {
+        let values: BTreeSet<String> = cited
+            .iter()
+            .filter(|c| norm_key(&c.raw.topic) == topic)
+            .map(|c| norm_key(&c.raw.value))
+            .collect();
         if values.len() < 2 {
-            return Err(format!("asserts one side of a conflict on {topic:?}; must cite every position"));
+            return Err(format!(
+                "asserts one side of a conflict on {topic:?}; must cite every position"
+            ));
         }
     }
     Ok(cited.iter().map(|c| c.id).collect())

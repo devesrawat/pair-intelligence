@@ -102,7 +102,9 @@ mod tests {
     #[test]
     fn redact_literal_secret_removed_anywhere() {
         let sec = Secret::new("hunter2hunter2");
-        let r = Redactor::new().with_secret(&sec).redact("url=https://x/?k=hunter2hunter2&z=1");
+        let r = Redactor::new()
+            .with_secret(&sec)
+            .redact("url=https://x/?k=hunter2hunter2&z=1");
         assert!(!r.contains("hunter2"));
     }
 

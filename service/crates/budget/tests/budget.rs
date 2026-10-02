@@ -11,7 +11,12 @@ use pair_core::types::UsageReport;
 use std::sync::Arc;
 
 fn usage(cost: Option<i64>) -> UsageReport {
-    UsageReport { input_tokens: 100, output_tokens: 50, actual_cost: cost.map(Micros), price_version: PRICE.to_owned() }
+    UsageReport {
+        input_tokens: 100,
+        output_tokens: 50,
+        actual_cost: cost.map(Micros),
+        price_version: PRICE.to_owned(),
+    }
 }
 
 async fn counted(db: &TestDb) -> i64 {
@@ -29,7 +34,9 @@ async fn parallel_reservations_cannot_overspend() {
     let mut handles = Vec::new();
     for _ in 0..50 {
         let b = Arc::clone(&budget);
-        handles.push(tokio::spawn(async move { b.reserve(TaskId::new(), Micros(30_000)).await }));
+        handles.push(tokio::spawn(async move {
+            b.reserve(TaskId::new(), Micros(30_000)).await
+        }));
     }
     let mut accepted = 0i64;
     for h in handles {
@@ -53,7 +60,10 @@ async fn reconcile_is_idempotent() {
     assert_eq!(a.id, b.id);
     assert!(a.settled);
     assert_eq!(a.amount, Micros(20_000));
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM budget_ledger").fetch_one(&db.pool).await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM budget_ledger")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
     assert_eq!(rows, 1);
     // Unused remainder released: only actual spend counts.
     assert_eq!(counted(&db).await, 20_000);
@@ -78,10 +88,16 @@ async fn unknown_usage_retains_reservation() {
         .unwrap();
     assert_eq!(state, "unresolved");
     // Still counted: a further 0.03 would push the 0.10 daily cap over.
-    let err = budget.reserve(TaskId::new(), Micros(30_000)).await.unwrap_err();
+    let err = budget
+        .reserve(TaskId::new(), Micros(30_000))
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::BudgetExceeded);
     // Replay is idempotent; a later known cost resolves it and releases the remainder.
-    assert_eq!(budget.reconcile(id, usage(None)).await.unwrap().id, entry.id);
+    assert_eq!(
+        budget.reconcile(id, usage(None)).await.unwrap().id,
+        entry.id
+    );
     let settled = budget.reconcile(id, usage(Some(10_000))).await.unwrap();
     assert!(settled.settled);
     assert_eq!(counted(&db).await, 10_000);
@@ -92,10 +108,21 @@ async fn unknown_usage_retains_reservation() {
 async fn unknown_price_denies() {
     let db = TestDb::create().await;
     let budget = db.budget(&yaml(2000, 100, 100, 10));
-    let req = ReserveRequest::metered(TaskId::new(), Micros(1_000), pair_budget::TaskKind::Default, "nope".into());
-    assert_eq!(budget.reserve_with(req).await.unwrap_err().code, ErrorCode::BudgetUnknownPrice);
+    let req = ReserveRequest::metered(
+        TaskId::new(),
+        Micros(1_000),
+        pair_budget::TaskKind::Default,
+        "nope".into(),
+    );
+    assert_eq!(
+        budget.reserve_with(req).await.unwrap_err().code,
+        ErrorCode::BudgetUnknownPrice
+    );
     assert_eq!(counted(&db).await, 0);
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM budget_reservations").fetch_one(&db.pool).await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM budget_reservations")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
     assert_eq!(rows, 0);
 
     // No current price configured: the plain trait entry point refuses too.
@@ -104,14 +131,20 @@ async fn unknown_price_denies() {
         BudgetConfig::from_yaml(&yaml(2000, 100, 100, 10)).unwrap(),
         pair_budget::PriceBook::default(),
     );
-    let err = no_price.reserve(TaskId::new(), Micros(1_000)).await.unwrap_err();
+    let err = no_price
+        .reserve(TaskId::new(), Micros(1_000))
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::BudgetUnknownPrice);
 
     // Reconciling with an unknown price version changes nothing.
     let id = budget.reserve(TaskId::new(), Micros(5_000)).await.unwrap();
     let mut u = usage(Some(1_000));
     u.price_version = "nope".into();
-    assert_eq!(budget.reconcile(id, u).await.unwrap_err().code, ErrorCode::BudgetUnknownPrice);
+    assert_eq!(
+        budget.reconcile(id, u).await.unwrap_err().code,
+        ErrorCode::BudgetUnknownPrice
+    );
     assert_eq!(counted(&db).await, 5_000);
 }
 
@@ -125,14 +158,20 @@ async fn task_cap_enforced() {
     assert_eq!(err.code, ErrorCode::BudgetExceeded);
     budget.reserve(task, Micros(40_000)).await.unwrap();
     // Another task is unaffected.
-    budget.reserve(TaskId::new(), Micros(100_000)).await.unwrap();
+    budget
+        .reserve(TaskId::new(), Micros(100_000))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn monthly_cap_enforced() {
     let db = TestDb::create().await;
     let budget = db.budget(&yaml(10, 1000, 100, 10)); // month cap 0.10
-    budget.reserve(TaskId::new(), Micros(100_000)).await.unwrap();
+    budget
+        .reserve(TaskId::new(), Micros(100_000))
+        .await
+        .unwrap();
     let err = budget.reserve(TaskId::new(), Micros(1)).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::BudgetExceeded);
 }
@@ -145,22 +184,37 @@ async fn classifier_subcap_separate() {
     let cls = |c: i64| ReserveRequest::classifier(TaskId::new(), Micros(c), PRICE.to_owned());
     budget.reserve_with(cls(30_000)).await.unwrap();
     budget.reserve_with(cls(20_000)).await.unwrap();
-    assert_eq!(budget.reserve_with(cls(1)).await.unwrap_err().code, ErrorCode::BudgetExceeded);
+    assert_eq!(
+        budget.reserve_with(cls(1)).await.unwrap_err().code,
+        ErrorCode::BudgetExceeded
+    );
     // Metered spend is not blocked by an exhausted classifier sub-cap...
-    budget.reserve(TaskId::new(), Micros(500_000)).await.unwrap();
+    budget
+        .reserve(TaskId::new(), Micros(500_000))
+        .await
+        .unwrap();
     // ...and that metered spend did not change the classifier sub-cap outcome.
-    assert_eq!(budget.reserve_with(cls(1)).await.unwrap_err().code, ErrorCode::BudgetExceeded);
+    assert_eq!(
+        budget.reserve_with(cls(1)).await.unwrap_err().code,
+        ErrorCode::BudgetExceeded
+    );
 }
 
 #[test]
 fn auto_top_up_cannot_be_enabled() {
     let on = yaml(2000, 100, 100, 10).replace("auto_top_up: false", "auto_top_up: true");
-    assert_eq!(BudgetConfig::from_yaml(&on).unwrap_err().code, ErrorCode::InvalidInput);
+    assert_eq!(
+        BudgetConfig::from_yaml(&on).unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
     // The shipped config parses, with exact integer micros.
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/budget.yaml");
     let cfg = BudgetConfig::load(path).unwrap();
     assert_eq!(cfg.monthly_cap(), Micros(20_000_000));
     assert_eq!(cfg.daily_cap(), Micros(1_000_000));
     assert_eq!(cfg.classifier_monthly_subcap(), Micros(1_000_000));
-    assert_eq!(cfg.task_cap(pair_budget::TaskKind::Default), Micros(100_000));
+    assert_eq!(
+        cfg.task_cap(pair_budget::TaskKind::Default),
+        Micros(100_000)
+    );
 }

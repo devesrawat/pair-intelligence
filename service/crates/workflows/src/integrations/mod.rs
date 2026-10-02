@@ -12,7 +12,9 @@ mod fake;
 #[cfg(test)]
 mod tests;
 
-pub use client::{ChangeBatch, ClientError, Provider, RemoteItem, SourceChange, SourceClient, SourceKind};
+pub use client::{
+    ChangeBatch, ClientError, Provider, RemoteItem, SourceChange, SourceClient, SourceKind,
+};
 pub use disconnect::{DeletionChoice, DisconnectReport, ExportBundle};
 pub use ingest::{ingest_account, IngestStats};
 pub use store::{AccountState, IntegrationAccount};

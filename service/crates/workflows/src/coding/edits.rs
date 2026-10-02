@@ -24,7 +24,8 @@ pub fn parse_edit_set(text: &str) -> Result<Vec<FileEdit>> {
         (Some(s), Some(e)) if e > s => (s, e),
         _ => return Err(invalid("edit output contains no JSON object".into())),
     };
-    let set: EditSet = serde_json::from_str(&text[start..=end]).map_err(|e| invalid(format!("edit output invalid: {e}")))?;
+    let set: EditSet = serde_json::from_str(&text[start..=end])
+        .map_err(|e| invalid(format!("edit output invalid: {e}")))?;
     Ok(set.edits)
 }
 
@@ -34,7 +35,10 @@ fn reject_symlinks(root: &Path, rel: &str) -> Result<()> {
         cur.push(seg);
         if let Ok(meta) = std::fs::symlink_metadata(&cur) {
             if meta.file_type().is_symlink() {
-                return Err(PairError::new(ErrorCode::PolicyDenied, format!("symlink in edit path: {rel}")));
+                return Err(PairError::new(
+                    ErrorCode::PolicyDenied,
+                    format!("symlink in edit path: {rel}"),
+                ));
             }
         }
     }
@@ -48,13 +52,18 @@ pub fn apply_edits(root: &Path, scope: &Scope, edits: &[FileEdit]) -> Result<Vec
     for e in edits {
         let rel = normalize_rel(&e.path)?;
         if e.content.len() > MAX_EDIT_BYTES {
-            return Err(PairError::new(ErrorCode::InvalidInput, format!("edit too large: {rel}")));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!("edit too large: {rel}"),
+            ));
         }
         scope.check_all([rel.as_str()])?;
         reject_symlinks(root, &rel)?;
         planned.push((rel, &e.content));
     }
-    let io = |rel: &str, e: std::io::Error| PairError::new(ErrorCode::Internal, format!("write {rel}: {e}"));
+    let io = |rel: &str, e: std::io::Error| {
+        PairError::new(ErrorCode::Internal, format!("write {rel}: {e}"))
+    };
     for (rel, content) in &planned {
         let target = root.join(rel);
         if let Some(parent) = target.parent() {

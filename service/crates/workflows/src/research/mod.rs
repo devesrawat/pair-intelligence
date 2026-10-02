@@ -19,7 +19,8 @@ pub use report::render_markdown;
 pub use store::EvidenceStore;
 pub use support::{check_support, locate_span, JudgeVerdict, Support, SupportJudge};
 pub use types::{
-    Claim, Conflict, RawClaim, RejectReason, RejectedStatement, Report, ResearchScope, Source, Statement,
+    Claim, Conflict, RawClaim, RejectReason, RejectedStatement, Report, ResearchScope, Source,
+    Statement,
 };
 
 #[cfg(test)]

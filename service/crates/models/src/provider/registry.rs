@@ -87,7 +87,10 @@ impl ModelEntry {
     }
 
     pub fn limits(&self) -> ModelLimits {
-        ModelLimits { context_tokens: self.context_tokens, max_output_tokens: self.max_output_tokens }
+        ModelLimits {
+            context_tokens: self.context_tokens,
+            max_output_tokens: self.max_output_tokens,
+        }
     }
 
     pub fn allows(&self, class: DataClass) -> bool {
@@ -102,8 +105,12 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("read {}: {e}", path.display())))?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            PairError::new(
+                ErrorCode::InvalidInput,
+                format!("read {}: {e}", path.display()),
+            )
+        })?;
         Self::from_yaml_str(&text)
     }
 
@@ -124,7 +131,10 @@ impl ProviderRegistry {
         let mut map = BTreeMap::new();
         for e in entries {
             if map.insert(e.id.clone(), e.clone()).is_some() {
-                return Err(PairError::new(ErrorCode::InvalidInput, format!("duplicate model id {}", e.id)));
+                return Err(PairError::new(
+                    ErrorCode::InvalidInput,
+                    format!("duplicate model id {}", e.id),
+                ));
             }
         }
         Ok(Self { entries: map })
@@ -151,11 +161,17 @@ impl ProviderRegistry {
 
 fn build_entry(e: EntryConfig, endpoint: Endpoint) -> Result<ModelEntry> {
     if e.context_tokens == 0 || e.max_output_tokens == 0 || e.max_output_tokens > e.context_tokens {
-        return Err(PairError::new(ErrorCode::InvalidInput, format!("model {}: invalid token limits", e.id)));
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            format!("model {}: invalid token limits", e.id),
+        ));
     }
     let price = match e.price {
         Some(p) if p.input_per_mtok_micros < 0 || p.output_per_mtok_micros < 0 => {
-            return Err(PairError::new(ErrorCode::InvalidInput, format!("model {}: negative price", e.id)));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!("model {}: negative price", e.id),
+            ));
         }
         Some(p) => Some(Price {
             version: p.version,

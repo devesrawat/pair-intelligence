@@ -13,12 +13,18 @@ const STATE_SETTLED: &str = "settled";
 
 /// Canonical identity of a usage report; an identical replay maps to the same ledger row.
 fn reconciliation_key(u: &UsageReport) -> String {
-    let cost = u.actual_cost.map_or_else(|| "unknown".to_owned(), |c| c.0.to_string());
-    format!("{}|{}|{}|{}", u.input_tokens, u.output_tokens, cost, u.price_version)
+    let cost = u
+        .actual_cost
+        .map_or_else(|| "unknown".to_owned(), |c| c.0.to_string());
+    format!(
+        "{}|{}|{}|{}",
+        u.input_tokens, u.output_tokens, cost, u.price_version
+    )
 }
 
 fn to_i64(v: u64, what: &str) -> Result<i64> {
-    i64::try_from(v).map_err(|_| PairError::new(ErrorCode::InvalidInput, format!("{what} out of range")))
+    i64::try_from(v)
+        .map_err(|_| PairError::new(ErrorCode::InvalidInput, format!("{what} out of range")))
 }
 
 fn entry(row: (uuid::Uuid, uuid::Uuid, i64, bool)) -> LedgerEntry {
@@ -39,7 +45,10 @@ impl PgBudget {
     ) -> Result<LedgerEntry> {
         if let Some(cost) = usage.actual_cost {
             if cost < Micros::ZERO {
-                return Err(PairError::new(ErrorCode::InvalidInput, "actual_cost must not be negative"));
+                return Err(PairError::new(
+                    ErrorCode::InvalidInput,
+                    "actual_cost must not be negative",
+                ));
             }
             if !self.prices.is_known(&usage.price_version) {
                 return Err(PairError::new(
@@ -52,7 +61,11 @@ impl PgBudget {
         let output = to_i64(usage.output_tokens, "output_tokens")?;
         let key = reconciliation_key(&usage);
 
-        let mut tx = self.pool.begin().await.map_err(|e| db_err("begin reconcile", e))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_err("begin reconcile", e))?;
         let res: Option<(String, i64)> = sqlx::query_as(
             "SELECT state, reserved_micros FROM budget_reservations WHERE id = $1 FOR UPDATE",
         )
@@ -60,13 +73,17 @@ impl PgBudget {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| db_err("lock reservation", e))?;
-        let (state, reserved) = res.ok_or_else(|| PairError::new(ErrorCode::NotFound, "reservation not found"))?;
+        let (state, reserved) =
+            res.ok_or_else(|| PairError::new(ErrorCode::NotFound, "reservation not found"))?;
 
         if let Some(existing) = find_entry(&mut tx, id, &key).await? {
             return Ok(entry(existing));
         }
         if state == STATE_SETTLED {
-            return Err(PairError::new(ErrorCode::Conflict, "reservation already settled with a different usage report"));
+            return Err(PairError::new(
+                ErrorCode::Conflict,
+                "reservation already settled with a different usage report",
+            ));
         }
         debug_assert!(state == STATE_HELD || state == STATE_UNRESOLVED);
 
@@ -109,9 +126,16 @@ impl PgBudget {
         .execute(&mut *tx)
         .await
         .map_err(|e| db_err("update reservation", e))?;
-        tx.commit().await.map_err(|e| db_err("commit reconcile", e))?;
+        tx.commit()
+            .await
+            .map_err(|e| db_err("commit reconcile", e))?;
         tracing::info!(reservation = %id, settled, amount, "budget reconciled");
-        Ok(LedgerEntry { id: ledger_id, reservation: id, amount: Micros(amount), settled })
+        Ok(LedgerEntry {
+            id: ledger_id,
+            reservation: id,
+            amount: Micros(amount),
+            settled,
+        })
     }
 }
 

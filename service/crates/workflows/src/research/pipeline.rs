@@ -43,12 +43,19 @@ pub struct ResearchOutput {
 
 fn validate_scope(scope: &ResearchScope) -> Result<()> {
     if scope.question.trim().is_empty() || scope.max_sources == 0 {
-        return Err(PairError::new(ErrorCode::InvalidInput, "research scope needs a question and max_sources > 0"));
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            "research scope needs a question and max_sources > 0",
+        ));
     }
     Ok(())
 }
 
-pub async fn run_research(deps: &ResearchDeps<'_>, run: &ResearchRun, scope: &ResearchScope) -> Result<ResearchOutput> {
+pub async fn run_research(
+    deps: &ResearchDeps<'_>,
+    run: &ResearchRun,
+    scope: &ResearchScope,
+) -> Result<ResearchOutput> {
     validate_scope(scope)?;
     let run_id = deps.store.create_run(scope).await?;
     match execute(deps, run, scope, run_id).await {
@@ -65,8 +72,17 @@ pub async fn run_research(deps: &ResearchDeps<'_>, run: &ResearchRun, scope: &Re
     }
 }
 
-async fn execute(deps: &ResearchDeps<'_>, run: &ResearchRun, scope: &ResearchScope, run_id: uuid::Uuid) -> Result<ResearchOutput> {
-    let gate = Gate { policy: deps.policy, task: run.task, trace: run.trace };
+async fn execute(
+    deps: &ResearchDeps<'_>,
+    run: &ResearchRun,
+    scope: &ResearchScope,
+    run_id: uuid::Uuid,
+) -> Result<ResearchOutput> {
+    let gate = Gate {
+        policy: deps.policy,
+        task: run.task,
+        trace: run.trace,
+    };
     let llm = ResearchLlm {
         provider: deps.provider,
         budget: deps.budget,
@@ -77,7 +93,11 @@ async fn execute(deps: &ResearchDeps<'_>, run: &ResearchRun, scope: &ResearchSco
     };
 
     let sources = capture_sources(&gate, deps.fetcher, scope).await?;
-    for s in sources.iter().filter(|s| s.duplicate_of.is_none()).chain(sources.iter().filter(|s| s.duplicate_of.is_some())) {
+    for s in sources
+        .iter()
+        .filter(|s| s.duplicate_of.is_none())
+        .chain(sources.iter().filter(|s| s.duplicate_of.is_some()))
+    {
         deps.store.save_source(run_id, s).await?;
     }
     tracing::info!(run = %run_id, sources = sources.len(), "sources captured");
@@ -85,7 +105,8 @@ async fn execute(deps: &ResearchDeps<'_>, run: &ResearchRun, scope: &ResearchSco
     let raws = extract_claims(&llm, &sources).await?;
     let claims = validate_claims(raws, &sources, deps.judge).await?;
     let conflicts = compare_claims(&claims);
-    let (statements, rejected_statements) = synthesize(&llm, &scope.question, &claims, &conflicts).await?;
+    let (statements, rejected_statements) =
+        synthesize(&llm, &scope.question, &claims, &conflicts).await?;
     for c in &claims {
         deps.store.save_claim(run_id, c, &sources).await?;
     }
@@ -117,19 +138,32 @@ fn limitations(
     let mut out = Vec::new();
     let unavailable = sources.iter().filter(|s| !s.available).count();
     if unavailable > 0 {
-        out.push(format!("{unavailable} source(s) were inaccessible; evidence from them is missing."));
+        out.push(format!(
+            "{unavailable} source(s) were inaccessible; evidence from them is missing."
+        ));
     }
     let rejected = claims.iter().filter(|c| !c.is_valid()).count();
     if rejected > 0 {
-        out.push(format!("{rejected} extracted claim(s) failed citation validation and were excluded."));
+        out.push(format!(
+            "{rejected} extracted claim(s) failed citation validation and were excluded."
+        ));
     }
     if !rejected_statements.is_empty() {
-        out.push(format!("{} synthesized statement(s) failed citation validation and were excluded.", rejected_statements.len()));
+        out.push(format!(
+            "{} synthesized statement(s) failed citation validation and were excluded.",
+            rejected_statements.len()
+        ));
     }
     if !conflicts.is_empty() {
-        out.push(format!("{} topic(s) have conflicting evidence; no resolution is asserted.", conflicts.len()));
+        out.push(format!(
+            "{} topic(s) have conflicting evidence; no resolution is asserted.",
+            conflicts.len()
+        ));
     }
-    if sources.iter().any(|s| s.published_at.is_none() && s.available) {
+    if sources
+        .iter()
+        .any(|s| s.published_at.is_none() && s.available)
+    {
         out.push("Some sources carry no publication date.".into());
     }
     if deps.judge.is_none() {

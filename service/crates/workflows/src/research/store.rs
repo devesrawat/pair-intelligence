@@ -20,7 +20,8 @@ impl EvidenceStore {
 
     pub async fn create_run(&self, scope: &ResearchScope) -> Result<Uuid> {
         let id = Uuid::now_v7();
-        let json = serde_json::to_value(scope).map_err(|e| PairError::new(ErrorCode::Internal, e.to_string()))?;
+        let json = serde_json::to_value(scope)
+            .map_err(|e| PairError::new(ErrorCode::Internal, e.to_string()))?;
         sqlx::query("INSERT INTO research_runs (id, question, scope) VALUES ($1, $2, $3)")
             .bind(id)
             .bind(&scope.question)
@@ -33,7 +34,12 @@ impl EvidenceStore {
 
     pub async fn finish_run(&self, run: Uuid, ok: bool) -> Result<()> {
         let status = if ok { "completed" } else { "failed" };
-        sqlx::query("UPDATE research_runs SET status = $2 WHERE id = $1").bind(run).bind(status).execute(&self.pool).await.map_err(db)?;
+        sqlx::query("UPDATE research_runs SET status = $2 WHERE id = $1")
+            .bind(run)
+            .bind(status)
+            .execute(&self.pool)
+            .await
+            .map_err(db)?;
         Ok(())
     }
 
@@ -64,7 +70,11 @@ impl EvidenceStore {
 
     /// Stores the claim and its exact supporting span (pinned to the source version).
     pub async fn save_claim(&self, run: Uuid, c: &Claim, sources: &[Source]) -> Result<()> {
-        let status = if c.is_valid() { "validated" } else { "rejected" };
+        let status = if c.is_valid() {
+            "validated"
+        } else {
+            "rejected"
+        };
         let reason = c.rejected.as_ref().map(ToString::to_string);
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query(

@@ -26,7 +26,10 @@ const PROFILE_INDENT: usize = 2;
 const FIELD_INDENT: usize = 4;
 
 fn bad(msg: impl Into<String>) -> PairError {
-    PairError::new(ErrorCode::InvalidInput, format!("context config: {}", msg.into()))
+    PairError::new(
+        ErrorCode::InvalidInput,
+        format!("context config: {}", msg.into()),
+    )
 }
 
 impl ContextConfig {
@@ -59,7 +62,9 @@ impl ContextConfig {
                     let v: u64 = val
                         .parse()
                         .map_err(|_| bad(format!("line {}: '{val}' is not an integer", n + 1)))?;
-                    raw.entry(profile.clone()).or_default().insert(key.to_string(), v);
+                    raw.entry(profile.clone())
+                        .or_default()
+                        .insert(key.to_string(), v);
                 }
                 _ => return Err(bad(format!("line {}: unexpected structure", n + 1))),
             }
@@ -70,13 +75,21 @@ impl ContextConfig {
             .map(|(name, fields)| Ok((name.clone(), budgets_from(&name, &fields)?)))
             .collect::<Result<BTreeMap<_, _>>>()?;
         if !profiles.contains_key(&default_profile) {
-            return Err(bad(format!("default_profile '{default_profile}' not defined")));
+            return Err(bad(format!(
+                "default_profile '{default_profile}' not defined"
+            )));
         }
-        Ok(Self { default_profile, profiles })
+        Ok(Self {
+            default_profile,
+            profiles,
+        })
     }
 
     pub fn profile(&self, name: &str) -> Result<ContextBudgets> {
-        self.profiles.get(name).cloned().ok_or_else(|| bad(format!("unknown profile '{name}'")))
+        self.profiles
+            .get(name)
+            .cloned()
+            .ok_or_else(|| bad(format!("unknown profile '{name}'")))
     }
 
     pub fn default_budgets(&self) -> Result<ContextBudgets> {
@@ -85,7 +98,11 @@ impl ContextConfig {
 }
 
 fn budgets_from(name: &str, f: &BTreeMap<String, u64>) -> Result<ContextBudgets> {
-    let get = |k: &str| f.get(k).copied().ok_or_else(|| bad(format!("profile '{name}' missing '{k}'")));
+    let get = |k: &str| {
+        f.get(k)
+            .copied()
+            .ok_or_else(|| bad(format!("profile '{name}' missing '{k}'")))
+    };
     Ok(ContextBudgets {
         system_policy: get("system_policy")?,
         task_contract: get("task_contract")?,
@@ -108,8 +125,17 @@ mod tests {
     fn test_parse_repo_config_coding_profile_matches_spec() {
         let b = ContextConfig::parse(REPO_CONFIG).and_then(|c| c.profile("coding"));
         assert_eq!(
-            b.map(|b| (b.system_policy, b.task_contract, b.project, b.memories, b.tool_results, b.conversation, b.tool_schemas, b.total))
-                .ok(),
+            b.map(|b| (
+                b.system_policy,
+                b.task_contract,
+                b.project,
+                b.memories,
+                b.tool_results,
+                b.conversation,
+                b.tool_schemas,
+                b.total
+            ))
+            .ok(),
             Some((800, 700, 1200, 1200, 5000, 1500, 800, 11200))
         );
     }

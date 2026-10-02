@@ -19,15 +19,17 @@ pub async fn insert_goal(
 ) -> Result<Uuid> {
     let id = Uuid::now_v7();
     let evidence = serde_json::json!(evidence);
-    sqlx::query("INSERT INTO goals (id, title, owner, due_at, evidence) VALUES ($1, $2, $3, $4, $5)")
-        .bind(id)
-        .bind(title)
-        .bind(owner)
-        .bind(due_at)
-        .bind(evidence)
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
+    sqlx::query(
+        "INSERT INTO goals (id, title, owner, due_at, evidence) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(id)
+    .bind(title)
+    .bind(owner)
+    .bind(due_at)
+    .bind(evidence)
+    .execute(pool)
+    .await
+    .map_err(db_err)?;
     Ok(id)
 }
 
@@ -141,7 +143,11 @@ pub async fn unresolved_loops(pool: &PgPool) -> Result<Vec<OpenLoop>> {
 }
 
 /// Events with `start <= occurred_at < end`, chronological.
-pub async fn events_between(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<EventRecord>> {
+pub async fn events_between(
+    pool: &PgPool,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<EventRecord>> {
     let rows = sqlx::query(
         "SELECT id, kind, occurred_at, summary, loop_id, source_ref FROM daily_events
          WHERE occurred_at >= $1 AND occurred_at < $2 ORDER BY occurred_at, id",

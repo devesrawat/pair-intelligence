@@ -29,7 +29,10 @@ impl AccountState {
             "connected" => Ok(Self::Connected),
             "revoked" => Ok(Self::Revoked),
             "disconnected" => Ok(Self::Disconnected),
-            other => Err(PairError::new(ErrorCode::Internal, format!("unknown account state {other}"))),
+            other => Err(PairError::new(
+                ErrorCode::Internal,
+                format!("unknown account state {other}"),
+            )),
         }
     }
 }
@@ -57,19 +60,22 @@ pub async fn create_account(pool: &PgPool, provider: Provider) -> Result<Uuid> {
 }
 
 pub async fn get_account(pool: &PgPool, id: Uuid) -> Result<IntegrationAccount> {
-    let row = sqlx::query("SELECT provider, state, allowlist, writes_enabled FROM integration_accounts WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db_err)?
-        .ok_or_else(|| PairError::new(ErrorCode::NotFound, "integration account not found"))?;
+    let row = sqlx::query(
+        "SELECT provider, state, allowlist, writes_enabled FROM integration_accounts WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db_err)?
+    .ok_or_else(|| PairError::new(ErrorCode::NotFound, "integration account not found"))?;
     let provider: String = row.try_get("provider").map_err(db_err)?;
     let state: String = row.try_get("state").map_err(db_err)?;
     let allowlist: serde_json::Value = row.try_get("allowlist").map_err(db_err)?;
     Ok(IntegrationAccount {
         id,
-        provider: Provider::parse(&provider)
-            .ok_or_else(|| PairError::new(ErrorCode::Internal, format!("unknown provider {provider}")))?,
+        provider: Provider::parse(&provider).ok_or_else(|| {
+            PairError::new(ErrorCode::Internal, format!("unknown provider {provider}"))
+        })?,
         state: AccountState::parse(&state)?,
         allowlist: serde_json::from_value(allowlist)
             .map_err(|e| PairError::new(ErrorCode::Internal, format!("corrupt allowlist: {e}")))?,
@@ -108,20 +114,23 @@ pub async fn set_writes_enabled(pool: &PgPool, id: Uuid, enabled: bool) -> Resul
 }
 
 pub async fn get_cursor(pool: &PgPool, id: Uuid, scope: &str) -> Result<Option<String>> {
-    let row = sqlx::query("SELECT cursor FROM integration_cursors WHERE account_id = $1 AND scope = $2")
-        .bind(id)
-        .bind(scope)
-        .fetch_optional(pool)
-        .await
-        .map_err(db_err)?;
+    let row =
+        sqlx::query("SELECT cursor FROM integration_cursors WHERE account_id = $1 AND scope = $2")
+            .bind(id)
+            .bind(scope)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?;
     row.map(|r| r.try_get("cursor").map_err(db_err)).transpose()
 }
 
 /// Number of non-tombstoned sources held for the account.
 pub async fn active_source_count(pool: &PgPool, id: Uuid) -> Result<i64> {
-    sqlx::query_scalar("SELECT count(*) FROM integration_sources WHERE account_id = $1 AND state = 'active'")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .map_err(db_err)
+    sqlx::query_scalar(
+        "SELECT count(*) FROM integration_sources WHERE account_id = $1 AND state = 'active'",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(db_err)
 }

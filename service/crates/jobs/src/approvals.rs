@@ -41,23 +41,36 @@ async fn lock_approval(tx: &mut Transaction<'_, Postgres>, id: ApprovalId) -> Re
 
 fn check_hash(row: &ApprovalRow, action_hash: &str) -> Result<()> {
     if row.action_hash != action_hash {
-        return Err(PairError::new(ErrorCode::ApprovalPayloadChanged, "payload hash differs from approved hash"));
+        return Err(PairError::new(
+            ErrorCode::ApprovalPayloadChanged,
+            "payload hash differs from approved hash",
+        ));
     }
     Ok(())
 }
 
 fn check_live(row: &ApprovalRow) -> Result<()> {
     if row.expires_at <= Utc::now() {
-        return Err(PairError::new(ErrorCode::ApprovalExpired, "approval expired"));
+        return Err(PairError::new(
+            ErrorCode::ApprovalExpired,
+            "approval expired",
+        ));
     }
     if row.consumed {
-        return Err(PairError::new(ErrorCode::Conflict, "approval already consumed"));
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            "approval already consumed",
+        ));
     }
     Ok(())
 }
 
 /// Used by `JobStore::grant`: approval must match the pending hash and be live (not consumed).
-pub(crate) async fn validate_grant(tx: &mut Transaction<'_, Postgres>, id: ApprovalId, pending: &str) -> Result<()> {
+pub(crate) async fn validate_grant(
+    tx: &mut Transaction<'_, Postgres>,
+    id: ApprovalId,
+    pending: &str,
+) -> Result<()> {
     let row = lock_approval(tx, id).await?;
     check_hash(&row, pending)?;
     check_live(&row)
@@ -66,7 +79,12 @@ pub(crate) async fn validate_grant(tx: &mut Transaction<'_, Postgres>, id: Appro
 /// Check and consume. With `run`, consumption is re-entrant for the same run so a run resumed
 /// after a crash between consume and effect completion is not stuck; effects stay exactly-once via
 /// their intents. Any other caller sees single-use semantics. Rejections never consume.
-pub(crate) async fn consume_inner(pool: &PgPool, id: ApprovalId, action_hash: &str, run: Option<RunId>) -> Result<()> {
+pub(crate) async fn consume_inner(
+    pool: &PgPool,
+    id: ApprovalId,
+    action_hash: &str,
+    run: Option<RunId>,
+) -> Result<()> {
     let mut tx = pool.begin().await.map_err(db_err)?;
     let row = lock_approval(&mut tx, id).await?;
     check_hash(&row, action_hash)?;
@@ -92,33 +110,47 @@ impl PgApprovals {
 
     /// Approve with the default 24 h expiry.
     pub async fn approve_default(&self, action_hash: &str, actor: &str) -> Result<ApprovalId> {
-        self.approve(action_hash, actor, plus(Utc::now(), APPROVAL_TTL)?).await
+        self.approve(action_hash, actor, plus(Utc::now(), APPROVAL_TTL)?)
+            .await
     }
 }
 
 #[async_trait]
 impl Approvals for PgApprovals {
     /// `expiry` must be in the future and at most 24 h away.
-    async fn approve(&self, action_hash: &str, actor: &str, expiry: DateTime<Utc>) -> Result<ApprovalId> {
+    async fn approve(
+        &self,
+        action_hash: &str,
+        actor: &str,
+        expiry: DateTime<Utc>,
+    ) -> Result<ApprovalId> {
         if !is_valid_hash(action_hash) {
-            return Err(PairError::new(ErrorCode::InvalidInput, "action hash must be 64 hex chars (sha256)"));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "action hash must be 64 hex chars (sha256)",
+            ));
         }
         if actor.trim().is_empty() {
             return Err(PairError::new(ErrorCode::InvalidInput, "actor required"));
         }
         let now = Utc::now();
         if expiry <= now || expiry > plus(now, APPROVAL_TTL)? {
-            return Err(PairError::new(ErrorCode::InvalidInput, "expiry must be within the next 24 hours"));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "expiry must be within the next 24 hours",
+            ));
         }
         let id = ApprovalId::new();
-        sqlx::query("INSERT INTO approvals (id, action_hash, actor, expires_at) VALUES ($1, $2, $3, $4)")
-            .bind(id.0)
-            .bind(action_hash)
-            .bind(actor)
-            .bind(expiry)
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
+        sqlx::query(
+            "INSERT INTO approvals (id, action_hash, actor, expires_at) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(id.0)
+        .bind(action_hash)
+        .bind(actor)
+        .bind(expiry)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
         tracing::info!(approval_id = %id, actor, "approval granted");
         Ok(id)
     }

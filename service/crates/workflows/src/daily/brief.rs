@@ -63,9 +63,22 @@ fn to_priority(l: &OpenLoop, now: DateTime<Utc>) -> Priority {
 /// regardless of due date; within a class, earliest due first (overdue sorts first,
 /// undated last). Blocked items are reported as blockers, not priorities.
 pub fn select_priorities(loops: &[OpenLoop], now: DateTime<Utc>) -> Vec<Priority> {
-    let mut open: Vec<&OpenLoop> = loops.iter().filter(|l| l.status == LoopStatus::Open).collect();
-    open.sort_by_key(|l| (l.kind == LoopKind::Inference, l.due_at.is_none(), l.due_at, l.id));
-    open.into_iter().take(MAX_PRIORITIES).map(|l| to_priority(l, now)).collect()
+    let mut open: Vec<&OpenLoop> = loops
+        .iter()
+        .filter(|l| l.status == LoopStatus::Open)
+        .collect();
+    open.sort_by_key(|l| {
+        (
+            l.kind == LoopKind::Inference,
+            l.due_at.is_none(),
+            l.due_at,
+            l.id,
+        )
+    });
+    open.into_iter()
+        .take(MAX_PRIORITIES)
+        .map(|l| to_priority(l, now))
+        .collect()
 }
 
 pub async fn build_brief(pool: &PgPool, now: DateTime<Utc>) -> Result<Brief> {
@@ -76,7 +89,11 @@ pub async fn build_brief(pool: &PgPool, now: DateTime<Utc>) -> Result<Brief> {
         .await?
         .into_iter()
         .filter(|e| e.kind == EventKind::Meeting)
-        .map(|e| Meeting { at: e.occurred_at, title: e.summary, source_ref: e.source_ref })
+        .map(|e| Meeting {
+            at: e.occurred_at,
+            title: e.summary,
+            source_ref: e.source_ref,
+        })
         .collect();
     let blockers = loops
         .iter()
@@ -97,8 +114,18 @@ pub async fn build_brief(pool: &PgPool, now: DateTime<Utc>) -> Result<Brief> {
                 && !priorities.iter().any(|p| p.loop_id == l.id)
         })
         .take(MAX_DELEGATIONS)
-        .map(|l| Delegation { loop_id: l.id, title: l.title.clone(), source_ref: l.source_ref.clone() })
+        .map(|l| Delegation {
+            loop_id: l.id,
+            title: l.title.clone(),
+            source_ref: l.source_ref.clone(),
+        })
         .collect();
     tracing::info!(priorities = ?priorities.len(), "briefing built");
-    Ok(Brief { generated_at: now, priorities, meetings, blockers, delegations })
+    Ok(Brief {
+        generated_at: now,
+        priorities,
+        meetings,
+        blockers,
+        delegations,
+    })
 }

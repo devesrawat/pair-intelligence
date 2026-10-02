@@ -12,7 +12,16 @@ use tokio::process::Command;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024;
 const MIN_REDACTABLE_LEN: usize = 6;
 const REDACTED: &str = "[REDACTED]";
-const SECRET_NAME_MARKERS: [&str; 8] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "COOKIE"];
+const SECRET_NAME_MARKERS: [&str; 8] = [
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "AUTH",
+    "COOKIE",
+];
 const POLICY_VERSION_FALLBACK: &str = "coding-workflow";
 const SHELL_TOOL: &str = "shell";
 
@@ -72,7 +81,16 @@ impl<'a> Runner<'a> {
             approvals: Vec::new(),
             policy_version: POLICY_VERSION_FALLBACK.to_string(),
         };
-        Self { policy, task, trace, ctx, timeout, home, passthrough, redactions }
+        Self {
+            policy,
+            task,
+            trace,
+            ctx,
+            timeout,
+            home,
+            passthrough,
+            redactions,
+        }
     }
 
     fn authorize(&self, argv: &[String], cwd: &Path) -> Result<()> {
@@ -91,7 +109,10 @@ impl<'a> Runner<'a> {
         };
         match self.policy.authorize(&req, &self.ctx).decision {
             Decision::Allow => Ok(()),
-            Decision::Deny { reason } => Err(PairError::new(ErrorCode::PolicyDenied, format!("{exe}: {reason}"))),
+            Decision::Deny { reason } => Err(PairError::new(
+                ErrorCode::PolicyDenied,
+                format!("{exe}: {reason}"),
+            )),
             Decision::NeedsApproval { payload_hash } => Err(PairError::new(
                 ErrorCode::ApprovalRequired,
                 format!("{exe} needs approval (payload {payload_hash})"),

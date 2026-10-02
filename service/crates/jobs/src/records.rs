@@ -44,8 +44,9 @@ pub(crate) fn map_run(row: &PgRow) -> Result<RunRecord> {
         id: RunId(row.try_get("id").map_err(db_err)?),
         kind: row.try_get("kind").map_err(db_err)?,
         input: row.try_get("input").map_err(db_err)?,
-        class: RunClass::parse(&class)
-            .ok_or_else(|| PairError::new(ErrorCode::Internal, format!("unknown run class {class}")))?,
+        class: RunClass::parse(&class).ok_or_else(|| {
+            PairError::new(ErrorCode::Internal, format!("unknown run class {class}"))
+        })?,
         state: parse_state(&state)?,
         next_step: to_u32(row.try_get("next_step").map_err(db_err)?)?,
         tool_calls: to_u32(row.try_get("tool_calls").map_err(db_err)?)?,

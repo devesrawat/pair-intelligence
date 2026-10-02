@@ -22,20 +22,26 @@ impl Endpoint {
         if !url.username().is_empty() || url.password().is_some() {
             return Err(disallowed("endpoint must not embed credentials"));
         }
-        let host = url.host().ok_or_else(|| disallowed("endpoint has no host"))?;
+        let host = url
+            .host()
+            .ok_or_else(|| disallowed("endpoint has no host"))?;
         check_host(&host)?;
         if let Some(port) = url.port() {
             if LOCAL_INFERENCE_PORTS.contains(&port) {
                 return Err(disallowed(format!("port {port} is a local-inference port")));
             }
         }
-        Ok(Self { base: url.as_str().trim_end_matches('/').to_owned() })
+        Ok(Self {
+            base: url.as_str().trim_end_matches('/').to_owned(),
+        })
     }
 
     /// TEST-ONLY escape hatch for mock HTTP fixtures bound to 127.0.0.1.
     /// Must never be reachable from configuration loading.
     pub fn unchecked_for_tests(raw: &str) -> Self {
-        Self { base: raw.trim_end_matches('/').to_owned() }
+        Self {
+            base: raw.trim_end_matches('/').to_owned(),
+        }
     }
 
     pub fn base(&self) -> &str {
@@ -76,7 +82,12 @@ fn check_domain(d: &str) -> Result<()> {
 fn check_v4(ip: Ipv4Addr) -> Result<()> {
     let [a, b, ..] = ip.octets();
     let cgnat = a == 100 && (64..128).contains(&b);
-    if ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || cgnat
+    if ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || cgnat
     {
         return Err(disallowed(format!("address {ip} is local or private")));
     }
@@ -131,7 +142,10 @@ mod tests {
     #[test]
     fn public_cloud_endpoints_accepted() {
         let ep = Endpoint::parse("https://api.anthropic.com/").expect("ok");
-        assert_eq!(ep.url("/v1/messages"), "https://api.anthropic.com/v1/messages");
+        assert_eq!(
+            ep.url("/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
         assert!(Endpoint::parse("https://ollama.com").is_ok());
     }
 }

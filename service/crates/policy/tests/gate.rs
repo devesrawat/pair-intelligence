@@ -24,7 +24,10 @@ impl Approvals for FakeApprovals {
         if action_hash == self.expected_hash {
             Ok(())
         } else {
-            Err(pair_core::error::PairError::new(ErrorCode::ApprovalPayloadChanged, "hash mismatch"))
+            Err(pair_core::error::PairError::new(
+                ErrorCode::ApprovalPayloadChanged,
+                "hash mismatch",
+            ))
         }
     }
 }
@@ -52,17 +55,26 @@ async fn gate_does_not_call_closure_on_deny_or_needs_approval() {
 async fn gate_error_codes_distinguish_deny_from_approval() {
     let f = fixture();
     let gate = Gate::new(Arc::new(f.engine.clone()), None);
-    let denied = gate.execute(&request("unknown.tool"), &f.ctx, || async { Ok(()) }).await;
+    let denied = gate
+        .execute(&request("unknown.tool"), &f.ctx, || async { Ok(()) })
+        .await;
     assert_eq!(denied.expect_err("deny").code, ErrorCode::PolicyDenied);
-    let pending = gate.execute(&request("message.send"), &f.ctx, || async { Ok(()) }).await;
-    assert_eq!(pending.expect_err("approval").code, ErrorCode::ApprovalRequired);
+    let pending = gate
+        .execute(&request("message.send"), &f.ctx, || async { Ok(()) })
+        .await;
+    assert_eq!(
+        pending.expect_err("approval").code,
+        ErrorCode::ApprovalRequired
+    );
 }
 
 #[tokio::test]
 async fn gate_runs_closure_on_allow_and_returns_value() {
     let f = fixture();
     let gate = Gate::new(Arc::new(f.engine.clone()), None);
-    let out = gate.execute(&request("git.commit"), &f.ctx, || async { Ok(42_u32) }).await;
+    let out = gate
+        .execute(&request("git.commit"), &f.ctx, || async { Ok(42_u32) })
+        .await;
     assert_eq!(out.expect("allowed"), 42);
 }
 
@@ -78,14 +90,35 @@ async fn gate_runs_closure_only_with_matching_approval() {
     let mut ctx = f.ctx.clone();
     ctx.approvals = vec![ApprovalId::new()];
 
-    let wrong = Gate::new(Arc::new(f.engine.clone()), Some(Arc::new(FakeApprovals { expected_hash: "other".into() })));
+    let wrong = Gate::new(
+        Arc::new(f.engine.clone()),
+        Some(Arc::new(FakeApprovals {
+            expected_hash: "other".into(),
+        })),
+    );
     let c = Arc::clone(&calls);
-    let res = wrong.execute(&req, &ctx, || async move { c.fetch_add(1, Ordering::SeqCst); Ok(()) }).await;
+    let res = wrong
+        .execute(&req, &ctx, || async move {
+            c.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
     assert!(res.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
-    let right = Gate::new(Arc::new(f.engine.clone()), Some(Arc::new(FakeApprovals { expected_hash: hash })));
+    let right = Gate::new(
+        Arc::new(f.engine.clone()),
+        Some(Arc::new(FakeApprovals {
+            expected_hash: hash,
+        })),
+    );
     let c = Arc::clone(&calls);
-    right.execute(&req, &ctx, || async move { c.fetch_add(1, Ordering::SeqCst); Ok(()) }).await.expect("approved");
+    right
+        .execute(&req, &ctx, || async move {
+            c.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .expect("approved");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

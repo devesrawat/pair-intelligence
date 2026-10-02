@@ -27,31 +27,57 @@ pub struct RepoConfig {
 
 impl RepoConfig {
     pub fn parse(json: &str) -> Result<Self> {
-        let cfg: RepoConfig = serde_json::from_str(json)
-            .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("invalid repo config: {e}")))?;
+        let cfg: RepoConfig = serde_json::from_str(json).map_err(|e| {
+            PairError::new(ErrorCode::InvalidInput, format!("invalid repo config: {e}"))
+        })?;
         cfg.validate()?;
         Ok(cfg)
     }
 
     pub fn load(repo: &Path) -> Result<Self> {
         let path = repo.join(REPO_CONFIG_PATH);
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|e| PairError::new(ErrorCode::NotFound, format!("repo config {}: {e}", path.display())))?;
+        let raw = std::fs::read_to_string(&path).map_err(|e| {
+            PairError::new(
+                ErrorCode::NotFound,
+                format!("repo config {}: {e}", path.display()),
+            )
+        })?;
         Self::parse(&raw)
     }
 
     fn validate(&self) -> Result<()> {
         if self.acceptance.is_empty() {
-            return Err(PairError::new(ErrorCode::InvalidInput, "repo config needs at least one acceptance command"));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "repo config needs at least one acceptance command",
+            ));
         }
-        if self.build.iter().chain(&self.acceptance).any(|c| c.is_empty() || c[0].trim().is_empty()) {
-            return Err(PairError::new(ErrorCode::InvalidInput, "repo config contains an empty command"));
+        if self
+            .build
+            .iter()
+            .chain(&self.acceptance)
+            .any(|c| c.is_empty() || c[0].trim().is_empty())
+        {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "repo config contains an empty command",
+            ));
         }
         if self.timeout_secs == 0 {
-            return Err(PairError::new(ErrorCode::InvalidInput, "timeout_secs must be positive"));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "timeout_secs must be positive",
+            ));
         }
-        if let Some(bad) = self.env_passthrough.iter().find(|n| super::runner::looks_secret_name(n)) {
-            return Err(PairError::new(ErrorCode::PolicyDenied, format!("env passthrough of secret-like name {bad}")));
+        if let Some(bad) = self
+            .env_passthrough
+            .iter()
+            .find(|n| super::runner::looks_secret_name(n))
+        {
+            return Err(PairError::new(
+                ErrorCode::PolicyDenied,
+                format!("env passthrough of secret-like name {bad}"),
+            ));
         }
         Ok(())
     }

@@ -32,7 +32,10 @@ pub(crate) fn plus(now: DateTime<Utc>, d: Duration) -> Result<DateTime<Utc>> {
 
 impl JobStore {
     pub fn new(pool: PgPool, cfg: JobConfig) -> Self {
-        Self { pool, cfg: Arc::new(cfg) }
+        Self {
+            pool,
+            cfg: Arc::new(cfg),
+        }
     }
 
     pub fn config(&self) -> &JobConfig {
@@ -41,12 +44,19 @@ impl JobStore {
 
     /// Idempotent start: the same key always yields the same `RunId`. Reusing a key with a
     /// different input is a `Conflict`.
-    pub async fn start_with_class(&self, input: WorkflowInput, key: IdempotencyKey, class: RunClass) -> Result<RunId> {
+    pub async fn start_with_class(
+        &self,
+        input: WorkflowInput,
+        key: IdempotencyKey,
+        class: RunClass,
+    ) -> Result<RunId> {
         let canonical = serde_json::json!({ "kind": input.kind, "payload": input.payload });
-        let input_hash = sha256_hex(
-            &serde_json::to_vec(&canonical)
-                .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("unserializable input: {e}")))?,
-        );
+        let input_hash = sha256_hex(&serde_json::to_vec(&canonical).map_err(|e| {
+            PairError::new(
+                ErrorCode::InvalidInput,
+                format!("unserializable input: {e}"),
+            )
+        })?);
         let candidate = RunId::new();
         let deadline = plus(Utc::now(), self.cfg.timeout(class))?;
         sqlx::query(
@@ -63,14 +73,18 @@ impl JobStore {
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
-        let row = sqlx::query("SELECT id, input_hash FROM workflow_runs WHERE idempotency_key = $1")
-            .bind(key.0)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db_err)?;
+        let row =
+            sqlx::query("SELECT id, input_hash FROM workflow_runs WHERE idempotency_key = $1")
+                .bind(key.0)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db_err)?;
         let stored_hash: String = row.try_get("input_hash").map_err(db_err)?;
         if stored_hash != input_hash {
-            return Err(PairError::new(ErrorCode::Conflict, "idempotency key reused with different input"));
+            return Err(PairError::new(
+                ErrorCode::Conflict,
+                "idempotency key reused with different input",
+            ));
         }
         let id = RunId(row.try_get("id").map_err(db_err)?);
         tracing::info!(run_id = %id, new = (id == candidate), "workflow start");
@@ -99,11 +113,13 @@ impl JobStore {
     }
 
     pub async fn steps(&self, id: RunId) -> Result<Vec<StepRecord>> {
-        let rows = sqlx::query("SELECT idx, name, output FROM workflow_steps WHERE run_id = $1 ORDER BY idx")
-            .bind(id.0)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_err)?;
+        let rows = sqlx::query(
+            "SELECT idx, name, output FROM workflow_steps WHERE run_id = $1 ORDER BY idx",
+        )
+        .bind(id.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
         rows.iter().map(map_step).collect()
     }
 
@@ -139,7 +155,10 @@ impl JobStore {
         .await
         .map_err(db_err)?;
         if res.rows_affected() > 0 {
-            tracing::warn!(count = res.rows_affected(), "stuck leases marked interrupted");
+            tracing::warn!(
+                count = res.rows_affected(),
+                "stuck leases marked interrupted"
+            );
         }
         Ok(res.rows_affected())
     }
@@ -173,7 +192,8 @@ impl JobStore {
         output: &serde_json::Value,
         terminal: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let idx_i = i32::try_from(idx).map_err(|_| PairError::new(ErrorCode::Internal, "step index overflow"))?;
+        let idx_i = i32::try_from(idx)
+            .map_err(|_| PairError::new(ErrorCode::Internal, "step index overflow"))?;
         let mut tx = self.pool.begin().await.map_err(db_err)?;
         let res = sqlx::query(
             "UPDATE workflow_runs SET next_step = $3 + 1, updated_at = now(), \
@@ -194,14 +214,16 @@ impl JobStore {
         if res.rows_affected() == 0 {
             return Err(lease_lost());
         }
-        sqlx::query("INSERT INTO workflow_steps (run_id, idx, name, output) VALUES ($1, $2, $3, $4)")
-            .bind(id.0)
-            .bind(idx_i)
-            .bind(name)
-            .bind(output)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        sqlx::query(
+            "INSERT INTO workflow_steps (run_id, idx, name, output) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(id.0)
+        .bind(idx_i)
+        .bind(name)
+        .bind(output)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
         tx.commit().await.map_err(db_err)
     }
 
@@ -213,7 +235,10 @@ impl JobStore {
         failure: Option<&str>,
         pending_hash: Option<&str>,
     ) -> Result<()> {
-        let terminal = matches!(to, RunState::Failed | RunState::Succeeded | RunState::Cancelled);
+        let terminal = matches!(
+            to,
+            RunState::Failed | RunState::Succeeded | RunState::Cancelled
+        );
         let res = sqlx::query(
             "UPDATE workflow_runs SET state = $3, failure = $4, pending_action_hash = $5, approval_id = NULL, \
                lease_owner = NULL, lease_expires_at = NULL, updated_at = now(), \
@@ -265,18 +290,25 @@ impl JobStore {
     /// The approval must match the run's pending action hash and still be live.
     pub async fn grant(&self, id: RunId, approval: ApprovalId) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(db_err)?;
-        let run = sqlx::query("SELECT state, pending_action_hash FROM workflow_runs WHERE id = $1 FOR UPDATE")
-            .bind(id.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_err)?
-            .ok_or_else(|| PairError::new(ErrorCode::NotFound, format!("run {id}")))?;
+        let run = sqlx::query(
+            "SELECT state, pending_action_hash FROM workflow_runs WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id.0)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| PairError::new(ErrorCode::NotFound, format!("run {id}")))?;
         let state: String = run.try_get("state").map_err(db_err)?;
         let pending: Option<String> = run.try_get("pending_action_hash").map_err(db_err)?;
         if state != state_str(RunState::WaitingApproval) {
-            return Err(PairError::new(ErrorCode::Conflict, format!("run {id} is not waiting for approval")));
+            return Err(PairError::new(
+                ErrorCode::Conflict,
+                format!("run {id} is not waiting for approval"),
+            ));
         }
-        let pending = pending.ok_or_else(|| PairError::new(ErrorCode::Internal, "waiting run without pending hash"))?;
+        let pending = pending.ok_or_else(|| {
+            PairError::new(ErrorCode::Internal, "waiting run without pending hash")
+        })?;
         validate_grant(&mut tx, approval, &pending).await?;
         sqlx::query("UPDATE workflow_runs SET state = 'queued', approval_id = $2, updated_at = now() WHERE id = $1")
             .bind(id.0)

@@ -26,8 +26,10 @@ const MEMORY_LIMIT: usize = 5;
 const CONTEXT_TOKENS: u64 = 100_000;
 const MAX_OUTPUT_TOKENS: u32 = 4096;
 const CALL_DEADLINE_MS: u64 = 120_000;
-const OUTPUT_CONTRACT: &str = "Respond with exactly what the current step asks for. Never reveal credentials.";
-const POLICY_SUMMARY: &str = "Edits only inside declared scope; all commands are policy-gated; no remote writes.";
+const OUTPUT_CONTRACT: &str =
+    "Respond with exactly what the current step asks for. Never reveal credentials.";
+const POLICY_SUMMARY: &str =
+    "Edits only inside declared scope; all commands are policy-gated; no remote writes.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,12 +105,19 @@ impl Ctx<'_, '_> {
         tracing::error!(task = %self.task.id, ?stage, "repository HEAD changed during task");
         Err(PairError::new(
             ErrorCode::Conflict,
-            format!("repository HEAD moved from {} to {now} during {stage:?}; task stopped", self.base_head),
+            format!(
+                "repository HEAD moved from {} to {now} during {stage:?}; task stopped",
+                self.base_head
+            ),
         ))
     }
 
     async fn ask(&self, mut messages: Vec<ModelMessage>, step: &str) -> Result<String> {
-        messages.push(ModelMessage { role: "user".into(), content: step.to_string(), trust: TrustClass::Owner });
+        messages.push(ModelMessage {
+            role: "user".into(),
+            content: step.to_string(),
+            trust: TrustClass::Owner,
+        });
         let req = ModelRequest {
             model_id: self.task.model_id.clone(),
             messages,
@@ -118,16 +127,30 @@ impl Ctx<'_, '_> {
             task: self.task.id,
             trace: self.task.trace,
         };
-        let resp = budgeted_generate(self.deps.provider, self.deps.budget, req, self.task.max_call_cost).await?;
+        let resp = budgeted_generate(
+            self.deps.provider,
+            self.deps.budget,
+            req,
+            self.task.max_call_cost,
+        )
+        .await?;
         Ok(resp.text)
     }
 }
 
 fn tool_message(content: String) -> ModelMessage {
-    ModelMessage { role: "user".into(), content, trust: TrustClass::Tool }
+    ModelMessage {
+        role: "user".into(),
+        content,
+        trust: TrustClass::Tool,
+    }
 }
 
-async fn verify(ctx: &Ctx<'_, '_>, cfg: &RepoConfig, wt: &std::path::Path) -> Result<(Vec<CmdReport>, Option<FailureClass>)> {
+async fn verify(
+    ctx: &Ctx<'_, '_>,
+    cfg: &RepoConfig,
+    wt: &std::path::Path,
+) -> Result<(Vec<CmdReport>, Option<FailureClass>)> {
     let mut reports = Vec::new();
     for argv in cfg.build.iter().chain(&cfg.acceptance) {
         let report = ctx.runner.run(argv, wt).await?;
@@ -147,7 +170,8 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     }
     let cfg = RepoConfig::load(&task.repo)?;
     let home = task.workspaces_root.join(format!(".home-{}", task.id));
-    std::fs::create_dir_all(&home).map_err(|e| PairError::new(ErrorCode::Internal, format!("home dir: {e}")))?;
+    std::fs::create_dir_all(&home)
+        .map_err(|e| PairError::new(ErrorCode::Internal, format!("home dir: {e}")))?;
     let runner = Runner::new(
         deps.policy,
         task.id,
@@ -158,13 +182,23 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         cfg.env_passthrough.clone(),
     );
     let base_head = worktree::head(&runner, &task.repo).await?;
-    let ctx = Ctx { deps, task, runner: &runner, base_head: base_head.clone() };
+    let ctx = Ctx {
+        deps,
+        task,
+        runner: &runner,
+        base_head: base_head.clone(),
+    };
     tracing::info!(task = %task.id, base = %base_head, "coding task started");
 
     // context
     let evidence = deps
         .memory
-        .retrieve(RetrievalQuery { text: task.issue.clone(), project: None, as_of: Utc::now(), limit: MEMORY_LIMIT })
+        .retrieve(RetrievalQuery {
+            text: task.issue.clone(),
+            project: None,
+            as_of: Utc::now(),
+            limit: MEMORY_LIMIT,
+        })
         .await?;
     let task_ctx = TaskContext {
         objective: task.issue.clone(),
@@ -173,13 +207,21 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         recent: Vec::new(),
         tool_results: Vec::new(),
     };
-    let limits = ModelLimits { context_tokens: CONTEXT_TOKENS, max_output_tokens: u64::from(MAX_OUTPUT_TOKENS) };
+    let limits = ModelLimits {
+        context_tokens: CONTEXT_TOKENS,
+        max_output_tokens: u64::from(MAX_OUTPUT_TOKENS),
+    };
     let compiled = deps.compiler.compile(&task_ctx, &limits, &evidence)?;
     stages.push(Stage::Context);
     ctx.assert_unchanged(Stage::Context).await?;
 
     // plan
-    let plan = ctx.ask(compiled.messages.clone(), "Step: propose a short implementation plan.").await?;
+    let plan = ctx
+        .ask(
+            compiled.messages.clone(),
+            "Step: propose a short implementation plan.",
+        )
+        .await?;
     stages.push(Stage::Plan);
     ctx.assert_unchanged(Stage::Plan).await?;
 
@@ -192,7 +234,10 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     let mut edit_msgs = compiled.messages.clone();
     edit_msgs.push(tool_message(format!("Approved plan:\n{plan}")));
     let edit_text = ctx
-        .ask(edit_msgs, "Step: output JSON {\"edits\":[{\"path\":...,\"content\":...}]} implementing the plan.")
+        .ask(
+            edit_msgs,
+            "Step: output JSON {\"edits\":[{\"path\":...,\"content\":...}]} implementing the plan.",
+        )
         .await?;
     ctx.assert_unchanged(Stage::Edit).await?;
     let edits = parse_edit_set(&edit_text)?;
@@ -210,15 +255,28 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     let diff = worktree::diff(&runner, &wt.path).await?;
 
     let (status, review, summary) = if let Some(class) = failure {
-        let last = commands.last().map(|c| c.argv.join(" ")).unwrap_or_default();
-        (CodingStatus::Failed, None, format!("verification failed ({class:?}) at `{last}`; see command reports"))
+        let last = commands
+            .last()
+            .map(|c| c.argv.join(" "))
+            .unwrap_or_default();
+        (
+            CodingStatus::Failed,
+            None,
+            format!("verification failed ({class:?}) at `{last}`; see command reports"),
+        )
     } else {
         let mut msgs = compiled.messages.clone();
         msgs.push(tool_message(format!("Diff under review:\n{diff}")));
-        let review = ctx.ask(msgs, "Step: review this diff for defects and scope creep.").await?;
+        let review = ctx
+            .ask(msgs, "Step: review this diff for defects and scope creep.")
+            .await?;
         stages.push(Stage::Review);
         ctx.assert_unchanged(Stage::Review).await?;
-        (CodingStatus::Succeeded, Some(review), "all build and acceptance commands passed".to_string())
+        (
+            CodingStatus::Succeeded,
+            Some(review),
+            "all build and acceptance commands passed".to_string(),
+        )
     };
     stages.push(Stage::Draft);
     tracing::info!(task = %task.id, ?status, files = changed.len(), "coding task drafted");
@@ -240,7 +298,11 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
 }
 
 /// Removes the task worktree (the branch and its commits-to-be remain for review).
-pub async fn discard_workspace(policy: &dyn Policy, task: &CodingTask, result: &CodingResult) -> Result<()> {
+pub async fn discard_workspace(
+    policy: &dyn Policy,
+    task: &CodingTask,
+    result: &CodingResult,
+) -> Result<()> {
     let runner = Runner::new(
         policy,
         task.id,

@@ -26,10 +26,19 @@ pub trait Memory: Send + Sync {
     async fn retrieve(&self, q: RetrievalQuery) -> Result<Vec<EvidenceItem>>;
 }
 pub trait ContextCompiler: Send + Sync {
-    fn compile(&self, ctx: &TaskContext, limits: &ModelLimits, memory: &[EvidenceItem]) -> Result<CompiledContext>;
+    fn compile(
+        &self,
+        ctx: &TaskContext,
+        limits: &ModelLimits,
+        memory: &[EvidenceItem],
+    ) -> Result<CompiledContext>;
 }
 pub trait Router: Send + Sync {
-    fn select(&self, profile: &TaskProfile, classification: Option<&TaskClassification>) -> Result<RouteDecision>;
+    fn select(
+        &self,
+        profile: &TaskProfile,
+        classification: Option<&TaskClassification>,
+    ) -> Result<RouteDecision>;
 }
 #[async_trait]
 pub trait Workflows: Send + Sync {
@@ -38,7 +47,12 @@ pub trait Workflows: Send + Sync {
 }
 #[async_trait]
 pub trait Approvals: Send + Sync {
-    async fn approve(&self, action_hash: &str, actor: &str, expiry: DateTime<Utc>) -> Result<ApprovalId>;
+    async fn approve(
+        &self,
+        action_hash: &str,
+        actor: &str,
+        expiry: DateTime<Utc>,
+    ) -> Result<ApprovalId>;
     /// Checked and consumed at execution; single use.
     async fn consume(&self, id: ApprovalId, action_hash: &str) -> Result<()>;
 }

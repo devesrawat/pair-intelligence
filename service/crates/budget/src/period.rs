@@ -24,7 +24,9 @@ mod tests {
     use chrono::TimeZone;
 
     fn utc(y: i32, m: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(y, m, d, h, mi, 0).single().expect("valid test instant")
+        Utc.with_ymd_and_hms(y, m, d, h, mi, 0)
+            .single()
+            .expect("valid test instant")
     }
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
@@ -40,7 +42,13 @@ mod tests {
 
     #[test]
     fn test_period_at_month_end_rolls_to_next_ist_month() {
-        assert_eq!(Period::at(utc(2026, 10, 31, 18, 30)).month, date(2026, 11, 1));
-        assert_eq!(Period::at(utc(2026, 10, 31, 18, 29)).month, date(2026, 10, 1));
+        assert_eq!(
+            Period::at(utc(2026, 10, 31, 18, 30)).month,
+            date(2026, 11, 1)
+        );
+        assert_eq!(
+            Period::at(utc(2026, 10, 31, 18, 29)).month,
+            date(2026, 10, 1)
+        );
     }
 }

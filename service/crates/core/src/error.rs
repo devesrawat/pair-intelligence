@@ -4,10 +4,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
-    Unauthenticated, PolicyDenied, ApprovalRequired, ApprovalExpired, ApprovalPayloadChanged,
-    BudgetExceeded, BudgetUnknownPrice, ReservationUnresolved,
-    ProviderTimeout, ProviderUnavailable, ProviderDisallowed, ClassifierInvalid,
-    MemoryNoEvidence, SourceDeleted, ContextOverflow, Conflict, NotFound, InvalidInput, Internal,
+    Unauthenticated,
+    PolicyDenied,
+    ApprovalRequired,
+    ApprovalExpired,
+    ApprovalPayloadChanged,
+    BudgetExceeded,
+    BudgetUnknownPrice,
+    ReservationUnresolved,
+    ProviderTimeout,
+    ProviderUnavailable,
+    ProviderDisallowed,
+    ClassifierInvalid,
+    MemoryNoEvidence,
+    SourceDeleted,
+    ContextOverflow,
+    Conflict,
+    NotFound,
+    InvalidInput,
+    Internal,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -19,7 +34,10 @@ pub struct PairError {
 
 impl PairError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 }
 

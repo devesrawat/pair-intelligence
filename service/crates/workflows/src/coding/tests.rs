@@ -21,7 +21,8 @@ struct Fixture {
 
 impl Fixture {
     fn new(acceptance: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("pair_t_wf_{}", uuid::Uuid::new_v4().simple()));
+        let root =
+            std::env::temp_dir().join(format!("pair_t_wf_{}", uuid::Uuid::new_v4().simple()));
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("src")).unwrap();
         std::fs::create_dir_all(repo.join(".pair")).unwrap();
@@ -42,7 +43,14 @@ impl Fixture {
     }
     fn git(&self, args: &[&str]) {
         let status = Command::new("git")
-            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .current_dir(self.repo())
             .status()
@@ -72,17 +80,34 @@ impl Drop for Fixture {
 const PASS_ACCEPTANCE: &str = r#"["sh","-c","grep -q new src/lib.txt"]"#;
 
 fn edit_json(files: &[(&str, &str)]) -> String {
-    let edits: Vec<_> = files.iter().map(|(p, c)| serde_json::json!({"path": p, "content": c})).collect();
+    let edits: Vec<_> = files
+        .iter()
+        .map(|(p, c)| serde_json::json!({"path": p, "content": c}))
+        .collect();
     serde_json::json!({ "edits": edits }).to_string()
 }
 
 fn provider_with_edit(edit: String) -> FnProvider {
-    FnProvider::scripted(vec!["plan: edit lib".into(), edit, "review: looks fine".into()])
+    FnProvider::scripted(vec![
+        "plan: edit lib".into(),
+        edit,
+        "review: looks fine".into(),
+    ])
 }
 
-async fn run(fx_task: &CodingTask, provider: &FnProvider, policy: &FakePolicy) -> pair_core::error::Result<CodingResult> {
+async fn run(
+    fx_task: &CodingTask,
+    provider: &FnProvider,
+    policy: &FakePolicy,
+) -> pair_core::error::Result<CodingResult> {
     let budget = FakeBudget::default();
-    let deps = CodingDeps { provider, policy, budget: &budget, memory: &EmptyMemory, compiler: &PlainCompiler };
+    let deps = CodingDeps {
+        provider,
+        policy,
+        budget: &budget,
+        memory: &EmptyMemory,
+        compiler: &PlainCompiler,
+    };
     run_coding_task(&deps, fx_task).await
 }
 
@@ -104,7 +129,10 @@ async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
     assert!(seen.iter().all(|r| r.tool == "shell"));
     assert!(seen.iter().all(|r| !r.args.iter().any(|a| a == "push")));
     // original checkout untouched
-    assert_eq!(std::fs::read_to_string(fx.repo().join("src/lib.txt")).unwrap(), "old\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.repo().join("src/lib.txt")).unwrap(),
+        "old\n"
+    );
 }
 
 #[tokio::test]
@@ -118,7 +146,14 @@ async fn repository_mutation_during_run_stops_task() {
             std::fs::write(repo.join("README.md"), "changed underneath\n").unwrap();
             for args in [vec!["add", "-A"], vec!["commit", "-q", "-m", "mutation"]] {
                 let ok = Command::new("git")
-                    .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                    .args([
+                        "-c",
+                        "user.name=t",
+                        "-c",
+                        "user.email=t@t",
+                        "-c",
+                        "commit.gpgsign=false",
+                    ])
                     .args(&args)
                     .current_dir(&repo)
                     .status()
@@ -127,12 +162,22 @@ async fn repository_mutation_during_run_stops_task() {
                 assert!(ok);
             }
         }
-        Ok(if i == 1 { edit_json(&[("src/lib.txt", "new\n")]) } else { "text".into() })
+        Ok(if i == 1 {
+            edit_json(&[("src/lib.txt", "new\n")])
+        } else {
+            "text".into()
+        })
     }));
-    let err = run(&task, &provider, &FakePolicy::default()).await.unwrap_err();
+    let err = run(&task, &provider, &FakePolicy::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::Conflict);
     // stopped before applying the edit or running anything further
-    let wt_file = fx.root.join("ws").join(task.id.to_string()).join("src/lib.txt");
+    let wt_file = fx
+        .root
+        .join("ws")
+        .join(task.id.to_string())
+        .join("src/lib.txt");
     assert_eq!(std::fs::read_to_string(wt_file).unwrap(), "old\n");
     assert_eq!(provider.call_count(), 2);
 }
@@ -140,15 +185,25 @@ async fn repository_mutation_during_run_stops_task() {
 #[tokio::test]
 async fn hidden_credentials_not_exposed() {
     std::env::set_var("PAIR_TEST_API_TOKEN", SECRET_ENV_VALUE);
-    let acceptance = r#"["sh","-c","env; ls -a; cat .env 2>&1; ls ~/.ssh 2>&1; grep -q new src/lib.txt"]"#;
+    let acceptance =
+        r#"["sh","-c","env; ls -a; cat .env 2>&1; ls ~/.ssh 2>&1; grep -q new src/lib.txt"]"#;
     let fx = Fixture::new(acceptance);
     let task = fx.task(&["src/"]);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
     let res = run(&task, &provider, &FakePolicy::default()).await.unwrap();
     let out = format!("{}{}", res.commands[0].stdout, res.commands[0].stderr);
-    assert!(!out.contains(SECRET_ENV_VALUE), "env secret value leaked into command output");
-    assert!(!out.contains("PAIR_TEST_API_TOKEN"), "secret variable present in command env");
-    assert!(!out.contains("hunter2"), "credential file contents reachable from workspace");
+    assert!(
+        !out.contains(SECRET_ENV_VALUE),
+        "env secret value leaked into command output"
+    );
+    assert!(
+        !out.contains("PAIR_TEST_API_TOKEN"),
+        "secret variable present in command env"
+    );
+    assert!(
+        !out.contains("hunter2"),
+        "credential file contents reachable from workspace"
+    );
     assert!(!res.worktree.join(".env").exists());
     // the withheld file must not show up as a deletion in the patch
     assert_eq!(res.changed_files, vec!["src/lib.txt".to_string()]);
@@ -156,7 +211,9 @@ async fn hidden_credentials_not_exposed() {
     let fx2 = Fixture::new(PASS_ACCEPTANCE);
     let task2 = fx2.task(&["src/", ".env"]);
     let provider2 = provider_with_edit(edit_json(&[(".env", "X=1\n")]));
-    let err = run(&task2, &provider2, &FakePolicy::default()).await.unwrap_err();
+    let err = run(&task2, &provider2, &FakePolicy::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
 }
 
@@ -168,8 +225,16 @@ async fn failed_acceptance_tests_reported_not_hidden() {
     let res = run(&task, &provider, &FakePolicy::default()).await.unwrap();
     assert_eq!(res.status, CodingStatus::Failed);
     assert_eq!(res.failure_class, Some(FailureClass::ImplementationDefect));
-    assert!(res.commands.last().unwrap().stderr.contains("ASSERTION_FAILED_MARKER"));
-    assert!(res.review.is_none(), "a failed result must not be reviewed into a pass");
+    assert!(res
+        .commands
+        .last()
+        .unwrap()
+        .stderr
+        .contains("ASSERTION_FAILED_MARKER"));
+    assert!(
+        res.review.is_none(),
+        "a failed result must not be reviewed into a pass"
+    );
     assert!(res.summary.contains("failed"));
 }
 
@@ -177,12 +242,16 @@ async fn failed_acceptance_tests_reported_not_hidden() {
 async fn missing_command_and_timeout_are_environment_failures() {
     let fx = Fixture::new(r#"["pair-no-such-binary-xyz"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default()).await.unwrap();
+    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
+        .await
+        .unwrap();
     assert_eq!(res.failure_class, Some(FailureClass::Environment));
 
     let fx = Fixture::new(r#"["sleep","30"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default()).await.unwrap();
+    let res = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
+        .await
+        .unwrap();
     assert!(res.commands[0].timed_out);
     assert_eq!(res.failure_class, Some(FailureClass::Environment));
 }
@@ -190,12 +259,20 @@ async fn missing_command_and_timeout_are_environment_failures() {
 #[tokio::test]
 async fn policy_denied_command_never_executes() {
     let fx = Fixture::new(r#"["sh","-c","touch ran.marker"]"#);
-    let policy = FakePolicy { denied_exes: vec!["sh".into()], ..FakePolicy::default() };
+    let policy = FakePolicy {
+        denied_exes: vec!["sh".into()],
+        ..FakePolicy::default()
+    };
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
     let task = fx.task(&["src/"]);
     let err = run(&task, &provider, &policy).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
-    assert!(!fx.root.join("ws").join(task.id.to_string()).join("ran.marker").exists());
+    assert!(!fx
+        .root
+        .join("ws")
+        .join(task.id.to_string())
+        .join("ran.marker")
+        .exists());
 }
 
 #[tokio::test]
@@ -203,25 +280,37 @@ async fn patch_output_is_scoped() {
     // 1. one out-of-scope file rejects the whole edit set, nothing is written
     let fx = Fixture::new(PASS_ACCEPTANCE);
     let task = fx.task(&["src/"]);
-    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n"), ("README.md", "pwned\n")]));
-    let err = run(&task, &provider, &FakePolicy::default()).await.unwrap_err();
+    let provider = provider_with_edit(edit_json(&[
+        ("src/lib.txt", "new\n"),
+        ("README.md", "pwned\n"),
+    ]));
+    let err = run(&task, &provider, &FakePolicy::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
     assert!(err.message.contains("README.md"));
     let wt = fx.root.join("ws").join(task.id.to_string());
-    assert_eq!(std::fs::read_to_string(wt.join("src/lib.txt")).unwrap(), "old\n");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("src/lib.txt")).unwrap(),
+        "old\n"
+    );
 
     // 2. traversal and absolute paths are rejected
     for bad in ["../escape.txt", "/etc/passwd", "src/../../x"] {
         let fx = Fixture::new(PASS_ACCEPTANCE);
         let provider = provider_with_edit(edit_json(&[(bad, "x")]));
-        let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default()).await.unwrap_err();
+        let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
+            .await
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::PolicyDenied, "{bad}");
     }
 
     // 3. a verify command that writes outside scope is caught in the final patch check
     let fx = Fixture::new(r#"["sh","-c","echo x > stray.txt; grep -q new src/lib.txt"]"#);
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
-    let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default()).await.unwrap_err();
+    let err = run(&fx.task(&["src/"]), &provider, &FakePolicy::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
     assert!(err.message.contains("stray.txt"));
 }
@@ -238,19 +327,35 @@ fn remote_write_requires_approval() {
     let (task, trace) = (TaskId::new(), TraceId::new());
     let strict = FakePolicy::default();
     for kind in [RemoteKind::Push, RemoteKind::OpenPr] {
-        let a = RemoteAction { kind, ..action.clone() };
+        let a = RemoteAction {
+            kind,
+            ..action.clone()
+        };
         let out = request_remote_write(&strict, "/ws", task, trace, &a, &[]).unwrap();
-        assert!(matches!(out, RemoteOutcome::NeedsApproval { .. }), "{kind:?}");
+        assert!(
+            matches!(out, RemoteOutcome::NeedsApproval { .. }),
+            "{kind:?}"
+        );
     }
     // even a permissive policy cannot authorize without an approval id
-    let lax = FakePolicy { allow_remote_writes: true, ..FakePolicy::default() };
+    let lax = FakePolicy {
+        allow_remote_writes: true,
+        ..FakePolicy::default()
+    };
     let out = request_remote_write(&lax, "/ws", task, trace, &action, &[]).unwrap();
     assert!(matches!(out, RemoteOutcome::NeedsApproval { .. }));
-    let out = request_remote_write(&lax, "/ws", task, trace, &action, &[ApprovalId::new()]).unwrap();
+    let out =
+        request_remote_write(&lax, "/ws", task, trace, &action, &[ApprovalId::new()]).unwrap();
     assert!(matches!(out, RemoteOutcome::Authorized { .. }));
     // payload hash binds the exact payload
-    let changed = RemoteAction { head_sha: "zzz".into(), ..action.clone() };
-    assert_ne!(action.payload_hash().unwrap(), changed.payload_hash().unwrap());
+    let changed = RemoteAction {
+        head_sha: "zzz".into(),
+        ..action.clone()
+    };
+    assert_ne!(
+        action.payload_hash().unwrap(),
+        changed.payload_hash().unwrap()
+    );
 }
 
 #[test]
@@ -262,13 +367,22 @@ fn scope_permits_only_declared_paths() {
     assert!(!s.permits("srcx/a.rs"));
     assert!(!s.permits("src/.env"));
     assert!(!s.permits("src/../etc"));
-    assert!(is_secret_path("config/id_rsa") && is_secret_path("a/server.pem") && !is_secret_path("src/env.rs"));
+    assert!(
+        is_secret_path("config/id_rsa")
+            && is_secret_path("a/server.pem")
+            && !is_secret_path("src/env.rs")
+    );
 }
 
 #[test]
 fn repo_config_requires_acceptance_and_rejects_secret_passthrough() {
     assert!(RepoConfig::parse(r#"{"acceptance":[]}"#).is_err());
-    assert!(RepoConfig::parse(r#"{"acceptance":[["true"]],"env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#).is_err());
-    assert!(RepoConfig::parse(r#"{"acceptance":[["true"]],"env_passthrough":["CARGO_HOME"]}"#).is_ok());
+    assert!(RepoConfig::parse(
+        r#"{"acceptance":[["true"]],"env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#
+    )
+    .is_err());
+    assert!(
+        RepoConfig::parse(r#"{"acceptance":[["true"]],"env_passthrough":["CARGO_HOME"]}"#).is_ok()
+    );
     let _ = Path::new(".");
 }

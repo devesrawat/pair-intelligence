@@ -25,11 +25,17 @@ pub struct FnProvider {
 
 impl FnProvider {
     pub fn new(responder: Responder) -> Self {
-        Self { responder, calls: AtomicUsize::new(0), seen: Mutex::new(Vec::new()) }
+        Self {
+            responder,
+            calls: AtomicUsize::new(0),
+            seen: Mutex::new(Vec::new()),
+        }
     }
     /// Replies with the given texts in order.
     pub fn scripted(texts: Vec<String>) -> Self {
-        Self::new(Box::new(move |i, _| Ok(texts.get(i).cloned().unwrap_or_default())))
+        Self::new(Box::new(move |i, _| {
+            Ok(texts.get(i).cloned().unwrap_or_default())
+        }))
     }
     pub fn call_count(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
@@ -45,7 +51,12 @@ impl Provider for FnProvider {
         Ok(ModelResponse {
             resolved_model: "fake".into(),
             text,
-            usage: UsageReport { input_tokens: 1, output_tokens: 1, actual_cost: Some(Micros(1)), price_version: "t".into() },
+            usage: UsageReport {
+                input_tokens: 1,
+                output_tokens: 1,
+                actual_cost: Some(Micros(1)),
+                price_version: "t".into(),
+            },
             provider_request_id: None,
             latency_ms: 0,
         })
@@ -64,16 +75,30 @@ pub struct FakePolicy {
 impl Policy for FakePolicy {
     fn authorize(&self, req: &ActionRequest, _ctx: &PolicyContext) -> PolicyOutcome {
         self.seen.lock().unwrap().push(req.clone());
-        let decision = if matches!(req.tool.as_str(), "git_push" | "open_pr") && !self.allow_remote_writes {
-            Decision::NeedsApproval { payload_hash: "hash".into() }
-        } else if req.executable.as_ref().is_some_and(|e| self.denied_exes.contains(e))
-            || req.destination.as_ref().is_some_and(|d| self.denied_destinations.contains(d))
-        {
-            Decision::Deny { reason: "denied by fake policy".into() }
-        } else {
-            Decision::Allow
-        };
-        PolicyOutcome { decision, policy_version: "fake-1".into() }
+        let decision =
+            if matches!(req.tool.as_str(), "git_push" | "open_pr") && !self.allow_remote_writes {
+                Decision::NeedsApproval {
+                    payload_hash: "hash".into(),
+                }
+            } else if req
+                .executable
+                .as_ref()
+                .is_some_and(|e| self.denied_exes.contains(e))
+                || req
+                    .destination
+                    .as_ref()
+                    .is_some_and(|d| self.denied_destinations.contains(d))
+            {
+                Decision::Deny {
+                    reason: "denied by fake policy".into(),
+                }
+            } else {
+                Decision::Allow
+            };
+        PolicyOutcome {
+            decision,
+            policy_version: "fake-1".into(),
+        }
     }
 }
 
@@ -84,7 +109,10 @@ pub struct FakeBudget {
 
 impl Default for FakeBudget {
     fn default() -> Self {
-        Self { reserved: AtomicUsize::new(0), reconciled: AtomicUsize::new(0) }
+        Self {
+            reserved: AtomicUsize::new(0),
+            reconciled: AtomicUsize::new(0),
+        }
     }
 }
 
@@ -96,7 +124,12 @@ impl Budget for FakeBudget {
     }
     async fn reconcile(&self, id: ReservationId, _usage: UsageReport) -> Result<LedgerEntry> {
         self.reconciled.fetch_add(1, Ordering::SeqCst);
-        Ok(LedgerEntry { id: LedgerEntryId::new(), reservation: id, amount: Micros(1), settled: true })
+        Ok(LedgerEntry {
+            id: LedgerEntryId::new(),
+            reservation: id,
+            amount: Micros(1),
+            settled: true,
+        })
     }
 }
 
@@ -118,9 +151,18 @@ impl Memory for EmptyMemory {
 pub struct PlainCompiler;
 
 impl ContextCompiler for PlainCompiler {
-    fn compile(&self, ctx: &TaskContext, _limits: &ModelLimits, _memory: &[EvidenceItem]) -> Result<CompiledContext> {
+    fn compile(
+        &self,
+        ctx: &TaskContext,
+        _limits: &ModelLimits,
+        _memory: &[EvidenceItem],
+    ) -> Result<CompiledContext> {
         Ok(CompiledContext {
-            messages: vec![ModelMessage { role: "user".into(), content: ctx.objective.clone(), trust: TrustClass::Owner }],
+            messages: vec![ModelMessage {
+                role: "user".into(),
+                content: ctx.objective.clone(),
+                trust: TrustClass::Owner,
+            }],
             manifest: Vec::new(),
             total_tokens: 1,
         })

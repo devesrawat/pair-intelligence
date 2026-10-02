@@ -28,12 +28,21 @@ impl TestDb {
         let admin_url = format!("{base}/{ADMIN_DB}");
         let name = format!("pair_t_daily_{}", Uuid::new_v4().simple());
         let mut admin = PgConnection::connect(&admin_url).await?;
-        sqlx::query(&format!("CREATE DATABASE {name}")).execute(&mut admin).await?;
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&mut admin)
+            .await?;
         admin.close().await?;
-        let pool = PgPoolOptions::new().max_connections(4).connect(&format!("{base}/{name}")).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&format!("{base}/{name}"))
+            .await?;
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../migrations");
         Migrator::new(dir).await?.run(&pool).await?;
-        Ok(Self { pool, admin_url, name })
+        Ok(Self {
+            pool,
+            admin_url,
+            name,
+        })
     }
 }
 
@@ -41,10 +50,17 @@ impl Drop for TestDb {
     fn drop(&mut self) {
         let (url, name) = (self.admin_url.clone(), self.name.clone());
         let cleanup = std::thread::spawn(move || {
-            let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
             rt.block_on(async {
                 if let Ok(mut c) = PgConnection::connect(&url).await {
-                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")).execute(&mut c).await;
+                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+                        .execute(&mut c)
+                        .await;
                 }
             });
         });

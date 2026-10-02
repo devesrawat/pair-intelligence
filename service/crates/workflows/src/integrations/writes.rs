@@ -18,7 +18,13 @@ pub async fn attempt_write(pool: &PgPool, account_id: Uuid, write: &ExternalWrit
     let account = store::get_account(pool, account_id).await?;
     if !account.writes_enabled {
         tracing::warn!(account = %account_id, ?write, "external write denied: writes disabled");
-        return Err(PairError::new(ErrorCode::PolicyDenied, "external writes are disabled for this account"));
+        return Err(PairError::new(
+            ErrorCode::PolicyDenied,
+            "external writes are disabled for this account",
+        ));
     }
-    Err(PairError::new(ErrorCode::ApprovalRequired, "external writes need an approved, hash-bound action"))
+    Err(PairError::new(
+        ErrorCode::ApprovalRequired,
+        "external writes need an approved, hash-bound action",
+    ))
 }

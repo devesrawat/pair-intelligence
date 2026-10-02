@@ -53,11 +53,23 @@ pub struct ReserveRequest {
 
 impl ReserveRequest {
     pub fn metered(task: TaskId, max_cost: Micros, kind: TaskKind, price_version: String) -> Self {
-        Self { task, max_cost, kind, category: BudgetCategory::Metered, price_version }
+        Self {
+            task,
+            max_cost,
+            kind,
+            category: BudgetCategory::Metered,
+            price_version,
+        }
     }
 
     pub fn classifier(task: TaskId, max_cost: Micros, price_version: String) -> Self {
-        Self { task, max_cost, kind: TaskKind::Default, category: BudgetCategory::Classifier, price_version }
+        Self {
+            task,
+            max_cost,
+            kind: TaskKind::Default,
+            category: BudgetCategory::Classifier,
+            price_version,
+        }
     }
 }
 
@@ -69,7 +81,10 @@ struct Totals {
 }
 
 fn exceeded(what: &str) -> PairError {
-    PairError::new(ErrorCode::BudgetExceeded, format!("{what} cap would be exceeded"))
+    PairError::new(
+        ErrorCode::BudgetExceeded,
+        format!("{what} cap would be exceeded"),
+    )
 }
 
 fn within(counted: i64, add: Micros, cap: Micros, what: &str) -> Result<()> {
@@ -87,7 +102,11 @@ impl PgBudget {
         self.reserve_at(req, Utc::now()).await
     }
 
-    pub(crate) async fn reserve_at(&self, req: ReserveRequest, now: DateTime<Utc>) -> Result<ReservationId> {
+    pub(crate) async fn reserve_at(
+        &self,
+        req: ReserveRequest,
+        now: DateTime<Utc>,
+    ) -> Result<ReservationId> {
         if !self.prices.is_known(&req.price_version) {
             return Err(PairError::new(
                 ErrorCode::BudgetUnknownPrice,
@@ -95,10 +114,17 @@ impl PgBudget {
             ));
         }
         if req.max_cost <= Micros::ZERO {
-            return Err(PairError::new(ErrorCode::InvalidInput, "max_cost must be positive"));
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "max_cost must be positive",
+            ));
         }
         let period = Period::at(now);
-        let mut tx = self.pool.begin().await.map_err(|e| db_err("begin reserve", e))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_err("begin reserve", e))?;
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(RESERVE_LOCK_KEY)
             .execute(&mut *tx)
@@ -110,7 +136,12 @@ impl PgBudget {
         within(t.day, req.max_cost, self.config.daily_cap(), "daily")?;
         within(t.month, req.max_cost, self.config.monthly_cap(), "monthly")?;
         if req.category == BudgetCategory::Classifier {
-            within(t.classifier_month, req.max_cost, self.config.classifier_monthly_subcap(), "classifier")?;
+            within(
+                t.classifier_month,
+                req.max_cost,
+                self.config.classifier_monthly_subcap(),
+                "classifier",
+            )?;
         }
 
         let id = ReservationId::new();
@@ -157,5 +188,10 @@ async fn totals(
     .fetch_one(&mut **tx)
     .await
     .map_err(|e| db_err("sum caps", e))?;
-    Ok(Totals { task: row.0, day: row.1, month: row.2, classifier_month: row.3 })
+    Ok(Totals {
+        task: row.0,
+        day: row.1,
+        month: row.2,
+        classifier_month: row.3,
+    })
 }

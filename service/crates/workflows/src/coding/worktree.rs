@@ -28,20 +28,38 @@ pub async fn git(runner: &Runner<'_>, cwd: &Path, args: &[&str]) -> Result<Strin
     } else {
         Err(PairError::new(
             ErrorCode::Internal,
-            format!("git {} failed: {} {:?}", args.join(" "), report.stderr.trim(), report.spawn_error),
+            format!(
+                "git {} failed: {} {:?}",
+                args.join(" "),
+                report.stderr.trim(),
+                report.spawn_error
+            ),
         ))
     }
 }
 
 pub async fn head(runner: &Runner<'_>, repo: &Path) -> Result<String> {
-    Ok(git(runner, repo, &["rev-parse", "HEAD"]).await?.trim().to_string())
+    Ok(git(runner, repo, &["rev-parse", "HEAD"])
+        .await?
+        .trim()
+        .to_string())
 }
 
-pub async fn create(runner: &Runner<'_>, repo: &Path, root: &Path, task: TaskId) -> Result<Worktree> {
+pub async fn create(
+    runner: &Runner<'_>,
+    repo: &Path,
+    root: &Path,
+    task: TaskId,
+) -> Result<Worktree> {
     let path = root.join(task.to_string());
     let branch = format!("{BRANCH_PREFIX}{task}");
     let path_str = path.display().to_string();
-    git(runner, repo, &["worktree", "add", "-b", &branch, &path_str, "HEAD"]).await?;
+    git(
+        runner,
+        repo,
+        &["worktree", "add", "-b", &branch, &path_str, "HEAD"],
+    )
+    .await?;
     strip_secrets(runner, &path).await?;
     Ok(Worktree { path, branch })
 }
@@ -50,7 +68,10 @@ pub async fn create(runner: &Runner<'_>, repo: &Path, root: &Path, task: TaskId)
 /// from git so their absence never shows up in the patch.
 async fn strip_secrets(runner: &Runner<'_>, wt: &Path) -> Result<()> {
     let listing = git(runner, wt, &["ls-files", "-z"]).await?;
-    for file in listing.split('\0').filter(|f| !f.is_empty() && is_secret_path(f)) {
+    for file in listing
+        .split('\0')
+        .filter(|f| !f.is_empty() && is_secret_path(f))
+    {
         git(runner, wt, &["update-index", "--skip-worktree", "--", file]).await?;
         std::fs::remove_file(wt.join(file))
             .map_err(|e| PairError::new(ErrorCode::Internal, format!("strip {file}: {e}")))?;
@@ -62,8 +83,17 @@ async fn strip_secrets(runner: &Runner<'_>, wt: &Path) -> Result<()> {
 /// Stages everything and lists changed paths relative to HEAD.
 pub async fn changed_files(runner: &Runner<'_>, wt: &Path) -> Result<Vec<String>> {
     git(runner, wt, &["add", "-A"]).await?;
-    let out = git(runner, wt, &["diff", "--cached", "--name-only", "-z", "HEAD"]).await?;
-    Ok(out.split('\0').filter(|f| !f.is_empty()).map(str::to_string).collect())
+    let out = git(
+        runner,
+        wt,
+        &["diff", "--cached", "--name-only", "-z", "HEAD"],
+    )
+    .await?;
+    Ok(out
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 pub async fn diff(runner: &Runner<'_>, wt: &Path) -> Result<String> {

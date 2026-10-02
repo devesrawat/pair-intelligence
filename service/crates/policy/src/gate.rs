@@ -17,7 +17,12 @@ impl Gate {
         Self { policy, approvals }
     }
 
-    pub async fn execute<T, F, Fut>(&self, req: &ActionRequest, ctx: &PolicyContext, f: F) -> Result<T>
+    pub async fn execute<T, F, Fut>(
+        &self,
+        req: &ActionRequest,
+        ctx: &PolicyContext,
+        f: F,
+    ) -> Result<T>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T>>,
@@ -34,12 +39,19 @@ impl Gate {
 
     /// Approvals are single-use and bound to the payload hash recomputed from this exact request.
     async fn consume_approval(&self, ctx: &PolicyContext, payload_hash: &str) -> Result<()> {
-        let required = || PairError::new(ErrorCode::ApprovalRequired, format!("approval required for payload {payload_hash}"));
+        let required = || {
+            PairError::new(
+                ErrorCode::ApprovalRequired,
+                format!("approval required for payload {payload_hash}"),
+            )
+        };
         let approvals = self.approvals.as_ref().ok_or_else(required)?;
         for id in &ctx.approvals {
             match approvals.consume(*id, payload_hash).await {
                 Ok(()) => return Ok(()),
-                Err(e) => tracing::warn!(approval = %id, error = %e, "approval not usable for this payload"),
+                Err(e) => {
+                    tracing::warn!(approval = %id, error = %e, "approval not usable for this payload")
+                }
             }
         }
         Err(required())

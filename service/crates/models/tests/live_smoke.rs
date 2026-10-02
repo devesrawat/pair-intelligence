@@ -33,7 +33,10 @@ async fn live_anthropic_smoke() {
         trace: TraceId::new(),
     };
     let resp = provider.generate(req).await.expect("live call");
-    println!("resolved_model={} text={:?} usage={:?}", resp.resolved_model, resp.text, resp.usage);
+    println!(
+        "resolved_model={} text={:?} usage={:?}",
+        resp.resolved_model, resp.text, resp.usage
+    );
     assert!(!resp.text.is_empty());
     assert!(resp.usage.input_tokens > 0 && resp.usage.output_tokens > 0);
     assert!(resp.usage.actual_cost.is_some());

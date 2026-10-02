@@ -23,5 +23,9 @@ pub fn classify_failure(r: &CmdReport) -> Option<FailureClass> {
         || r.spawn_error.is_some()
         || matches!(r.exit_code, Some(EXIT_NOT_FOUND | EXIT_NOT_EXECUTABLE))
         || r.exit_code.is_none();
-    Some(if env { FailureClass::Environment } else { FailureClass::ImplementationDefect })
+    Some(if env {
+        FailureClass::Environment
+    } else {
+        FailureClass::ImplementationDefect
+    })
 }

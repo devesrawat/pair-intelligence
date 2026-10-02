@@ -22,7 +22,10 @@ impl PolicyEngine {
     pub fn from_config_str(text: &str, home: &Path) -> Result<Self, PolicyError> {
         let config = PolicyConfig::parse(text)?;
         let guard = PathGuard::new(home, &config.denied_paths);
-        Ok(Self { config: Arc::new(config), guard })
+        Ok(Self {
+            config: Arc::new(config),
+            guard,
+        })
     }
 
     pub fn from_config_file(path: &Path, home: &Path) -> Result<Self, PolicyError> {
@@ -35,9 +38,16 @@ impl PolicyEngine {
 
     fn evaluate(&self, req: &ActionRequest, ctx: &PolicyContext) -> Result<Decision, String> {
         if ctx.policy_version != self.config.version {
-            return Err(format!("policy version {:?} is not the active version", ctx.policy_version));
+            return Err(format!(
+                "policy version {:?} is not the active version",
+                ctx.policy_version
+            ));
         }
-        let class = *self.config.tools.get(&req.tool).ok_or_else(|| format!("tool {:?} is not registered", req.tool))?;
+        let class = *self
+            .config
+            .tools
+            .get(&req.tool)
+            .ok_or_else(|| format!("tool {:?} is not registered", req.tool))?;
         let workspace = Path::new(&ctx.workspace_root)
             .canonicalize()
             .map_err(|e| format!("workspace root unusable: {e}"))?;
@@ -45,9 +55,12 @@ impl PolicyEngine {
         self.check_paths(req, &workspace)?;
         self.check_destinations(req)?;
         match class {
-            ActionClass::Read | ActionClass::LocalEdit | ActionClass::LocalCommit => Ok(Decision::Allow),
+            ActionClass::Read | ActionClass::LocalEdit | ActionClass::LocalCommit => {
+                Ok(Decision::Allow)
+            }
             ActionClass::ExternalWrite | ActionClass::HighRisk => {
-                let payload_hash = payload_hash(req, class).map_err(|e| format!("cannot canonicalize request: {e}"))?;
+                let payload_hash = payload_hash(req, class)
+                    .map_err(|e| format!("cannot canonicalize request: {e}"))?;
                 Ok(Decision::NeedsApproval { payload_hash })
             }
         }
@@ -88,7 +101,10 @@ impl Policy for PolicyEngine {
             Decision::Deny { reason }
         });
         tracing::info!(tool = %req.tool, task = %req.task, trace = %req.trace, ?decision, "policy decision");
-        PolicyOutcome { decision, policy_version: self.config.version.clone() }
+        PolicyOutcome {
+            decision,
+            policy_version: self.config.version.clone(),
+        }
     }
 }
 
@@ -103,7 +119,8 @@ fn arg_value(arg: &str) -> &str {
 /// Arguments that could name a filesystem location are treated as paths (fail closed).
 fn path_like(arg: &str) -> Option<&str> {
     let value = arg_value(arg);
-    let is_path = !value.contains(URL_SEPARATOR) && (value.contains('/') || value.starts_with('~') || value == "..");
+    let is_path = !value.contains(URL_SEPARATOR)
+        && (value.contains('/') || value.starts_with('~') || value == "..");
     is_path.then_some(value)
 }
 

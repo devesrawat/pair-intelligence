@@ -21,7 +21,11 @@ impl CloudProvider {
         anthropic: Option<AnthropicProvider>,
         ollama: Option<OllamaCloudProvider>,
     ) -> Self {
-        Self { registry, anthropic, ollama }
+        Self {
+            registry,
+            anthropic,
+            ollama,
+        }
     }
 }
 
@@ -32,14 +36,22 @@ impl Provider for CloudProvider {
             .registry
             .get(&req.model_id)
             .map(|e| e.provider)
-            .ok_or_else(|| PairError::new(ErrorCode::InvalidInput, format!("unknown model id {}", req.model_id)))?;
+            .ok_or_else(|| {
+                PairError::new(
+                    ErrorCode::InvalidInput,
+                    format!("unknown model id {}", req.model_id),
+                )
+            })?;
         let adapter: Option<&dyn Provider> = match kind {
             ProviderKind::Anthropic => self.anthropic.as_ref().map(|p| p as &dyn Provider),
             ProviderKind::OllamaCloud => self.ollama.as_ref().map(|p| p as &dyn Provider),
         };
         match adapter {
             Some(p) => p.generate(req).await,
-            None => Err(PairError::new(ErrorCode::ProviderUnavailable, format!("no credentials configured for {kind:?}"))),
+            None => Err(PairError::new(
+                ErrorCode::ProviderUnavailable,
+                format!("no credentials configured for {kind:?}"),
+            )),
         }
     }
 }

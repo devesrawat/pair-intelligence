@@ -23,11 +23,19 @@ pub struct ResearchLlm<'a> {
 }
 
 pub fn owner_msg(content: impl Into<String>) -> ModelMessage {
-    ModelMessage { role: "user".into(), content: content.into(), trust: TrustClass::Owner }
+    ModelMessage {
+        role: "user".into(),
+        content: content.into(),
+        trust: TrustClass::Owner,
+    }
 }
 
 pub fn untrusted_msg(content: impl Into<String>) -> ModelMessage {
-    ModelMessage { role: "user".into(), content: content.into(), trust: TrustClass::Untrusted }
+    ModelMessage {
+        role: "user".into(),
+        content: content.into(),
+        trust: TrustClass::Untrusted,
+    }
 }
 
 impl ResearchLlm<'_> {
@@ -41,7 +49,11 @@ impl ResearchLlm<'_> {
             task: self.task,
             trace: self.trace,
         };
-        Ok(budgeted_generate(self.provider, self.budget, req, self.max_cost).await?.text)
+        Ok(
+            budgeted_generate(self.provider, self.budget, req, self.max_cost)
+                .await?
+                .text,
+        )
     }
 
     /// Structured output only: the reply must contain one JSON object matching `T`.
@@ -54,7 +66,17 @@ impl ResearchLlm<'_> {
 pub fn parse_json_object<T: DeserializeOwned>(text: &str) -> Result<T> {
     let (s, e) = match (text.find('{'), text.rfind('}')) {
         (Some(s), Some(e)) if e > s => (s, e),
-        _ => return Err(PairError::new(ErrorCode::InvalidInput, "model output has no JSON object")),
+        _ => {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "model output has no JSON object",
+            ))
+        }
     };
-    serde_json::from_str(&text[s..=e]).map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("model output invalid: {e}")))
+    serde_json::from_str(&text[s..=e]).map_err(|e| {
+        PairError::new(
+            ErrorCode::InvalidInput,
+            format!("model output invalid: {e}"),
+        )
+    })
 }

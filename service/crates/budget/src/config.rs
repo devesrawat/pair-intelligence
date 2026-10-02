@@ -25,10 +25,14 @@ impl<'de> Deserialize<'de> for UsdAmount {
                 f.write_str("a non-negative USD amount with at most 6 decimals")
             }
             fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<UsdAmount, E> {
-                parse_decimal(&v.to_string()).map(UsdAmount).map_err(E::custom)
+                parse_decimal(&v.to_string())
+                    .map(UsdAmount)
+                    .map_err(E::custom)
             }
             fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<UsdAmount, E> {
-                parse_decimal(&v.to_string()).map(UsdAmount).map_err(E::custom)
+                parse_decimal(&v.to_string())
+                    .map(UsdAmount)
+                    .map_err(E::custom)
             }
             fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<UsdAmount, E> {
                 parse_decimal(v).map(UsdAmount).map_err(E::custom)
@@ -41,7 +45,8 @@ impl<'de> Deserialize<'de> for UsdAmount {
 fn parse_decimal(text: &str) -> std::result::Result<Micros, String> {
     let invalid = || format!("invalid USD amount {text:?}");
     let (whole, frac) = text.split_once('.').unwrap_or((text, ""));
-    if whole.is_empty() || frac.len() > MICRO_DECIMALS || !whole.bytes().all(|b| b.is_ascii_digit()) {
+    if whole.is_empty() || frac.len() > MICRO_DECIMALS || !whole.bytes().all(|b| b.is_ascii_digit())
+    {
         return Err(invalid());
     }
     let padded = format!("{frac:0<width$}", width = MICRO_DECIMALS);
@@ -93,9 +98,15 @@ fn invalid(msg: &str) -> PairError {
 }
 
 impl BudgetConfig {
-    pub fn monthly_cap(&self) -> Micros { self.monthly_cap }
-    pub fn daily_cap(&self) -> Micros { self.daily_cap }
-    pub fn classifier_monthly_subcap(&self) -> Micros { self.classifier_monthly_subcap }
+    pub fn monthly_cap(&self) -> Micros {
+        self.monthly_cap
+    }
+    pub fn daily_cap(&self) -> Micros {
+        self.daily_cap
+    }
+    pub fn classifier_monthly_subcap(&self) -> Micros {
+        self.classifier_monthly_subcap
+    }
     pub fn task_cap(&self, kind: TaskKind) -> Micros {
         match kind {
             TaskKind::Default => self.default_task_cap,

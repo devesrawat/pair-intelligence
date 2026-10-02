@@ -22,8 +22,17 @@ struct ClaimSet {
 
 pub async fn extract_claims(llm: &ResearchLlm<'_>, sources: &[Source]) -> Result<Vec<RawClaim>> {
     let mut messages = vec![owner_msg(EXTRACT_INSTRUCTIONS)];
-    for s in sources.iter().filter(|s| s.available && s.duplicate_of.is_none()) {
-        let text: String = s.text.as_deref().unwrap_or_default().chars().take(MAX_SOURCE_PROMPT_CHARS).collect();
+    for s in sources
+        .iter()
+        .filter(|s| s.available && s.duplicate_of.is_none())
+    {
+        let text: String = s
+            .text
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .take(MAX_SOURCE_PROMPT_CHARS)
+            .collect();
         messages.push(untrusted_msg(format!("SOURCE url={}\n{text}", s.url)));
     }
     if messages.len() == 1 {
@@ -38,11 +47,21 @@ fn find_source<'a>(sources: &'a [Source], url: &str) -> Option<&'a Source> {
 }
 
 fn reject(raw: RawClaim, source: Option<&Source>, why: RejectReason) -> Claim {
-    Claim { id: Uuid::now_v7(), raw, source: source.map(|s| s.id), span_start: None, rejected: Some(why) }
+    Claim {
+        id: Uuid::now_v7(),
+        raw,
+        source: source.map(|s| s.id),
+        span_start: None,
+        rejected: Some(why),
+    }
 }
 
 /// Every claim leaves with either a verified citation or a rejection reason.
-pub async fn validate_claims(raws: Vec<RawClaim>, sources: &[Source], judge: Option<&dyn SupportJudge>) -> Result<Vec<Claim>> {
+pub async fn validate_claims(
+    raws: Vec<RawClaim>,
+    sources: &[Source],
+    judge: Option<&dyn SupportJudge>,
+) -> Result<Vec<Claim>> {
     let mut out = Vec::with_capacity(raws.len());
     for raw in raws {
         let Some(src) = find_source(sources, &raw.url) else {
@@ -65,29 +84,48 @@ pub async fn validate_claims(raws: Vec<RawClaim>, sources: &[Source], judge: Opt
             Support::Supported { span_start } => span_start,
         };
         if let Some(j) = judge {
-            if let JudgeVerdict::DoesNotSupport(why) = j.judge(&raw.text, &raw.span, &src.url).await? {
+            if let JudgeVerdict::DoesNotSupport(why) =
+                j.judge(&raw.text, &raw.span, &src.url).await?
+            {
                 out.push(reject(raw, Some(src), RejectReason::JudgeRejected(why)));
                 continue;
             }
         }
-        out.push(Claim { id: Uuid::now_v7(), raw, source: Some(src.id), span_start: Some(span_start), rejected: None });
+        out.push(Claim {
+            id: Uuid::now_v7(),
+            raw,
+            source: Some(src.id),
+            span_start: Some(span_start),
+            rejected: None,
+        });
     }
     Ok(out)
 }
 
 pub fn norm_key(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Topics where validated claims assert different values. Both sides are kept.
 pub fn compare_claims(claims: &[Claim]) -> Vec<Conflict> {
     let mut by_topic: BTreeMap<String, BTreeMap<String, Vec<Uuid>>> = BTreeMap::new();
     for c in claims.iter().filter(|c| c.is_valid()) {
-        by_topic.entry(norm_key(&c.raw.topic)).or_default().entry(norm_key(&c.raw.value)).or_default().push(c.id);
+        by_topic
+            .entry(norm_key(&c.raw.topic))
+            .or_default()
+            .entry(norm_key(&c.raw.value))
+            .or_default()
+            .push(c.id);
     }
     by_topic
         .into_iter()
         .filter(|(_, values)| values.len() > 1)
-        .map(|(topic, values)| Conflict { topic, positions: values.into_iter().collect() })
+        .map(|(topic, values)| Conflict {
+            topic,
+            positions: values.into_iter().collect(),
+        })
         .collect()
 }

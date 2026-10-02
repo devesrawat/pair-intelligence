@@ -13,8 +13,8 @@ const MIN_COVERAGE: f64 = 0.6;
 /// Looser for synthesized statements (connective wording); figures stay strict.
 const MIN_STATEMENT_COVERAGE: f64 = 0.4;
 const STOPWORDS: [&str; 24] = [
-    "the", "a", "an", "of", "in", "on", "at", "to", "is", "are", "was", "were", "and", "or", "for", "by", "with",
-    "that", "this", "it", "its", "as", "be", "from",
+    "the", "a", "an", "of", "in", "on", "at", "to", "is", "are", "was", "were", "and", "or", "for",
+    "by", "with", "that", "this", "it", "its", "as", "be", "from",
 ];
 const NEGATIONS: [&str; 6] = ["not", "no", "never", "without", "cannot", "nor"];
 
@@ -80,13 +80,21 @@ pub fn locate_span(source: &str, span: &str) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
     }
-    hay.windows(needle.len()).position(|w| w == needle.as_slice()).map(|p| map[p])
+    hay.windows(needle.len())
+        .position(|w| w == needle.as_slice())
+        .map(|p| map[p])
 }
 
 fn tokens(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().map(fold).collect();
-    let digit_at = |i: Option<usize>| i.and_then(|i| chars.get(i)).is_some_and(|c| c.is_ascii_digit());
-    let letter_at = |i: Option<usize>| i.and_then(|i| chars.get(i)).is_some_and(|c| c.is_alphabetic());
+    let digit_at = |i: Option<usize>| {
+        i.and_then(|i| chars.get(i))
+            .is_some_and(|c| c.is_ascii_digit())
+    };
+    let letter_at = |i: Option<usize>| {
+        i.and_then(|i| chars.get(i))
+            .is_some_and(|c| c.is_alphabetic())
+    };
     let (mut out, mut cur) = (Vec::new(), String::new());
     for (i, &c) in chars.iter().enumerate() {
         let prev = i.checked_sub(1);
@@ -107,7 +115,11 @@ fn tokens(s: &str) -> Vec<String> {
 }
 
 fn stem(t: &str) -> String {
-    if t.len() > 3 && t.ends_with('s') && !t.ends_with("ss") && !t.chars().any(|c| c.is_ascii_digit()) {
+    if t.len() > 3
+        && t.ends_with('s')
+        && !t.ends_with("ss")
+        && !t.chars().any(|c| c.is_ascii_digit())
+    {
         t[..t.len() - 1].to_string()
     } else {
         t.to_string()
@@ -119,7 +131,9 @@ fn is_numeric(t: &str) -> bool {
 }
 
 fn negations(toks: &[String]) -> usize {
-    toks.iter().filter(|t| NEGATIONS.contains(&t.as_str()) || t.ends_with("n't")).count()
+    toks.iter()
+        .filter(|t| NEGATIONS.contains(&t.as_str()) || t.ends_with("n't"))
+        .count()
 }
 
 /// Deterministic support decision for one claim against one captured source text.
@@ -135,20 +149,30 @@ pub fn check_support(claim: &RawClaim, source_text: &str) -> Support {
     let span_set: HashSet<String> = span_toks.iter().map(|t| stem(t)).collect();
     let claim_toks = tokens(&claim.text);
 
-    if let Some(n) = claim_toks.iter().chain(&tokens(&claim.value)).find(|t| is_numeric(t) && !span_set.contains(*t)) {
+    if let Some(n) = claim_toks
+        .iter()
+        .chain(&tokens(&claim.value))
+        .find(|t| is_numeric(t) && !span_set.contains(*t))
+    {
         return Support::Unsupported(format!("figure {n:?} does not appear in the cited span"));
     }
     let value_toks = tokens(&claim.value);
     if value_toks.is_empty() || !value_toks.iter().all(|t| span_set.contains(&stem(t))) {
         return Support::Unsupported("asserted value does not appear in the cited span".into());
     }
-    let content: Vec<String> =
-        claim_toks.iter().filter(|t| !STOPWORDS.contains(&t.as_str())).map(|t| stem(t)).collect();
+    let content: Vec<String> = claim_toks
+        .iter()
+        .filter(|t| !STOPWORDS.contains(&t.as_str()))
+        .map(|t| stem(t))
+        .collect();
     if !content.is_empty() {
         let hit = content.iter().filter(|t| span_set.contains(*t)).count();
         let coverage = hit as f64 / content.len() as f64;
         if coverage < MIN_COVERAGE {
-            return Support::Unsupported(format!("only {:.0}% of the claim's terms appear in the span", coverage * 100.0));
+            return Support::Unsupported(format!(
+                "only {:.0}% of the claim's terms appear in the span",
+                coverage * 100.0
+            ));
         }
     }
     if negations(&claim_toks) % 2 != negations(&span_toks) % 2 {
@@ -159,12 +183,20 @@ pub fn check_support(claim: &RawClaim, source_text: &str) -> Support {
 
 /// Supported-statement check: statement figures and most terms must occur in the cited spans.
 pub fn statement_supported(statement: &str, spans: &[&str]) -> bool {
-    let union: HashSet<String> = spans.iter().flat_map(|s| tokens(s)).map(|t| stem(&t)).collect();
+    let union: HashSet<String> = spans
+        .iter()
+        .flat_map(|s| tokens(s))
+        .map(|t| stem(&t))
+        .collect();
     let toks = tokens(statement);
     if toks.iter().any(|t| is_numeric(t) && !union.contains(t)) {
         return false;
     }
-    let content: Vec<String> = toks.iter().filter(|t| !STOPWORDS.contains(&t.as_str())).map(|t| stem(t)).collect();
+    let content: Vec<String> = toks
+        .iter()
+        .filter(|t| !STOPWORDS.contains(&t.as_str()))
+        .map(|t| stem(t))
+        .collect();
     if content.is_empty() {
         return false;
     }

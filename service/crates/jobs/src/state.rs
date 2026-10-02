@@ -22,6 +22,11 @@ pub(crate) fn parse_state(s: &str) -> Result<RunState> {
         "failed" => RunState::Failed,
         "cancelled" => RunState::Cancelled,
         "interrupted" => RunState::Interrupted,
-        other => return Err(PairError::new(ErrorCode::Internal, format!("unknown run state {other}"))),
+        other => {
+            return Err(PairError::new(
+                ErrorCode::Internal,
+                format!("unknown run state {other}"),
+            ))
+        }
     })
 }

@@ -21,7 +21,13 @@ fn trust_label(t: TrustClass) -> &'static str {
 
 fn sanitize_label(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_' | '.' | '/') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_' | '.' | '/') {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(MAX_LABEL_LEN)
         .collect()
 }
@@ -33,7 +39,10 @@ fn neutralise(content: &str) -> String {
 /// Wrap external content as inert data with source, trust class, length and an id.
 pub fn wrap_external(source: &str, trust: TrustClass, content: &str) -> String {
     let body = neutralise(content);
-    let id = sha256_hex(content).chars().take(BLOCK_ID_HEX_LEN).collect::<String>();
+    let id = sha256_hex(content)
+        .chars()
+        .take(BLOCK_ID_HEX_LEN)
+        .collect::<String>();
     let source = sanitize_label(source);
     let trust = trust_label(trust);
     let len = body.len();

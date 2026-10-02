@@ -39,7 +39,12 @@ pub struct Review {
 }
 
 fn item(e: EventRecord) -> ObservedItem {
-    ObservedItem { loop_id: e.loop_id, summary: e.summary, source_ref: e.source_ref, at: e.occurred_at }
+    ObservedItem {
+        loop_id: e.loop_id,
+        summary: e.summary,
+        source_ref: e.source_ref,
+        at: e.occurred_at,
+    }
 }
 
 /// Summarise the Asia/Kolkata day containing `now`. Intent events are deliberately
@@ -71,6 +76,17 @@ pub async fn build_review(pool: &PgPool, now: DateTime<Utc>) -> Result<Review> {
         })
         .collect();
     let tomorrow = select_priorities(&loops, end);
-    tracing::info!(completed = completed.len(), worked = worked_on.len(), "review built");
-    Ok(Review { generated_at: now, completed, worked_on, proposed_decisions, unresolved, tomorrow })
+    tracing::info!(
+        completed = completed.len(),
+        worked = worked_on.len(),
+        "review built"
+    );
+    Ok(Review {
+        generated_at: now,
+        completed,
+        worked_on,
+        proposed_decisions,
+        unresolved,
+        tomorrow,
+    })
 }

@@ -50,12 +50,19 @@ pub async fn disconnect(pool: &PgPool, account_id: Uuid) -> Result<DisconnectRep
     Ok(DisconnectReport {
         account_id,
         derived_source_count,
-        choices: vec![DeletionChoice::KeepDerivedSources, DeletionChoice::DeleteDerivedSources],
+        choices: vec![
+            DeletionChoice::KeepDerivedSources,
+            DeletionChoice::DeleteDerivedSources,
+        ],
     })
 }
 
 /// Apply the owner's choice; returns the number of sources tombstoned.
-pub async fn apply_deletion_choice(pool: &PgPool, account_id: Uuid, choice: DeletionChoice) -> Result<u64> {
+pub async fn apply_deletion_choice(
+    pool: &PgPool,
+    account_id: Uuid,
+    choice: DeletionChoice,
+) -> Result<u64> {
     match choice {
         DeletionChoice::KeepDerivedSources => Ok(0),
         DeletionChoice::DeleteDerivedSources => {

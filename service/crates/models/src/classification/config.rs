@@ -98,7 +98,10 @@ impl RoutingConfig {
 
     pub fn from_path(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).map_err(|e| {
-            PairError::new(ErrorCode::InvalidInput, format!("read {}: {e}", path.display()))
+            PairError::new(
+                ErrorCode::InvalidInput,
+                format!("read {}: {e}", path.display()),
+            )
         })?;
         Self::from_yaml(&text)
     }
@@ -119,14 +122,21 @@ impl RoutingConfig {
     }
 
     /// Thresholds for the exact (returned model version, question version) pair, if calibrated.
-    pub fn thresholds_for(&self, model_version: &str, question_version: &str) -> Option<&ThresholdEntry> {
+    pub fn thresholds_for(
+        &self,
+        model_version: &str,
+        question_version: &str,
+    ) -> Option<&ThresholdEntry> {
         self.thresholds
             .iter()
             .find(|t| t.model_version == model_version && t.question_version == question_version)
     }
 
     pub fn baseline_tier(&self, intent: &str) -> &str {
-        self.baseline.by_intent.get(intent).map_or(self.baseline.default_tier.as_str(), String::as_str)
+        self.baseline
+            .by_intent
+            .get(intent)
+            .map_or(self.baseline.default_tier.as_str(), String::as_str)
     }
 }
 
@@ -151,9 +161,11 @@ mod tests {
 
     #[test]
     fn test_from_yaml_unknown_tier_rejected() {
-        let bad = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/routing.yaml"))
-            .expect("read")
-            .replace("default_tier: strong", "default_tier: bogus");
+        let bad = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/routing.yaml"),
+        )
+        .expect("read")
+        .replace("default_tier: strong", "default_tier: bogus");
         assert!(RoutingConfig::from_yaml(&bad).is_err());
     }
 }

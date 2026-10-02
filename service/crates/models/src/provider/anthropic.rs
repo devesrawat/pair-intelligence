@@ -26,27 +26,41 @@ pub struct AnthropicProvider {
 
 impl std::fmt::Debug for AnthropicProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AnthropicProvider").field("key", &self.key).finish_non_exhaustive()
+        f.debug_struct("AnthropicProvider")
+            .field("key", &self.key)
+            .finish_non_exhaustive()
     }
 }
 
 impl AnthropicProvider {
     pub fn new(key: Secret, registry: Arc<ProviderRegistry>) -> Result<Self> {
         if key.is_empty() {
-            return Err(PairError::new(ErrorCode::Unauthenticated, "empty Anthropic API key"));
+            return Err(PairError::new(
+                ErrorCode::Unauthenticated,
+                "empty Anthropic API key",
+            ));
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| PairError::new(ErrorCode::Internal, format!("http client: {e}")))?;
         let redactor = Redactor::new().with_secret(&key);
-        Ok(Self { client, key, registry, redactor })
+        Ok(Self {
+            client,
+            key,
+            registry,
+            redactor,
+        })
     }
 
     /// Read the key from `ANTHROPIC_API_KEY` (environment only).
     pub fn from_env(registry: Arc<ProviderRegistry>) -> Result<Self> {
-        let key = std::env::var(ANTHROPIC_KEY_ENV)
-            .map_err(|_| PairError::new(ErrorCode::Unauthenticated, format!("{ANTHROPIC_KEY_ENV} is not set")))?;
+        let key = std::env::var(ANTHROPIC_KEY_ENV).map_err(|_| {
+            PairError::new(
+                ErrorCode::Unauthenticated,
+                format!("{ANTHROPIC_KEY_ENV} is not set"),
+            )
+        })?;
         Self::new(Secret::new(key), registry)
     }
 
@@ -66,14 +80,24 @@ impl AnthropicProvider {
         if !resp.status().is_success() {
             return Err(http_error(&self.redactor, resp).await);
         }
-        let request_id = resp.headers().get(REQUEST_ID_HEADER).and_then(|v| v.to_str().ok()).map(str::to_owned);
+        let request_id = resp
+            .headers()
+            .get(REQUEST_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let mut acc = StreamAccumulator::default();
         let done = read_lines(&self.redactor, resp, |line| acc.apply_line(line)).await;
         let done = done.map_err(|e| PairError::new(e.code, self.redactor.redact(&e.message)))?;
         if !done {
-            return Err(PairError::new(ErrorCode::ProviderUnavailable, "stream ended before message_stop"));
+            return Err(PairError::new(
+                ErrorCode::ProviderUnavailable,
+                "stream ended before message_stop",
+            ));
         }
-        let price = entry.price.as_ref().ok_or_else(|| PairError::new(ErrorCode::BudgetUnknownPrice, "no price"))?;
+        let price = entry
+            .price
+            .as_ref()
+            .ok_or_else(|| PairError::new(ErrorCode::BudgetUnknownPrice, "no price"))?;
         let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         Ok(ModelResponse {
             resolved_model: acc.model.unwrap_or_else(|| req.model_id.clone()),
@@ -92,7 +116,9 @@ impl Provider for AnthropicProvider {
         let trace = req.trace;
         let result = with_deadline(req.deadline_ms, self.call(&entry, &req)).await;
         match &result {
-            Ok(r) => info!(%trace, model = %r.resolved_model, latency_ms = r.latency_ms, "anthropic call ok"),
+            Ok(r) => {
+                info!(%trace, model = %r.resolved_model, latency_ms = r.latency_ms, "anthropic call ok")
+            }
             Err(e) => warn!(%trace, code = ?e.code, "anthropic call failed"),
         }
         result
@@ -120,11 +146,19 @@ fn split_messages(msgs: &[ModelMessage]) -> Result<(String, Vec<serde_json::Valu
         match m.role.as_str() {
             "system" => system.push(m.content.as_str()),
             "user" | "assistant" => out.push(json!({"role": m.role, "content": m.content})),
-            other => return Err(PairError::new(ErrorCode::InvalidInput, format!("unsupported role {other}"))),
+            other => {
+                return Err(PairError::new(
+                    ErrorCode::InvalidInput,
+                    format!("unsupported role {other}"),
+                ))
+            }
         }
     }
     if out.is_empty() {
-        return Err(PairError::new(ErrorCode::InvalidInput, "request has no user/assistant messages"));
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            "request has no user/assistant messages",
+        ));
     }
     Ok((system.join("\n\n"), out))
 }
@@ -171,9 +205,15 @@ struct ApiError {
 impl StreamAccumulator {
     /// Returns `Ok(true)` once `message_stop` is seen.
     fn apply_line(&mut self, line: &str) -> Result<bool> {
-        let Some(data) = line.strip_prefix("data:") else { return Ok(false) };
-        let ev: Event = serde_json::from_str(data.trim())
-            .map_err(|e| PairError::new(ErrorCode::ProviderUnavailable, format!("malformed SSE event: {e}")))?;
+        let Some(data) = line.strip_prefix("data:") else {
+            return Ok(false);
+        };
+        let ev: Event = serde_json::from_str(data.trim()).map_err(|e| {
+            PairError::new(
+                ErrorCode::ProviderUnavailable,
+                format!("malformed SSE event: {e}"),
+            )
+        })?;
         match ev.kind.as_str() {
             "message_start" => {
                 if let Some(m) = ev.message {
@@ -183,7 +223,11 @@ impl StreamAccumulator {
                 }
             }
             "content_block_delta" => {
-                let piece = ev.delta.as_ref().and_then(|d| d.get("text")).and_then(|t| t.as_str());
+                let piece = ev
+                    .delta
+                    .as_ref()
+                    .and_then(|d| d.get("text"))
+                    .and_then(|t| t.as_str());
                 if let Some(t) = piece {
                     self.text.push_str(t);
                 }
@@ -194,7 +238,11 @@ impl StreamAccumulator {
                 let (kind, msg) = ev.error.map(|e| (e.kind, e.message)).unwrap_or_default();
                 return Err(PairError::new(
                     ErrorCode::ProviderUnavailable,
-                    format!("provider stream error {}: {}", kind.unwrap_or_default(), msg.unwrap_or_default()),
+                    format!(
+                        "provider stream error {}: {}",
+                        kind.unwrap_or_default(),
+                        msg.unwrap_or_default()
+                    ),
                 ));
             }
             _ => {}

@@ -2,7 +2,14 @@
 use pair_core::error::{ErrorCode, PairError, Result};
 use serde::{Deserialize, Serialize};
 
-const SECRET_FILE_NAMES: [&str; 6] = [".netrc", "credentials", "id_rsa", "id_ed25519", ".npmrc", ".pypirc"];
+const SECRET_FILE_NAMES: [&str; 6] = [
+    ".netrc",
+    "credentials",
+    "id_rsa",
+    "id_ed25519",
+    ".npmrc",
+    ".pypirc",
+];
 const SECRET_EXTENSIONS: [&str; 5] = ["pem", "key", "p12", "pfx", "keystore"];
 
 /// Allowed paths: an entry ending in `/` is a directory prefix, anything else an exact file.
@@ -17,8 +24,12 @@ pub fn is_secret_path(path: &str) -> bool {
         let lower = seg.to_ascii_lowercase();
         lower == ".env"
             || lower.starts_with(".env.")
-            || SECRET_FILE_NAMES.iter().any(|n| lower == *n || lower.starts_with(&format!("{n}.")))
-            || lower.rsplit_once('.').is_some_and(|(_, ext)| SECRET_EXTENSIONS.contains(&ext))
+            || SECRET_FILE_NAMES
+                .iter()
+                .any(|n| lower == *n || lower.starts_with(&format!("{n}.")))
+            || lower
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| SECRET_EXTENSIONS.contains(&ext))
     })
 }
 
@@ -31,11 +42,20 @@ pub fn normalize_rel(path: &str) -> Result<String> {
         || trimmed.contains('\0')
         || trimmed.split('/').any(|s| s == ".." || s == ".git");
     if bad {
-        return Err(PairError::new(ErrorCode::PolicyDenied, format!("path escapes workspace: {path:?}")));
+        return Err(PairError::new(
+            ErrorCode::PolicyDenied,
+            format!("path escapes workspace: {path:?}"),
+        ));
     }
-    let parts: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    let parts: Vec<&str> = trimmed
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
     if parts.is_empty() {
-        return Err(PairError::new(ErrorCode::PolicyDenied, format!("empty path: {path:?}")));
+        return Err(PairError::new(
+            ErrorCode::PolicyDenied,
+            format!("empty path: {path:?}"),
+        ));
     }
     Ok(parts.join("/"))
 }
@@ -46,11 +66,19 @@ impl Scope {
     }
 
     pub fn permits(&self, path: &str) -> bool {
-        let Ok(norm) = normalize_rel(path) else { return false };
+        let Ok(norm) = normalize_rel(path) else {
+            return false;
+        };
         if is_secret_path(&norm) {
             return false;
         }
-        self.allow.iter().any(|a| if a.ends_with('/') { norm.starts_with(a.as_str()) } else { norm == *a })
+        self.allow.iter().any(|a| {
+            if a.ends_with('/') {
+                norm.starts_with(a.as_str())
+            } else {
+                norm == *a
+            }
+        })
     }
 
     /// Whole-patch check: one out-of-scope path rejects everything.
@@ -61,7 +89,10 @@ impl Scope {
         } else {
             Err(PairError::new(
                 ErrorCode::PolicyDenied,
-                format!("patch touches paths outside declared scope: {}", outside.join(", ")),
+                format!(
+                    "patch touches paths outside declared scope: {}",
+                    outside.join(", ")
+                ),
             ))
         }
     }

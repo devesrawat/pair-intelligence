@@ -8,7 +8,16 @@ pub const MAX_SUMMARY_CHARS: usize = 1_000;
 pub const MAX_WORKFLOWS: usize = 12;
 const CHARS_PER_TOKEN: usize = 4;
 const REDACTED: &str = "[REDACTED]";
-const SECRET_PREFIXES: [&str; 8] = ["sk-", "ghp_", "gho_", "xoxb-", "xoxp-", "akia", "eyj", "-----begin"];
+const SECRET_PREFIXES: [&str; 8] = [
+    "sk-",
+    "ghp_",
+    "gho_",
+    "xoxb-",
+    "xoxp-",
+    "akia",
+    "eyj",
+    "-----begin",
+];
 const SECRET_KEY_HINTS: [&str; 6] = ["key", "token", "secret", "password", "passwd", "credential"];
 const LONG_OPAQUE_LEN: usize = 32;
 
@@ -23,7 +32,9 @@ fn looks_secret(word: &str) -> bool {
         }
     }
     word.len() >= LONG_OPAQUE_LEN
-        && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         && word.chars().any(|c| c.is_ascii_digit())
         && word.chars().any(|c| c.is_ascii_alphabetic())
 }
@@ -38,7 +49,11 @@ pub fn redact_secrets(text: &str) -> String {
                 .map(|w| {
                     let hide = bearer || looks_secret(w);
                     bearer = w.eq_ignore_ascii_case("bearer");
-                    if hide { REDACTED } else { w }
+                    if hide {
+                        REDACTED
+                    } else {
+                        w
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
@@ -59,7 +74,12 @@ fn bounded(text: &str, max_chars: usize) -> String {
 
 /// Build the state text sent to the classifier.
 pub fn build_state(input: &ClassificationInput) -> String {
-    let workflows: Vec<&str> = input.workflows.iter().take(MAX_WORKFLOWS).map(String::as_str).collect();
+    let workflows: Vec<&str> = input
+        .workflows
+        .iter()
+        .take(MAX_WORKFLOWS)
+        .map(String::as_str)
+        .collect();
     let recent = if input.recent_summary.trim().is_empty() {
         "(none)".to_string()
     } else {
@@ -81,7 +101,10 @@ pub fn estimate_tokens(state: &str, question_chars: usize) -> u64 {
 }
 
 pub fn sha256_hex(text: &str) -> String {
-    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[cfg(test)]

@@ -42,7 +42,9 @@ pub struct RetryPolicy {
 
 impl RetryPolicy {
     pub fn delay(&self, attempt: u32) -> Duration {
-        let factor = 1u32.checked_shl(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        let factor = 1u32
+            .checked_shl(attempt.saturating_sub(1))
+            .unwrap_or(u32::MAX);
         self.base.saturating_mul(factor).min(self.cap)
     }
 }

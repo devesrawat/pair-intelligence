@@ -22,17 +22,38 @@ impl TestDb {
     pub async fn create() -> Self {
         let admin_url = admin_url();
         let name = format!("pair_t_budget_{}", uuid::Uuid::new_v4().simple());
-        let mut admin = PgConnectOptions::from_str(&admin_url).unwrap().connect().await.unwrap();
-        sqlx::query(&format!("CREATE DATABASE {name}")).execute(&mut admin).await.unwrap();
-        let opts = PgConnectOptions::from_str(&admin_url).unwrap().database(&name);
-        let pool = PgPoolOptions::new().max_connections(30).connect_with(opts).await.unwrap();
+        let mut admin = PgConnectOptions::from_str(&admin_url)
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&mut admin)
+            .await
+            .unwrap();
+        let opts = PgConnectOptions::from_str(&admin_url)
+            .unwrap()
+            .database(&name);
+        let pool = PgPoolOptions::new()
+            .max_connections(30)
+            .connect_with(opts)
+            .await
+            .unwrap();
         MIGRATOR.run(&pool).await.unwrap();
-        Self { pool, name, admin_url }
+        Self {
+            pool,
+            name,
+            admin_url,
+        }
     }
 
     pub fn budget(&self, yaml: &str) -> PgBudget {
         let cfg = BudgetConfig::from_yaml(yaml).unwrap();
-        PgBudget::new(self.pool.clone(), cfg, PriceBook::new(Some(PRICE.to_owned()), []))
+        PgBudget::new(
+            self.pool.clone(),
+            cfg,
+            PriceBook::new(Some(PRICE.to_owned()), []),
+        )
     }
 }
 
@@ -40,9 +61,16 @@ impl Drop for TestDb {
     fn drop(&mut self) {
         let (url, name) = (self.admin_url.clone(), self.name.clone());
         let handle = std::thread::spawn(move || {
-            let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
             rt.block_on(async {
-                let Ok(opts) = PgConnectOptions::from_str(&url) else { return };
+                let Ok(opts) = PgConnectOptions::from_str(&url) else {
+                    return;
+                };
                 if let Ok(mut admin) = opts.connect().await {
                     let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
                         .execute(&mut admin)
@@ -61,6 +89,11 @@ pub fn yaml(month_c: i64, day_c: i64, classifier_c: i64, task_c: i64) -> String 
         "budget:\n  currency: USD\n  metered_monthly_cap: {}\n  metered_daily_cap: {}\n  \
          classifier_monthly_subcap: {}\n  default_task_cap: {}\n  research_task_cap: {}\n  \
          coding_task_cap: {}\n  auto_top_up: false\nschedule:\n  timezone: Asia/Kolkata\n",
-        f(month_c), f(day_c), f(classifier_c), f(task_c), f(task_c), f(task_c)
+        f(month_c),
+        f(day_c),
+        f(classifier_c),
+        f(task_c),
+        f(task_c),
+        f(task_c)
     )
 }

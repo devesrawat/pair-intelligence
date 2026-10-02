@@ -1,8 +1,8 @@
 //! Evaluation harness for the three routing strategies of spec 6.1.
 //! Everything computed here is MODELED or measured on DRAFT labels. Nothing in this module is evidence of
 //! routing quality: downstream task acceptance requires real workflow runs and owner-reviewed labels.
-use super::config::{ClassifierMode, RoutingConfig};
 use super::baseline::classify_by_rules;
+use super::config::{ClassifierMode, RoutingConfig};
 use crate::router::ConfigRouter;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::TaskId;
@@ -47,19 +47,30 @@ pub struct Dataset {
 
 impl Dataset {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("read {}: {e}", path.display())))?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            PairError::new(
+                ErrorCode::InvalidInput,
+                format!("read {}: {e}", path.display()),
+            )
+        })?;
         let mut cases = Vec::new();
         let mut held_out_lines = Vec::new();
         for (n, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
-            let case: EvalCase = serde_json::from_str(line)
-                .map_err(|e| PairError::new(ErrorCode::InvalidInput, format!("dataset line {}: {e}", n + 1)))?;
+            let case: EvalCase = serde_json::from_str(line).map_err(|e| {
+                PairError::new(
+                    ErrorCode::InvalidInput,
+                    format!("dataset line {}: {e}", n + 1),
+                )
+            })?;
             if case.split == Split::HeldOut {
                 held_out_lines.push(line.to_string());
             }
             cases.push(case);
         }
-        Ok(Self { cases, held_out_lines })
+        Ok(Self {
+            cases,
+            held_out_lines,
+        })
     }
 
     pub fn split(&self, split: Split) -> Vec<&EvalCase> {
@@ -96,7 +107,10 @@ fn percentile(sorted: &[u64], pct: usize) -> u64 {
     if sorted.is_empty() {
         return 0;
     }
-    let idx = (sorted.len() * pct).div_ceil(100).saturating_sub(1).min(sorted.len() - 1);
+    let idx = (sorted.len() * pct)
+        .div_ceil(100)
+        .saturating_sub(1)
+        .min(sorted.len() - 1);
     sorted[idx]
 }
 
@@ -111,8 +125,12 @@ fn modeled_cost(router: &ConfigRouter, model_id: &str, input_tokens: u64) -> i64
         .iter()
         .find(|c| c.id == model_id)
         .map_or(0, |c| {
-            let i = input_tokens.saturating_mul(c.input_price_micros_per_mtok as u64).div_ceil(1_000_000);
-            let o = ASSUMED_OUTPUT_TOKENS.saturating_mul(c.output_price_micros_per_mtok as u64).div_ceil(1_000_000);
+            let i = input_tokens
+                .saturating_mul(c.input_price_micros_per_mtok as u64)
+                .div_ceil(1_000_000);
+            let o = ASSUMED_OUTPUT_TOKENS
+                .saturating_mul(c.output_price_micros_per_mtok as u64)
+                .div_ceil(1_000_000);
             i64::try_from(i + o).unwrap_or(i64::MAX)
         })
 }
@@ -135,8 +153,17 @@ fn finish(mut r: StrategyReport, mut lat: Vec<u64>) -> StrategyReport {
 }
 
 /// Strategy 1: one fixed model tier for every request. It predicts no intent, so accuracy is N/A.
-pub fn run_fixed_baseline(cases: &[&EvalCase], router: &ConfigRouter, split: &str) -> StrategyReport {
-    let mut r = StrategyReport { name: "fixed baseline".into(), split: split.into(), cases: cases.len(), ..Default::default() };
+pub fn run_fixed_baseline(
+    cases: &[&EvalCase],
+    router: &ConfigRouter,
+    split: &str,
+) -> StrategyReport {
+    let mut r = StrategyReport {
+        name: "fixed baseline".into(),
+        split: split.into(),
+        cases: cases.len(),
+        ..Default::default()
+    };
     let mut lat = Vec::new();
     for case in cases {
         let t = Instant::now();
@@ -152,7 +179,12 @@ pub fn run_fixed_baseline(cases: &[&EvalCase], router: &ConfigRouter, split: &st
 
 /// Strategy 2: deterministic rules choose the baseline tier per intent.
 pub fn run_rules(cases: &[&EvalCase], router: &ConfigRouter, split: &str) -> StrategyReport {
-    let mut r = StrategyReport { name: "deterministic rules + baseline".into(), split: split.into(), cases: cases.len(), ..Default::default() };
+    let mut r = StrategyReport {
+        name: "deterministic rules + baseline".into(),
+        split: split.into(),
+        cases: cases.len(),
+        ..Default::default()
+    };
     let (mut ic, mut dc) = (0, 0);
     let mut lat = Vec::new();
     for case in cases {
@@ -181,7 +213,12 @@ pub async fn run_classifier_assisted(
     input_price_micros_per_mtok: i64,
     split: &str,
 ) -> StrategyReport {
-    let mut r = StrategyReport { name: "classifier-assisted".into(), split: split.into(), cases: cases.len(), ..Default::default() };
+    let mut r = StrategyReport {
+        name: "classifier-assisted".into(),
+        split: split.into(),
+        cases: cases.len(),
+        ..Default::default()
+    };
     let (mut ic, mut dc) = (0, 0);
     let mut lat = Vec::new();
     for case in cases {
@@ -201,9 +238,16 @@ pub async fn run_classifier_assisted(
         }
         let intent = c.as_ref().map_or(rules.intent, |c| c.intent.as_str());
         ic += usize::from(intent == case.expected_intent);
-        dc += usize::from(c.as_ref().map_or(rules.difficulty, |c| c.difficulty.as_str()) == case.expected_difficulty);
+        dc += usize::from(
+            c.as_ref()
+                .map_or(rules.difficulty, |c| c.difficulty.as_str())
+                == case.expected_difficulty,
+        );
         if let Some(c) = &c {
-            let spent = (c.input_tokens.saturating_mul(input_price_micros_per_mtok as u64)).div_ceil(1_000_000);
+            let spent = (c
+                .input_tokens
+                .saturating_mul(input_price_micros_per_mtok as u64))
+            .div_ceil(1_000_000);
             r.classifier_cost_micros += i64::try_from(spent).unwrap_or(i64::MAX);
         }
         let profile = profile_for(rules.intent, rules.difficulty, case);
@@ -257,8 +301,14 @@ mod tests {
     use async_trait::async_trait;
     use pair_core::types::TaskClassification;
 
-    const DATASET: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../evals/datasets/routing.jsonl");
-    const FROZEN_DIGEST_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../evals/datasets/routing.held_out.sha256");
+    const DATASET: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../evals/datasets/routing.jsonl"
+    );
+    const FROZEN_DIGEST_FILE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../evals/datasets/routing.held_out.sha256"
+    );
     const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/routing.yaml");
 
     fn dataset() -> Dataset {
@@ -275,7 +325,10 @@ mod tests {
         assert_eq!(count(&|c| c.expected_intent == "planning"), 15);
         assert_eq!(count(&|c| c.expected_intent == "memory_recall"), 15);
         assert_eq!(count(&|c| c.expected_intent == "transformation"), 10);
-        assert_eq!(count(&|c| c.expected_intent == "mixed" || c.expected_intent == "uncertain"), 10);
+        assert_eq!(
+            count(&|c| c.expected_intent == "mixed" || c.expected_intent == "uncertain"),
+            10
+        );
         assert_eq!(d.split(Split::Dev).len(), 60);
         assert_eq!(d.split(Split::HeldOut).len(), 40);
     }
@@ -287,16 +340,32 @@ mod tests {
         assert_eq!(ids.len(), d.cases.len());
         for c in &d.cases {
             assert_eq!(c.label_status, DRAFT_STATUS, "{}", c.id);
-            assert!(INTENT_LABELS.contains(&c.expected_intent.as_str()), "{}", c.id);
-            assert!(DIFFICULTY_LABELS.contains(&c.expected_difficulty.as_str()), "{}", c.id);
-            assert!(!c.acceptance_check.is_empty() && !c.expected_workflow.is_empty(), "{}", c.id);
+            assert!(
+                INTENT_LABELS.contains(&c.expected_intent.as_str()),
+                "{}",
+                c.id
+            );
+            assert!(
+                DIFFICULTY_LABELS.contains(&c.expected_difficulty.as_str()),
+                "{}",
+                c.id
+            );
+            assert!(
+                !c.acceptance_check.is_empty() && !c.expected_workflow.is_empty(),
+                "{}",
+                c.id
+            );
         }
     }
 
     #[test]
     fn test_held_out_split_is_frozen() {
         let frozen = std::fs::read_to_string(FROZEN_DIGEST_FILE).expect("digest file");
-        assert_eq!(dataset().held_out_digest(), frozen.trim(), "held-out cases changed: this is a new evaluation, not a tweak");
+        assert_eq!(
+            dataset().held_out_digest(),
+            frozen.trim(),
+            "held-out cases changed: this is a new evaluation, not a tweak"
+        );
     }
 
     #[test]

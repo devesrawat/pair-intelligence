@@ -29,7 +29,10 @@ impl ApiKey {
     pub fn from_env() -> Result<Self> {
         match std::env::var(API_KEY_ENV) {
             Ok(v) if !v.trim().is_empty() => Ok(Self(v)),
-            _ => Err(PairError::new(ErrorCode::Unauthenticated, format!("{API_KEY_ENV} is not set"))),
+            _ => Err(PairError::new(
+                ErrorCode::Unauthenticated,
+                format!("{API_KEY_ENV} is not set"),
+            )),
         }
     }
 }
@@ -81,7 +84,13 @@ impl JevClassifier {
         let http = reqwest::Client::builder()
             .build()
             .map_err(|e| PairError::new(ErrorCode::Internal, format!("http client: {e}")))?;
-        Ok(Self { http, settings, key, questions, sink: None })
+        Ok(Self {
+            http,
+            settings,
+            key,
+            questions,
+            sink: None,
+        })
     }
 
     pub fn with_debug_sink(mut self, sink: Arc<dyn DebugSink>) -> Self {
@@ -102,7 +111,12 @@ impl JevClassifier {
             .json(&body)
             .send()
             .await
-            .map_err(|e| PairError::new(ErrorCode::ProviderUnavailable, format!("jev transport: {e}")))?;
+            .map_err(|e| {
+                PairError::new(
+                    ErrorCode::ProviderUnavailable,
+                    format!("jev transport: {e}"),
+                )
+            })?;
         let status = resp.status();
         let request_id = resp
             .headers()
@@ -116,12 +130,14 @@ impl JevClassifier {
                 422 => ErrorCode::ClassifierInvalid,
                 _ => ErrorCode::ProviderUnavailable,
             };
-            return Err(PairError::new(code, format!("jev returned HTTP {}", status.as_u16())));
+            return Err(PairError::new(
+                code,
+                format!("jev returned HTTP {}", status.as_u16()),
+            ));
         }
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| PairError::new(ErrorCode::ProviderUnavailable, format!("jev body: {e}")))?;
+        let text = resp.text().await.map_err(|e| {
+            PairError::new(ErrorCode::ProviderUnavailable, format!("jev body: {e}"))
+        })?;
         Ok((text, request_id))
     }
 
@@ -133,10 +149,9 @@ impl JevClassifier {
     ) -> Result<TaskClassification> {
         let resp = parse_response(text)?;
         let pick = |id: &str| -> Result<ValidatedChoice> {
-            let answer = resp
-                .answers
-                .get(id)
-                .ok_or_else(|| PairError::new(ErrorCode::ClassifierInvalid, format!("missing answer {id}")))?;
+            let answer = resp.answers.get(id).ok_or_else(|| {
+                PairError::new(ErrorCode::ClassifierInvalid, format!("missing answer {id}"))
+            })?;
             validate_choice(id, answer, &self.questions.labels(id))
         };
         let intent = pick(INTENT_ID)?;
@@ -169,7 +184,10 @@ impl Classifier for JevClassifier {
             Err(_) => {
                 return Err(PairError::new(
                     ErrorCode::ProviderTimeout,
-                    format!("jev exceeded {} ms deadline", self.settings.deadline.as_millis()),
+                    format!(
+                        "jev exceeded {} ms deadline",
+                        self.settings.deadline.as_millis()
+                    ),
                 ))
             }
         };
@@ -210,7 +228,11 @@ mod tests {
     use std::sync::Mutex;
 
     fn classifier(url: &str, deadline_ms: u64) -> JevClassifier {
-        let settings = JevSettings { endpoint: url.into(), model: "jev-1.13.0".into(), deadline: Duration::from_millis(deadline_ms) };
+        let settings = JevSettings {
+            endpoint: url.into(),
+            model: "jev-1.13.0".into(),
+            deadline: Duration::from_millis(deadline_ms),
+        };
         JevClassifier::new(settings, ApiKey::new("test-key"), test_questions()).expect("client")
     }
 
@@ -239,7 +261,10 @@ mod tests {
         let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.9))).await;
         let sink = Arc::new(Collect::default());
         let c = classifier(&mock.url, 1000).with_debug_sink(sink.clone());
-        let out = c.classify(input("fix the typo", "")).await.expect("classified");
+        let out = c
+            .classify(input("fix the typo", ""))
+            .await
+            .expect("classified");
         assert_eq!(out.intent, "coding");
         assert!((out.intent_confidence - 0.9).abs() < 1e-9);
         assert_eq!(out.model_version, "jev-1.13.0");
@@ -254,7 +279,10 @@ mod tests {
         let mut body = ok_body("coding", "routine", 0.9);
         body["answers"]["intent"]["choice"] = json!("banana");
         let mock = spawn(Behavior::Reply(body)).await;
-        let err = classifier(&mock.url, 1000).classify(input("x", "")).await.expect_err("invalid");
+        let err = classifier(&mock.url, 1000)
+            .classify(input("x", ""))
+            .await
+            .expect_err("invalid");
         assert_eq!(err.code, ErrorCode::ClassifierInvalid);
     }
 
@@ -263,22 +291,35 @@ mod tests {
         let mut body = ok_body("coding", "routine", 0.9);
         body["answers"]["difficulty"]["probabilities"]["deep"] = json!(1.7);
         let mock = spawn(Behavior::Reply(body)).await;
-        let err = classifier(&mock.url, 1000).classify(input("x", "")).await.expect_err("invalid");
+        let err = classifier(&mock.url, 1000)
+            .classify(input("x", ""))
+            .await
+            .expect_err("invalid");
         assert_eq!(err.code, ErrorCode::ClassifierInvalid);
     }
 
     #[tokio::test]
     async fn no_sync_retry_on_429() {
         let mock = spawn(Behavior::Status(429)).await;
-        let err = classifier(&mock.url, 1000).classify(input("x", "")).await.expect_err("429");
+        let err = classifier(&mock.url, 1000)
+            .classify(input("x", ""))
+            .await
+            .expect_err("429");
         assert_eq!(err.code, ErrorCode::ProviderUnavailable);
         assert_eq!(mock.hits(), 1, "exactly one request, no synchronous retry");
     }
 
     #[tokio::test]
     async fn test_classify_slow_server_times_out_without_retry() {
-        let mock = spawn(Behavior::Slow(Duration::from_millis(400), ok_body("coding", "routine", 0.9))).await;
-        let err = classifier(&mock.url, 50).classify(input("x", "")).await.expect_err("timeout");
+        let mock = spawn(Behavior::Slow(
+            Duration::from_millis(400),
+            ok_body("coding", "routine", 0.9),
+        ))
+        .await;
+        let err = classifier(&mock.url, 50)
+            .classify(input("x", ""))
+            .await
+            .expect_err("timeout");
         assert_eq!(err.code, ErrorCode::ProviderTimeout);
         assert_eq!(mock.hits(), 1);
     }
@@ -286,14 +327,24 @@ mod tests {
     #[tokio::test]
     async fn followup_includes_relevant_context() {
         let mock = spawn(Behavior::Reply(ok_body("coding", "routine", 0.9))).await;
-        let summary = "User asked to fix the flaky reconcile test in crates/budget. Key: sk-live-SECRET123";
-        classifier(&mock.url, 1000).classify(input("do it", summary)).await.expect("ok");
+        let summary =
+            "User asked to fix the flaky reconcile test in crates/budget. Key: sk-live-SECRET123";
+        classifier(&mock.url, 1000)
+            .classify(input("do it", summary))
+            .await
+            .expect("ok");
         let bodies = mock.bodies();
         let sent = bodies.first().expect("one request");
         assert!(sent.contains("do it"));
-        assert!(sent.contains("flaky reconcile test"), "recent summary must travel with a follow-up");
+        assert!(
+            sent.contains("flaky reconcile test"),
+            "recent summary must travel with a follow-up"
+        );
         assert!(sent.contains("rust-service") && sent.contains("engineering"));
-        assert!(!sent.contains("sk-live-SECRET123"), "credentials must be excluded");
+        assert!(
+            !sent.contains("sk-live-SECRET123"),
+            "credentials must be excluded"
+        );
         assert!(sent.contains("\"criteria\""));
     }
 

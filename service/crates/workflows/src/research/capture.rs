@@ -38,18 +38,29 @@ impl Gate<'_> {
             task: self.task,
             trace: self.trace,
         };
-        let ctx = PolicyContext { workspace_root: String::new(), approvals: Vec::new(), policy_version: POLICY_VERSION.into() };
+        let ctx = PolicyContext {
+            workspace_root: String::new(),
+            approvals: Vec::new(),
+            policy_version: POLICY_VERSION.into(),
+        };
         match self.policy.authorize(&req, &ctx).decision {
             Decision::Allow => Ok(()),
             Decision::Deny { reason } => Err(PairError::new(ErrorCode::PolicyDenied, reason)),
-            Decision::NeedsApproval { .. } => Err(PairError::new(ErrorCode::ApprovalRequired, format!("{tool} {destination}"))),
+            Decision::NeedsApproval { .. } => Err(PairError::new(
+                ErrorCode::ApprovalRequired,
+                format!("{tool} {destination}"),
+            )),
         }
     }
 }
 
 pub fn build_queries(scope: &ResearchScope) -> Vec<String> {
     let mut seen = HashSet::new();
-    let base = if scope.queries.is_empty() { vec![scope.question.clone()] } else { scope.queries.clone() };
+    let base = if scope.queries.is_empty() {
+        vec![scope.question.clone()]
+    } else {
+        scope.queries.clone()
+    };
     base.into_iter()
         .map(|q| q.trim().to_string())
         .filter(|q| !q.is_empty() && seen.insert(q.clone()))
@@ -58,7 +69,10 @@ pub fn build_queries(scope: &ResearchScope) -> Vec<String> {
 }
 
 pub fn sha256_hex(text: &str) -> String {
-    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn unavailable(url: &str, normalized: &str, reason: String) -> Source {
@@ -77,14 +91,23 @@ fn unavailable(url: &str, normalized: &str, reason: String) -> Source {
     }
 }
 
-async fn capture_one(gate: &Gate<'_>, fetcher: &dyn SourceFetcher, url: &str, normalized: &str) -> Source {
+async fn capture_one(
+    gate: &Gate<'_>,
+    fetcher: &dyn SourceFetcher,
+    url: &str,
+    normalized: &str,
+) -> Source {
     if let Err(e) = gate.authorize("web_fetch", normalized) {
         return unavailable(url, normalized, format!("blocked by policy: {}", e.message));
     }
     match fetcher.fetch(url).await {
         Err(e) => unavailable(url, normalized, format!("fetch failed: {}", e.message)),
         Ok(FetchOutcome::Unavailable { reason }) => unavailable(url, normalized, reason),
-        Ok(FetchOutcome::Page { text, revision, published_at }) => Source {
+        Ok(FetchOutcome::Page {
+            text,
+            revision,
+            published_at,
+        }) => Source {
             id: SourceId::new(),
             url: url.to_string(),
             normalized_url: normalized.to_string(),
@@ -116,7 +139,11 @@ pub fn dedupe(sources: &mut [Source]) {
 }
 
 /// Discovery + capture + dedupe. Returns every attempted source, available or not.
-pub async fn capture_sources(gate: &Gate<'_>, fetcher: &dyn SourceFetcher, scope: &ResearchScope) -> Result<Vec<Source>> {
+pub async fn capture_sources(
+    gate: &Gate<'_>,
+    fetcher: &dyn SourceFetcher,
+    scope: &ResearchScope,
+) -> Result<Vec<Source>> {
     let mut urls: Vec<(String, String)> = Vec::new();
     let mut seen = HashSet::new();
     for query in build_queries(scope) {
@@ -125,7 +152,9 @@ pub async fn capture_sources(gate: &Gate<'_>, fetcher: &dyn SourceFetcher, scope
             match normalize_url(&cand.url) {
                 Ok(n) if seen.insert(n.clone()) => urls.push((cand.url, n)),
                 Ok(_) => {}
-                Err(e) => tracing::warn!(url = %cand.url, error = %e.message, "discarding malformed search result"),
+                Err(e) => {
+                    tracing::warn!(url = %cand.url, error = %e.message, "discarding malformed search result")
+                }
             }
         }
     }

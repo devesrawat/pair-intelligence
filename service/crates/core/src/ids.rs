@@ -17,6 +17,17 @@ macro_rules! typed_id {
 }
 
 typed_id!(
-    TaskId, ReservationId, LedgerEntryId, CandidateId, MemoryId, SourceId, RunId,
-    ApprovalId, TraceId, ModelCallId, ToolExecutionId, ConversationId, IdempotencyKey,
+    TaskId,
+    ReservationId,
+    LedgerEntryId,
+    CandidateId,
+    MemoryId,
+    SourceId,
+    RunId,
+    ApprovalId,
+    TraceId,
+    ModelCallId,
+    ToolExecutionId,
+    ConversationId,
+    IdempotencyKey,
 );

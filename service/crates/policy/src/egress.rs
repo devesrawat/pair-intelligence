@@ -3,11 +3,22 @@ use pair_core::types::DataClass;
 
 /// Extracts the lowercase host from `host`, `host:port` or a URL. Anything ambiguous is an error.
 pub fn parse_host(input: &str) -> Result<String, String> {
-    if input.is_empty() || input.chars().any(|c| c.is_whitespace() || c == '\\' || c.is_control()) {
+    if input.is_empty()
+        || input
+            .chars()
+            .any(|c| c.is_whitespace() || c == '\\' || c.is_control())
+    {
         return Err(format!("unparseable destination {input:?}"));
     }
     let rest = match input.split_once("://") {
-        Some((scheme, rest)) if !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)) => rest,
+        Some((scheme, rest))
+            if !scheme.is_empty()
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)) =>
+        {
+            rest
+        }
         Some(_) => return Err(format!("unparseable destination {input:?}")),
         None => input,
     };
@@ -25,7 +36,9 @@ pub fn parse_host(input: &str) -> Result<String, String> {
         && !host.starts_with(['.', '-'])
         && !host.ends_with(['.', '-'])
         && !host.contains("..")
-        && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
+        && host
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
     if valid {
         Ok(host)
     } else {
@@ -34,7 +47,11 @@ pub fn parse_host(input: &str) -> Result<String, String> {
 }
 
 /// Default deny: a destination passes only if a rule names its host and the data class.
-pub fn check_destination(rules: &[EgressRule], destination: &str, data_class: DataClass) -> Result<(), String> {
+pub fn check_destination(
+    rules: &[EgressRule],
+    destination: &str,
+    data_class: DataClass,
+) -> Result<(), String> {
     let host = parse_host(destination)?;
     let rule = rules.iter().find(|r| match r.host.strip_prefix("*.") {
         Some(suffix) => host.len() > suffix.len() + 1 && host.ends_with(&format!(".{suffix}")),
@@ -42,9 +59,9 @@ pub fn check_destination(rules: &[EgressRule], destination: &str, data_class: Da
     });
     match rule {
         None => Err(format!("egress to {host} is not on the allowlist")),
-        Some(r) if !r.data_classes.contains(&data_class) => {
-            Err(format!("egress to {host} is not approved for data class {data_class:?}"))
-        }
+        Some(r) if !r.data_classes.contains(&data_class) => Err(format!(
+            "egress to {host} is not approved for data class {data_class:?}"
+        )),
         Some(_) => Ok(()),
     }
 }

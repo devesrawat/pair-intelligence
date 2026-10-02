@@ -13,7 +13,10 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 pub(crate) fn db_err(e: &sqlx::Error) -> PairError {
-    PairError::new(ErrorCode::Internal, redact_secrets(&format!("database error: {e}")))
+    PairError::new(
+        ErrorCode::Internal,
+        redact_secrets(&format!("database error: {e}")),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +78,10 @@ impl ConversationStore {
             .await
             .map_err(|e| db_err(&e))?;
         if locked.is_none() {
-            return Err(PairError::new(ErrorCode::NotFound, format!("conversation {} not found", m.conversation)));
+            return Err(PairError::new(
+                ErrorCode::NotFound,
+                format!("conversation {} not found", m.conversation),
+            ));
         }
         let existing = sqlx::query(SELECT_BY_CLIENT_ID)
             .bind(m.conversation.0)
@@ -107,11 +113,13 @@ impl ConversationStore {
     }
 
     pub async fn list_messages(&self, conversation: ConversationId) -> Result<Vec<StoredMessage>> {
-        let rows = sqlx::query(&format!("{SELECT_COLUMNS} WHERE conversation_id = $1 ORDER BY seq"))
-            .bind(conversation.0)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| db_err(&e))?;
+        let rows = sqlx::query(&format!(
+            "{SELECT_COLUMNS} WHERE conversation_id = $1 ORDER BY seq"
+        ))
+        .bind(conversation.0)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| db_err(&e))?;
         rows.iter().map(row_to_message).collect()
     }
 }
@@ -136,7 +144,10 @@ fn parse_trust(s: &str) -> Result<TrustClass> {
         "owner" => Ok(TrustClass::Owner),
         "tool" => Ok(TrustClass::Tool),
         "untrusted" => Ok(TrustClass::Untrusted),
-        other => Err(PairError::new(ErrorCode::Internal, format!("corrupt trust value {other}"))),
+        other => Err(PairError::new(
+            ErrorCode::Internal,
+            format!("corrupt trust value {other}"),
+        )),
     }
 }
 

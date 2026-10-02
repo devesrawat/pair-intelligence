@@ -36,7 +36,8 @@ pub struct PolicyConfig {
 impl PolicyConfig {
     /// Parses the policy file. `config/policy.yaml` is written as JSON, which is valid YAML 1.2.
     pub fn parse(text: &str) -> Result<Self, PolicyError> {
-        let cfg: Self = serde_json::from_str(text).map_err(|e| PolicyError::Invalid(e.to_string()))?;
+        let cfg: Self =
+            serde_json::from_str(text).map_err(|e| PolicyError::Invalid(e.to_string()))?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -49,12 +50,17 @@ impl PolicyConfig {
             return Err(PolicyError::Invalid("tool names must not be empty".into()));
         }
         if self.denied_paths.is_empty() {
-            return Err(PolicyError::Invalid("denied_paths must not be empty".into()));
+            return Err(PolicyError::Invalid(
+                "denied_paths must not be empty".into(),
+            ));
         }
         for rule in &self.egress {
             let host = rule.host.strip_prefix("*.").unwrap_or(&rule.host);
             if host.is_empty() || host != host.to_ascii_lowercase() || host.contains('*') {
-                return Err(PolicyError::Invalid(format!("invalid egress host {:?}", rule.host)));
+                return Err(PolicyError::Invalid(format!(
+                    "invalid egress host {:?}",
+                    rule.host
+                )));
             }
         }
         Ok(())

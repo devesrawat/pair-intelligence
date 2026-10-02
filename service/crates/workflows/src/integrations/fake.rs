@@ -39,7 +39,9 @@ pub(crate) fn upsert(id: &str, revision: &str, title: &str) -> SourceChange {
 }
 
 pub(crate) fn deleted(id: &str) -> SourceChange {
-    SourceChange::Deleted { external_id: id.to_string() }
+    SourceChange::Deleted {
+        external_id: id.to_string(),
+    }
 }
 
 #[async_trait]
@@ -57,7 +59,10 @@ impl SourceClient for FakeClient {
             return Err(ClientError::TokenRevoked);
         }
         let idx: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
-        let pages = self.pages.lock().map_err(|_| ClientError::Unavailable("fixture lock poisoned".into()))?;
+        let pages = self
+            .pages
+            .lock()
+            .map_err(|_| ClientError::Unavailable("fixture lock poisoned".into()))?;
         let scope_pages = pages.get(scope).map(Vec::as_slice).unwrap_or_default();
         Ok(ChangeBatch {
             changes: scope_pages.get(idx).cloned().unwrap_or_default(),

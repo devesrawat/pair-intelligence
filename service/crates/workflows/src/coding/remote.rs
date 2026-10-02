@@ -28,16 +28,24 @@ pub struct RemoteAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteOutcome {
-    NeedsApproval { payload_hash: String },
+    NeedsApproval {
+        payload_hash: String,
+    },
     /// Policy allowed it AND an approval id was supplied. The caller must still
     /// consume the approval against `payload_hash` before executing.
-    Authorized { payload_hash: String },
+    Authorized {
+        payload_hash: String,
+    },
 }
 
 impl RemoteAction {
     pub fn payload_hash(&self) -> Result<String> {
-        let bytes = serde_json::to_vec(self).map_err(|e| PairError::new(ErrorCode::Internal, e.to_string()))?;
-        Ok(Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect())
+        let bytes = serde_json::to_vec(self)
+            .map_err(|e| PairError::new(ErrorCode::Internal, e.to_string()))?;
+        Ok(Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect())
     }
 
     fn tool(&self) -> &'static str {
@@ -60,7 +68,10 @@ pub fn request_remote_write(
     let req = ActionRequest {
         tool: action.tool().to_string(),
         executable: None,
-        args: vec![format!("payload_hash={payload_hash}"), action.branch.clone()],
+        args: vec![
+            format!("payload_hash={payload_hash}"),
+            action.branch.clone(),
+        ],
         paths: Vec::new(),
         destination: Some(action.remote.clone()),
         data_class: DataClass::Personal,
@@ -74,9 +85,13 @@ pub fn request_remote_write(
     };
     match policy.authorize(&req, &ctx).decision {
         Decision::Deny { reason } => Err(PairError::new(ErrorCode::PolicyDenied, reason)),
-        Decision::NeedsApproval { payload_hash } => Ok(RemoteOutcome::NeedsApproval { payload_hash }),
+        Decision::NeedsApproval { payload_hash } => {
+            Ok(RemoteOutcome::NeedsApproval { payload_hash })
+        }
         // Defence in depth: an Allow without any approval id is still not enough.
-        Decision::Allow if approvals.is_empty() => Ok(RemoteOutcome::NeedsApproval { payload_hash }),
+        Decision::Allow if approvals.is_empty() => {
+            Ok(RemoteOutcome::NeedsApproval { payload_hash })
+        }
         Decision::Allow => Ok(RemoteOutcome::Authorized { payload_hash }),
     }
 }

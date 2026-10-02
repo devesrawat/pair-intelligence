@@ -44,7 +44,13 @@ pub struct Intent {
 
 impl StepCtx {
     /// Run `exec` at most once per `(run, key)` across crashes and resumes.
-    pub async fn effect<E, EF, R, RF>(&self, key: &str, payload: Value, exec: E, reconcile: R) -> std::result::Result<Value, StepError>
+    pub async fn effect<E, EF, R, RF>(
+        &self,
+        key: &str,
+        payload: Value,
+        exec: E,
+        reconcile: R,
+    ) -> std::result::Result<Value, StepError>
     where
         E: FnOnce() -> EF,
         EF: Future<Output = std::result::Result<Value, EffectError>>,
@@ -78,7 +84,11 @@ impl StepCtx {
             let status: String = row.try_get("status").map_err(db_err)?;
             let stored: Value = row.try_get("payload").map_err(db_err)?;
             if stored != payload {
-                return Err(PairError::new(ErrorCode::Conflict, format!("effect {key} replayed with a different payload")).into());
+                return Err(PairError::new(
+                    ErrorCode::Conflict,
+                    format!("effect {key} replayed with a different payload"),
+                )
+                .into());
             }
             if status == COMPLETED {
                 let result: Option<Value> = row.try_get("result").map_err(db_err)?;
@@ -87,7 +97,13 @@ impl StepCtx {
             // intended or unknown: the effect may have run. Reconcile, never blindly re-execute.
             self.set_status(key, UNKNOWN).await?;
             tracing::warn!(run_id = %run, effect = key, "unresolved intent, reconciling");
-            match reconcile(Intent { run_id: run, key: key.to_owned(), payload }).await? {
+            match reconcile(Intent {
+                run_id: run,
+                key: key.to_owned(),
+                payload,
+            })
+            .await?
+            {
                 Reconciliation::Applied(result) => {
                     self.complete(key, &result).await?;
                     return Ok(result);
@@ -113,7 +129,9 @@ impl StepCtx {
             }
             Err(EffectError::Ambiguous(msg)) => {
                 self.set_status(key, UNKNOWN).await?;
-                Err(StepError::Transient(format!("ambiguous effect {key}: {msg}")))
+                Err(StepError::Transient(format!(
+                    "ambiguous effect {key}: {msg}"
+                )))
             }
         }
     }

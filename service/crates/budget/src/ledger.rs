@@ -19,7 +19,11 @@ pub struct PgBudget {
 
 impl PgBudget {
     pub fn new(pool: PgPool, config: BudgetConfig, prices: PriceBook) -> Self {
-        Self { pool, config, prices }
+        Self {
+            pool,
+            config,
+            prices,
+        }
     }
 
     pub fn config(&self) -> &BudgetConfig {
@@ -29,7 +33,10 @@ impl PgBudget {
 
 pub(crate) fn db_err(context: &str, e: sqlx::Error) -> PairError {
     tracing::error!(error = %e, context, "budget database error");
-    PairError::new(ErrorCode::Internal, format!("budget database error during {context}"))
+    PairError::new(
+        ErrorCode::Internal,
+        format!("budget database error during {context}"),
+    )
 }
 
 #[async_trait]
@@ -38,9 +45,20 @@ impl Budget for PgBudget {
         let price_version = self
             .prices
             .current()
-            .ok_or_else(|| PairError::new(ErrorCode::BudgetUnknownPrice, "no current price version configured"))?
+            .ok_or_else(|| {
+                PairError::new(
+                    ErrorCode::BudgetUnknownPrice,
+                    "no current price version configured",
+                )
+            })?
             .to_owned();
-        self.reserve_with(ReserveRequest::metered(task, max_cost, TaskKind::Default, price_version)).await
+        self.reserve_with(ReserveRequest::metered(
+            task,
+            max_cost,
+            TaskKind::Default,
+            price_version,
+        ))
+        .await
     }
 
     async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {

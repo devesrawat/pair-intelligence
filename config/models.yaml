@@ -1,6 +1,7 @@
 # Provider registry (spec section 5). Loaded by pair-models; endpoints must pass the cloud-only guard.
 # A missing `price` means unknown price: automatic paid execution is disabled for that model.
 # Prices verified 2026-10-03 (docs/provider-billing.md). Micro-USD per million tokens.
+# Entries with id_verified: false have UNCONFIRMED model ids (no network access when authored).
 # Context/output limits are CONSERVATIVE placeholders pending catalog verification (GET /v1/models).
 models:
   - id: claude-opus-5-5
@@ -28,6 +29,9 @@ models:
     data_policy: retention_30d_no_training_unverified
     allowed_data_classes: [public, personal]
     health: healthy
+    # id_verified: false -> id was a guess; generate refuses unless PAIR_ALLOW_UNVERIFIED_MODEL_IDS=1.
+    # Verify with: cargo test -p pair-models --test live_smoke -- --ignored (GET /v1/models), then remove this flag.
+    id_verified: false
 
   - id: claude-haiku-4-5
     provider: anthropic
@@ -41,6 +45,9 @@ models:
     data_policy: retention_30d_no_training_unverified
     allowed_data_classes: [public, personal]
     health: healthy
+    # id_verified: false -> id was a guess; generate refuses unless PAIR_ALLOW_UNVERIFIED_MODEL_IDS=1.
+    # Verify with: cargo test -p pair-models --test live_smoke -- --ignored (GET /v1/models), then remove this flag.
+    id_verified: false
 
   # Ollama Cloud: per-model token prices and ToS for server automation are UNVERIFIED,
   # so price is omitted and paid execution stays disabled until the owner configures it.

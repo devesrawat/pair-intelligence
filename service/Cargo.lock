@@ -1060,6 +1060,7 @@ dependencies = [
  "chrono",
  "http-body-util",
  "pair-core",
+ "pair-models",
  "pair-telemetry",
  "serde",
  "serde_json",

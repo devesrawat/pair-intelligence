@@ -8,6 +8,13 @@ use pair_telemetry::Redactor;
 use std::future::Future;
 use std::time::Duration;
 
+/// Env switch (`1`) that lets calls proceed for entries with `id_verified: false`.
+pub const ALLOW_UNVERIFIED_ENV: &str = "PAIR_ALLOW_UNVERIFIED_MODEL_IDS";
+
+pub(crate) fn allow_unverified_from_env() -> bool {
+    std::env::var(ALLOW_UNVERIFIED_ENV).is_ok_and(|v| v == "1")
+}
+
 /// Max bytes of an upstream error body kept in an error message.
 const ERROR_BODY_LIMIT: usize = 512;
 
@@ -16,6 +23,7 @@ pub(crate) fn vet_request(
     registry: &ProviderRegistry,
     req: &ModelRequest,
     kind: ProviderKind,
+    allow_unverified: bool,
 ) -> Result<ModelEntry> {
     let entry = registry.get(&req.model_id).ok_or_else(|| {
         PairError::new(
@@ -33,6 +41,15 @@ pub(crate) fn vet_request(
         return Err(PairError::new(
             ErrorCode::ProviderUnavailable,
             format!("model {} is disabled", entry.id),
+        ));
+    }
+    if !entry.id_verified && !allow_unverified {
+        return Err(PairError::new(
+            ErrorCode::ProviderUnavailable,
+            format!(
+                "model id {} is unverified against the provider catalog; set {ALLOW_UNVERIFIED_ENV}=1 to override",
+                entry.id
+            ),
         ));
     }
     if !entry.allows(req.data_class) {

@@ -38,6 +38,7 @@ fn entry(id: &str, kind: ProviderKind, base: &str, priced: bool) -> ModelEntry {
         allowed_data_classes: vec![DataClass::Public, DataClass::Personal],
         quota_requests_per_minute: None,
         health: Health::Healthy,
+        id_verified: true,
     }
 }
 
@@ -246,6 +247,47 @@ async fn unknown_price_blocks_paid_execution() {
         .await
         .expect_err("blocked");
     assert_eq!(err.code, ErrorCode::BudgetUnknownPrice);
+}
+
+fn unverified_anthropic(base: &str, allow: bool) -> AnthropicProvider {
+    let mut e = entry(MODEL, ProviderKind::Anthropic, base, true);
+    e.id_verified = false;
+    let reg = ProviderRegistry::from_entries(vec![e]).expect("registry");
+    AnthropicProvider::new(Secret::new(KEY), Arc::new(reg))
+        .expect("provider")
+        .with_allow_unverified_ids(allow)
+}
+
+#[tokio::test]
+async fn unverified_model_id_refused_before_network() {
+    let m = ok_mock().await;
+    let err = unverified_anthropic(&m.base, false)
+        .generate(request(MODEL, 5_000))
+        .await
+        .expect_err("refused");
+    assert_eq!(err.code, ErrorCode::ProviderUnavailable);
+    assert!(err.message.contains("PAIR_ALLOW_UNVERIFIED_MODEL_IDS"));
+    assert!(m.captured.lock().expect("lock").is_empty());
+}
+
+#[tokio::test]
+async fn unverified_model_id_allowed_with_override() {
+    let m = ok_mock().await;
+    let resp = unverified_anthropic(&m.base, true)
+        .generate(request(MODEL, 5_000))
+        .await
+        .expect("allowed");
+    assert_eq!(resp.text, "Hello, world");
+}
+
+#[test]
+fn registry_reports_unverified_ids_and_shipped_config_marks_guesses() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml");
+    let r = ProviderRegistry::load(&path).expect("models.yaml");
+    let ids = r.unverified_ids();
+    assert!(ids.contains(&"claude-sonnet-5-5".to_owned()), "{ids:?}");
+    assert!(ids.contains(&"claude-haiku-4-5".to_owned()), "{ids:?}");
+    assert!(r.get("gemma4:31b").expect("entry").id_verified);
 }
 
 #[tokio::test]

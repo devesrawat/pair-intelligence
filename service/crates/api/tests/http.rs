@@ -168,21 +168,41 @@ async fn readyz_reports_migration_failure_and_pending() {
     db.drop_db().await;
 }
 
-#[tokio::test]
-async fn readyz_queue_backlog_gauge_and_thresholds() {
-    let db = TestDb::create().await;
+const WORKFLOW_RUNS_SQL: &str = include_str!("../../../../migrations/030_jobs.sql");
+
+async fn seed_runs(db: &TestDb, count: i32, state: &str, age: &str) {
     sqlx::query(
-        "CREATE TABLE jobs (state text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())",
+        "INSERT INTO workflow_runs (id, idempotency_key, kind, input, input_hash, run_class, \
+         state, deadline_at, created_at) \
+         SELECT gen_random_uuid(), gen_random_uuid(), 'k', '{}'::jsonb, 'h', 'interactive', \
+         $1, now() + interval '1 hour', now() - $2::interval \
+         FROM generate_series(1, $3)",
     )
+    .bind(state)
+    .bind(age)
+    .bind(count)
     .execute(&db.pool)
     .await
-    .expect("jobs table");
-    let app = app_with(state_for(&db));
+    .expect("seed runs");
+}
 
-    sqlx::query("INSERT INTO jobs (state) SELECT 'queued' FROM generate_series(1, 60)")
+#[tokio::test]
+async fn readyz_queue_backlog_reads_workflow_runs() {
+    let db = TestDb::create().await;
+    sqlx::raw_sql(WORKFLOW_RUNS_SQL)
         .execute(&db.pool)
         .await
-        .expect("seed");
+        .expect("apply 030_jobs.sql");
+    let app = app_with(state_for(&db));
+
+    // Non-queued runs never count.
+    seed_runs(&db, 500, "succeeded", "2 hours").await;
+    let (_, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(body["queue_backlog_depth"], 0);
+    assert_eq!(check(&body, "queue_backlog")["level"], "ok");
+
+    // Depth warn.
+    seed_runs(&db, 60, "queued", "1 second").await;
     let (resp, body) = send(&app, authed("/readyz")).await;
     assert_eq!(
         resp.status(),
@@ -192,10 +212,29 @@ async fn readyz_queue_backlog_gauge_and_thresholds() {
     assert_eq!(body["queue_backlog_depth"], 60);
     assert_eq!(check(&body, "queue_backlog")["level"], "warn");
 
-    sqlx::query("INSERT INTO jobs (state) SELECT 'queued' FROM generate_series(1, 200)")
+    // Depth critical.
+    seed_runs(&db, 200, "queued", "1 second").await;
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(check(&body, "queue_backlog")["level"], "critical");
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn readyz_queue_backlog_age_thresholds() {
+    let db = TestDb::create().await;
+    sqlx::raw_sql(WORKFLOW_RUNS_SQL)
         .execute(&db.pool)
         .await
-        .expect("seed more");
+        .expect("apply 030_jobs.sql");
+    let app = app_with(state_for(&db));
+
+    seed_runs(&db, 1, "queued", "10 minutes").await;
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(check(&body, "queue_backlog")["level"], "warn");
+
+    seed_runs(&db, 1, "queued", "40 minutes").await;
     let (resp, body) = send(&app, authed("/readyz")).await;
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(check(&body, "queue_backlog")["level"], "critical");
@@ -235,6 +274,55 @@ impl ProviderHealth for AllDown {
 async fn readyz_provider_outage_degrades_but_stays_ready() {
     let db = TestDb::create().await;
     let app = app_with(state_for(&db).with_providers(Arc::new(AllDown)));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(check(&body, "providers")["level"], "warn");
+    db.drop_db().await;
+}
+
+const REGISTRY_YAML: &str = r#"
+models:
+  - id: m-a
+    provider: anthropic
+    endpoint: https://api.anthropic.com
+    context_tokens: 200000
+    max_output_tokens: 8192
+    data_policy: p
+    allowed_data_classes: [public]
+  - id: m-o
+    provider: ollama_cloud
+    endpoint: https://ollama.com
+    context_tokens: 128000
+    max_output_tokens: 8192
+    data_policy: p
+    allowed_data_classes: [public]
+"#;
+
+#[tokio::test]
+async fn readyz_unhealthy_registry_entry_degrades_but_stays_ready() {
+    use pair_models::provider::{Health, ProviderRegistry};
+    let db = TestDb::create().await;
+    let healthy = ProviderRegistry::from_yaml_str(REGISTRY_YAML).expect("registry");
+    let app = app_with(state_for(&db).with_providers(Arc::new(healthy.clone())));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(check(&body, "providers")["level"], "ok");
+    assert_eq!(body["providers"].as_array().map(Vec::len), Some(2));
+
+    let degraded = healthy.with_health("m-a", Health::Degraded);
+    let app = app_with(state_for(&db).with_providers(Arc::new(degraded)));
+    let (resp, body) = send(&app, authed("/readyz")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "provider outage must not 503"
+    );
+    assert_eq!(check(&body, "providers")["level"], "warn");
+
+    let disabled = healthy
+        .with_health("m-a", Health::Disabled)
+        .with_health("m-o", Health::Disabled);
+    let app = app_with(state_for(&db).with_providers(Arc::new(disabled)));
     let (resp, body) = send(&app, authed("/readyz")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(check(&body, "providers")["level"], "warn");

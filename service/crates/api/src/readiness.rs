@@ -15,9 +15,9 @@ use crate::state::AppState;
 
 const DB_TIMEOUT: Duration = Duration::from_secs(3);
 const MIGRATIONS_TABLE: &str = "_sqlx_migrations";
-/// Job table owned by crates/jobs; queued rows form the backlog.
-const JOBS_TABLE: &str = "jobs";
-const JOBS_QUEUED_STATE: &str = "queued";
+/// Durable run table (migrations/030_jobs.sql); `queued` rows form the backlog.
+const RUNS_TABLE: &str = "workflow_runs";
+const RUNS_QUEUED_STATE: &str = "queued";
 
 #[derive(Debug, Serialize)]
 pub struct ReadyReport {
@@ -163,7 +163,7 @@ async fn check_backlog(pool: &PgPool) -> (CheckResult, Option<u64>) {
             CheckResult::new(
                 "queue_backlog",
                 HealthLevel::Ok,
-                "jobs table not present yet",
+                "workflow_runs table not present yet",
             ),
             Some(0),
         ),
@@ -177,17 +177,17 @@ async fn check_backlog(pool: &PgPool) -> (CheckResult, Option<u64>) {
     }
 }
 
-/// `(queued depth, age in seconds of oldest queued job)`; `None` if no jobs table.
+/// `(queued depth, age in seconds of oldest queued run)`; `None` if no workflow_runs table.
 async fn read_backlog(pool: &PgPool) -> Result<Option<(u64, u64)>, sqlx::Error> {
-    if !table_exists(pool, JOBS_TABLE).await? {
+    if !table_exists(pool, RUNS_TABLE).await? {
         return Ok(None);
     }
     let (depth, age) = sqlx::query_as::<_, (i64, i64)>(&format!(
         "SELECT count(*)::bigint, \
          COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at))), 0)::bigint \
-         FROM {JOBS_TABLE} WHERE state = $1"
+         FROM {RUNS_TABLE} WHERE state = $1"
     ))
-    .bind(JOBS_QUEUED_STATE)
+    .bind(RUNS_QUEUED_STATE)
     .fetch_one(pool)
     .await?;
     Ok(Some((depth.max(0) as u64, age.max(0) as u64)))

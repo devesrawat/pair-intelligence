@@ -6,6 +6,7 @@ use pair_core::error::{ErrorCode, PairError};
 
 pub const MIN_TOKEN_LEN: usize = 16;
 pub const DEFAULT_BIND: &str = "127.0.0.1:8080";
+pub const DEFAULT_MODELS_CONFIG: &str = "config/models.yaml";
 pub const DEFAULT_DATABASE_URL: &str = "postgres://pair:pair@127.0.0.1:55432/pair";
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,7 @@ pub struct Config {
     pub service_token: String,
     pub migrations_dir: PathBuf,
     pub data_dir: PathBuf,
+    pub models_config: PathBuf,
 }
 
 impl Config {
@@ -39,6 +41,8 @@ impl Config {
             migrations_dir: get("PAIR_MIGRATIONS_DIR")
                 .map_or_else(|| PathBuf::from("migrations"), PathBuf::from),
             data_dir: get("PAIR_DATA_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from),
+            models_config: get("PAIR_MODELS_CONFIG")
+                .map_or_else(|| PathBuf::from(DEFAULT_MODELS_CONFIG), PathBuf::from),
         })
     }
 

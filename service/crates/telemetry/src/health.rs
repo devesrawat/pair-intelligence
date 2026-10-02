@@ -14,7 +14,7 @@ pub const DISK_WARN_FREE_PERCENT: f64 = 15.0;
 pub const DISK_CRITICAL_FREE_PERCENT: f64 = 5.0;
 pub const DISK_CRITICAL_FREE_BYTES: u64 = 2 * BYTES_PER_GIB;
 
-/// Queue: warn at 50 queued jobs or 5 min oldest age; critical at 200 or 30 min.
+/// Queue (`workflow_runs` rows in state `queued`): warn at 50 queued runs or 5 min oldest age; critical at 200 or 30 min.
 pub const BACKLOG_WARN_DEPTH: u64 = 50;
 pub const BACKLOG_CRITICAL_DEPTH: u64 = 200;
 pub const BACKLOG_WARN_OLDEST_SECS: u64 = 300;
@@ -120,7 +120,7 @@ pub fn statfs_via_df(path: &Path) -> io::Result<DiskStats> {
     parse_df_output(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Classify queue backlog by depth and age of the oldest queued job.
+/// Classify queue backlog by depth and age of the oldest queued run.
 pub fn evaluate_backlog(depth: u64, oldest_age_secs: u64) -> CheckResult {
     let level =
         if depth >= BACKLOG_CRITICAL_DEPTH || oldest_age_secs >= BACKLOG_CRITICAL_OLDEST_SECS {

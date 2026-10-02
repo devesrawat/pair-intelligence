@@ -1,0 +1,38 @@
+# Isolated tool-execution worker. Standalone file: it does not join the shared dev stack in deploy/compose.yaml.
+# Run: docker compose -f deploy/worker/compose.worker.yaml run --rm worker <command>
+name: pair-worker
+
+services:
+  worker:
+    image: ${PAIR_WORKER_IMAGE:?set an immutable worker image tag}
+    user: "10001:10001"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.0
+    ulimits:
+      nofile: { soft: 1024, hard: 2048 }
+      nproc: 256
+      fsize: 1073741824
+    stop_grace_period: 10s
+    working_dir: /workspace
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    volumes:
+      - workspace:/workspace:rw
+    # Explicit and minimal. No env_file, no variable pass-through, no cloud credentials.
+    # Task-scoped credentials are injected by the runtime per call, never set here.
+    environment:
+      HOME: /workspace/.home
+      PAIR_WORKSPACE_ROOT: /workspace
+    healthcheck:
+      disable: true
+
+volumes:
+  workspace:
+    name: pair-worker-workspace-${PAIR_TASK_ID:?set PAIR_TASK_ID}

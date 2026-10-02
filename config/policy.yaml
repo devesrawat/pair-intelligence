@@ -1,0 +1,40 @@
+{
+  "version": "2026-10-03.1",
+  "tools": {
+    "fs.read": "read",
+    "fs.search": "read",
+    "fs.write": "local_edit",
+    "fs.edit": "local_edit",
+    "shell.exec": "local_edit",
+    "git.commit": "local_commit",
+    "message.send": "external_write",
+    "git.push": "external_write",
+    "pr.create": "external_write",
+    "calendar.modify_event": "external_write",
+    "pr.merge": "high_risk",
+    "deploy.run": "high_risk",
+    "fs.delete_recursive": "high_risk",
+    "payment.send": "high_risk"
+  },
+  "executables_allow": ["git", "cargo", "rustc", "python3", "uv", "node", "npm", "pnpm", "ls", "cat", "grep", "rg", "sed", "make"],
+  "denied_paths": [
+    "~/.ssh",
+    "~/.aws",
+    "~/.azure",
+    "~/.config/gcloud",
+    "~/.kube",
+    "~/.gnupg",
+    "~/.docker",
+    "~/.netrc",
+    "/var/run/docker.sock",
+    "/run/docker.sock"
+  ],
+  "egress": [
+    { "host": "api.github.com", "data_classes": ["public", "personal"] },
+    { "host": "github.com", "data_classes": ["public", "personal"] },
+    { "host": "static.crates.io", "data_classes": ["public"] },
+    { "host": "index.crates.io", "data_classes": ["public"] },
+    { "host": "pypi.org", "data_classes": ["public"] },
+    { "host": "files.pythonhosted.org", "data_classes": ["public"] }
+  ]
+}

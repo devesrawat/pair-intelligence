@@ -1,0 +1,13 @@
+{"ts":"2026-10-02T20:36:54.777Z","hook":"before_model_resolve","promptPreview":"hello SCENARIO:plain","providerOverride":"mock","modelOverride":"mock-routed"}
+{"ts":"2026-10-02T20:36:56.149Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:36:56.173Z","hook":"llm_output","provider":"mock","model":"mock-routed","usage":{"input":11,"output":7,"cacheRead":0,"cacheWrite":0,"total":18,"cost":{"total":0}}}
+{"ts":"2026-10-02T20:36:57.064Z","hook":"before_model_resolve","promptPreview":"do it SCENARIO:deny","providerOverride":"mock","modelOverride":"mock-routed"}
+{"ts":"2026-10-02T20:36:57.171Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:36:57.200Z","hook":"before_tool_call","toolName":"exec","params":{"command":"rm -rf /tmp/pair-spike-denied"},"decision":"deny"}
+{"ts":"2026-10-02T20:36:57.225Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:36:57.241Z","hook":"llm_output","provider":"mock","model":"mock-routed","usage":{"input":22,"output":14,"cacheRead":0,"cacheWrite":0,"total":36,"cost":{"total":0}}}
+{"ts":"2026-10-02T20:36:58.074Z","hook":"before_model_resolve","promptPreview":"do it SCENARIO:approve","providerOverride":"mock","modelOverride":"mock-routed"}
+{"ts":"2026-10-02T20:36:58.168Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:36:58.178Z","hook":"before_tool_call","toolName":"exec","params":{"command":"curl http://127.0.0.1:1/never"},"decision":"approve"}
+{"ts":"2026-10-02T20:36:58.226Z","hook":"model_call_ended","provider":"mock","model":"mock-routed","outcome":"completed"}
+{"ts":"2026-10-02T20:36:58.243Z","hook":"llm_output","provider":"mock","model":"mock-routed","usage":{"input":22,"output":14,"cacheRead":0,"cacheWrite":0,"total":36,"cost":{"total":0}}}

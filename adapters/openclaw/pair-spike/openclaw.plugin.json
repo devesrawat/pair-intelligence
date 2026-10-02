@@ -1,0 +1,18 @@
+{
+  "id": "pair-spike",
+  "name": "PAIR Spike",
+  "description": "Task 1 spike: tool gate, model override, usage capture",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "usageLogPath": { "type": "string" },
+      "hookLogPath": { "type": "string" },
+      "overrideProvider": { "type": "string" },
+      "overrideModel": { "type": "string" },
+      "injectPolicyError": { "type": "boolean" }
+    },
+    "required": ["usageLogPath", "hookLogPath", "overrideProvider", "overrideModel"]
+  }
+}

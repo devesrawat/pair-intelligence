@@ -1,0 +1,4 @@
+{"ts":"2026-10-02T20:33:38.139Z","hook":"model_call_ended","provider":"mock","model":"mock-small","outcome":"completed"}
+{"ts":"2026-10-02T20:33:38.174Z","hook":"before_tool_call","toolName":"exec","params":{"command":"rm -rf /tmp/pair-spike-denied"},"decision":"deny"}
+{"ts":"2026-10-02T20:33:38.208Z","hook":"model_call_ended","provider":"mock","model":"mock-small","outcome":"completed"}
+{"ts":"2026-10-02T20:33:39.392Z","hook":"model_call_ended","provider":"mock","model":"mock-small","outcome":"completed"}

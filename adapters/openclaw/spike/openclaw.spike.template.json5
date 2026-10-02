@@ -1,0 +1,47 @@
+// Sanitized spike config. Placeholders: __SPIKE_DIR__, __PLUGIN_DIR__, __GATEWAY_TOKEN__, __CONV_ACCESS__ (true|false).
+{
+  gateway: {
+    mode: "local",
+    bind: "loopback",
+    port: 18911,
+    auth: { mode: "token", token: "__GATEWAY_TOKEN__" },
+  },
+  plugins: {
+    // Local inference providers disabled (deny wins).
+    deny: ["ollama", "lmstudio", "vllm", "sglang", "llama-cpp"],
+    load: { paths: ["__PLUGIN_DIR__"] },
+    entries: {
+      "pair-spike": {
+        enabled: true,
+        hooks: { allowConversationAccess: __CONV_ACCESS__ },
+        config: {
+          usageLogPath: "__SPIKE_DIR__/out/usage.jsonl",
+          hookLogPath: "__SPIKE_DIR__/out/hooks.jsonl",
+          overrideProvider: "mock",
+          overrideModel: "mock-routed",
+          injectPolicyError: __INJECT_ERR__,
+        },
+      },
+    },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      mock: {
+        baseUrl: "http://127.0.0.1:18901/v1",
+        apiKey: "mock-key-not-a-secret",
+        api: "openai-completions",
+        models: [
+          { id: "mock-small", name: "Mock Small", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 2048 },
+          { id: "mock-routed", name: "Mock Routed", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 2048 },
+        ],
+      },
+    },
+  },
+  agents: {
+    defaults: {
+      model: { primary: "mock/mock-small" },
+      workspace: "__SPIKE_DIR__/workspace",
+    },
+  },
+}

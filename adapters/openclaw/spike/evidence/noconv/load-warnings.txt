@@ -1,0 +1,2 @@
+2026-10-03T02:02:48.125+05:30 [gateway] [plugins] typed hook "before_model_resolve" blocked because non-bundled plugins must set plugins.entries.pair-spike.hooks.allowConversationAccess=true (plugin=pair-spike, source=<repo>/adapters/openclaw/pair-spike/dist/index.js)
+2026-10-03T02:02:48.126+05:30 [gateway] [plugins] typed hook "llm_output" blocked because non-bundled plugins must set plugins.entries.pair-spike.hooks.allowConversationAccess=true (plugin=pair-spike, source=<repo>/adapters/openclaw/pair-spike/dist/index.js)

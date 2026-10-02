@@ -1,0 +1,14 @@
+{
+  "name": "@pair/openclaw-pair-spike",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "openclaw": {
+    "extensions": ["./src/index.ts"],
+    "runtimeExtensions": ["./dist/index.js"],
+    "compat": { "pluginApi": ">=2026.9.7" }
+  }
+}

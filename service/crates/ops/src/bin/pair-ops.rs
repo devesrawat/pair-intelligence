@@ -48,6 +48,57 @@ async fn stuck_report(
     Ok(Outcome { text, exit })
 }
 
+fn purge_text(report: &retention::PurgeReport) -> String {
+    let mut out = format!(
+        "purge {}: {} rows{}\n",
+        if report.dry_run { "dry run" } else { "done" },
+        report.total(),
+        if report.truncated {
+            " (batch limit hit; run again)"
+        } else {
+            ""
+        },
+    );
+    for t in &report.targets {
+        out.push_str(&format!("  {}: {}\n", t.target, t.erased));
+    }
+    for s in &report.skipped {
+        out.push_str(&format!(
+            "  {s}: skipped (nothing to erase in this schema)\n"
+        ));
+    }
+    out
+}
+
+fn export_text(out_dir: &std::path::Path, manifest: &export::Manifest) -> String {
+    let mut out = format!("export written to {}\n", out_dir.display());
+    for f in &manifest.files {
+        out.push_str(&format!(
+            "  {} rows={} sha256={}\n",
+            f.name, f.rows, f.sha256
+        ));
+    }
+    out
+}
+
+async fn execute(pool: &sqlx::PgPool, command: Command) -> Result<Outcome, OpsError> {
+    match command {
+        Command::Purge(policy) => {
+            let report = retention::purge(pool, chrono::Utc::now(), &policy).await?;
+            Ok(Outcome::ok(purge_text(&report)))
+        }
+        Command::Export {
+            out_dir,
+            include_config,
+        } => {
+            let manifest = export::export_all(pool, &out_dir, include_config).await?;
+            Ok(Outcome::ok(export_text(&out_dir, &manifest)))
+        }
+        Command::AuditStuck { older_than } => stuck_report(pool, older_than).await,
+        Command::Help => Ok(Outcome::ok(USAGE.to_owned())),
+    }
+}
+
 async fn run(command: Command) -> Result<Outcome, OpsError> {
     if command == Command::Help {
         return Ok(Outcome::ok(USAGE.to_owned()));
@@ -58,52 +109,9 @@ async fn run(command: Command) -> Result<Outcome, OpsError> {
         .max_connections(MAX_CONNECTIONS)
         .connect(&url)
         .await?;
-    let text = match command {
-        Command::Purge(policy) => {
-            let report = retention::purge(&pool, chrono::Utc::now(), &policy).await?;
-            let mut out = format!(
-                "purge {}: {} rows{}\n",
-                if report.dry_run { "dry run" } else { "done" },
-                report.total(),
-                if report.truncated {
-                    " (batch limit hit; run again)"
-                } else {
-                    ""
-                },
-            );
-            for t in &report.targets {
-                out.push_str(&format!("  {}: {}\n", t.target, t.erased));
-            }
-            for s in &report.skipped {
-                out.push_str(&format!(
-                    "  {s}: skipped (nothing to erase in this schema)\n"
-                ));
-            }
-            out
-        }
-        Command::Export {
-            out_dir,
-            include_config,
-        } => {
-            let manifest = export::export_all(&pool, &out_dir, include_config).await?;
-            let mut out = format!("export written to {}\n", out_dir.display());
-            for f in &manifest.files {
-                out.push_str(&format!(
-                    "  {} rows={} sha256={}\n",
-                    f.name, f.rows, f.sha256
-                ));
-            }
-            out
-        }
-        Command::AuditStuck { older_than } => {
-            let outcome = stuck_report(&pool, older_than).await;
-            pool.close().await;
-            return outcome;
-        }
-        Command::Help => USAGE.to_owned(),
-    };
+    let outcome = execute(&pool, command).await;
     pool.close().await;
-    Ok(Outcome::ok(text))
+    outcome
 }
 
 #[tokio::main]

@@ -331,38 +331,17 @@ async fn run_target(
     policy: &RetentionPolicy,
     report: &mut PurgeReport,
 ) -> Result<()> {
-    let mut erased: u64 = 0;
-    if policy.dry_run {
-        let n: i64 = sqlx::query_scalar(&sql.count)
-            .bind(cutoff)
-            .fetch_one(pool)
-            .await?;
-        erased = u64::try_from(n).unwrap_or(0);
+    let erased = if policy.dry_run {
+        u64::try_from(remaining(pool, sql, cutoff).await?).unwrap_or(0)
     } else {
-        let batch = u64::try_from(policy.batch_size).unwrap_or(1);
-        for _ in 0..policy.max_batches_per_target {
-            let done = sqlx::query(&sql.update)
-                .bind(cutoff)
-                .bind(now)
-                .bind(policy.batch_size)
-                .execute(pool)
-                .await?
-                .rows_affected();
-            erased += done;
-            if done < batch {
-                break;
-            }
-        }
+        let erased = erase_in_batches(pool, sql, cutoff, now, policy).await?;
         // `FOR UPDATE SKIP LOCKED` can return fewer rows than the batch while locked rows remain,
         // and a run that exactly covers the work is not truncated: ask what is actually left.
-        let remaining: i64 = sqlx::query_scalar(&sql.count)
-            .bind(cutoff)
-            .fetch_one(pool)
-            .await?;
-        if remaining > 0 {
+        if remaining(pool, sql, cutoff).await? > 0 {
             report.truncated = true;
         }
-    }
+        erased
+    };
     tracing::info!(
         target = name,
         erased,
@@ -374,6 +353,38 @@ async fn run_target(
         erased,
     });
     Ok(())
+}
+
+async fn remaining(pool: &PgPool, sql: &Statements, cutoff: DateTime<Utc>) -> Result<i64> {
+    Ok(sqlx::query_scalar(&sql.count)
+        .bind(cutoff)
+        .fetch_one(pool)
+        .await?)
+}
+
+async fn erase_in_batches(
+    pool: &PgPool,
+    sql: &Statements,
+    cutoff: DateTime<Utc>,
+    now: DateTime<Utc>,
+    policy: &RetentionPolicy,
+) -> Result<u64> {
+    let batch = u64::try_from(policy.batch_size).unwrap_or(1);
+    let mut erased: u64 = 0;
+    for _ in 0..policy.max_batches_per_target {
+        let done = sqlx::query(&sql.update)
+            .bind(cutoff)
+            .bind(now)
+            .bind(policy.batch_size)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        erased += done;
+        if done < batch {
+            break;
+        }
+    }
+    Ok(erased)
 }
 
 #[cfg(test)]

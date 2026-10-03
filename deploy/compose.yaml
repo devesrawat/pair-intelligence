@@ -33,6 +33,11 @@ services:
       PAIR_MIGRATIONS_DIR: /app/migrations
       PAIR_MODELS_CONFIG: /app/config/models.yaml
       PAIR_DATA_DIR: /var/lib/pair
+      # Optional: provider and approver credentials. Empty means unset (see config/api.yaml).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      PAIR_APPROVER_TOKEN: ${PAIR_APPROVER_TOKEN:-}
       RUST_LOG: info
     ports: ["127.0.0.1:8080:8080"]
     volumes:

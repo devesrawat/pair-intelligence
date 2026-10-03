@@ -1,16 +1,24 @@
 //! pair-api: HTTP surface. `/healthz` is open; everything else needs the service
 //! token and an `X-Actor`. Every response carries `X-Trace-Id`.
 
+pub mod attempts;
 pub mod auth;
+pub mod background;
+pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod healthcheck;
+pub mod json;
 pub mod limits;
 pub mod providers;
 pub mod readiness;
+pub mod routes;
+pub mod services;
 pub mod shutdown;
 pub mod state;
 pub mod trace;
+pub mod turn;
+pub mod wiring;
 
 use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::StatusCode;
@@ -32,6 +40,7 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/readyz", get(readyz))
         .route("/v1/whoami", get(whoami))
+        .merge(routes::router())
         .route_layer(from_fn_with_state(state.clone(), require_auth))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
     // `/healthz` stays outside the limits: the container healthcheck must not be shed under load.

@@ -39,7 +39,9 @@ smoke() {
   pg_psql postgres -c "CREATE DATABASE \"$scratch\"" >/dev/null
   DATABASE_URL="${DATABASE_URL%/*}/$scratch" PAIR_SERVICE_TOKEN="$token" PAIR_BIND="127.0.0.1:${port}" \
     PAIR_MIGRATIONS_DIR="$ROOT/migrations" PAIR_DATA_DIR="$ROOT" PAIR_MODELS_CONFIG="$ROOT/config/models.yaml" \
-    ./target/debug/pair-api >"$log" 2>&1 &
+    PAIR_BUDGET_CONFIG="$ROOT/config/budget.yaml" PAIR_POLICY_CONFIG="$ROOT/config/policy.yaml" \
+    PAIR_CONTEXT_CONFIG="$ROOT/config/context.yaml" PAIR_WORKSPACE_ROOT="$ROOT" \
+    "${CARGO_TARGET_DIR:-./target}/debug/pair-api" >"$log" 2>&1 &
   pid=$!
   trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$log"; pg_psql postgres -c "DROP DATABASE IF EXISTS \"$scratch\" WITH (FORCE)" >/dev/null 2>&1 || true' EXIT
   local i
@@ -75,6 +77,19 @@ sys.exit(0 if bad==["disk"] else 1)'; then
   expect_code 401 "readyz with wrong token rejected" -H "Authorization: Bearer wrong-wrong-wrong-wrong" -H "X-Actor: smoke" "$base/readyz"
   expect_code 401 "readyz without X-Actor rejected" -H "Authorization: Bearer $token" "$base/readyz"
   readyz_authenticated
+  # The hosted services: the routes exist in THIS binary, the data-class gate refuses before any
+  # network or database work, and the policy engine and background tasks are live.
+  expect_code 401 "turn without auth rejected" -X POST "$base/v1/turn"
+  expect_code 403 "turn with employer data refused" -X POST -H "Authorization: Bearer $token" -H "X-Actor: smoke" \
+    -H "Content-Type: application/json" -d '{"message":"payroll","data_class":"employer"}' "$base/v1/turn"
+  local auth_body
+  auth_body="$(curl -s -X POST -H "Authorization: Bearer $token" -H "X-Actor: smoke" -H "Content-Type: application/json" \
+    -d '{"tool":"fs.read","args":[],"paths":[],"data_class":"public","policy_version":"stale"}' "$base/v1/policy/authorize")"
+  printf '%s' "$auth_body" | grep -q '"decision":"deny"' || { echo "smoke FAIL: policy/authorize did not deny a stale version: $auth_body" >&2; cat "$log" >&2; return 1; }
+  echo "smoke ok: policy engine hosted (stale policy version denied)"
+  curl -s -H "Authorization: Bearer $token" -H "X-Actor: smoke" "$base/readyz" | grep -q '"name":"background"' \
+    || { echo "smoke FAIL: readyz does not report background liveness" >&2; return 1; }
+  echo "smoke ok: background liveness reported by readyz"
   local echoed trace_id="0199c0de-1234-7abc-8def-0123456789ab"
   echoed="$(curl -s -D - -o /dev/null -H "X-Trace-Id: $trace_id" "$base/healthz" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-trace-id"{print $2}')"
   [ "$echoed" = "$trace_id" ] || { echo "smoke FAIL: UUID trace id not echoed ($echoed)" >&2; return 1; }

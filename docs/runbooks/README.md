@@ -15,4 +15,4 @@ Alert thresholds: `config/alerts.yaml`. Health endpoint: `GET /readyz` (needs `A
 
 Conventions: commands run from the repo root on the host. `DB` below means the PAIR database; the compose Postgres container is `deploy-postgres-1` in the dev stack. Procedures marked **unverified** have not been exercised on the real host.
 
-Readiness levels: `ok`, `warn` (alert, still ready), `critical` (alert, `/readyz` returns 503). Provider outage is the only condition that is deliberately warn-only.
+Readiness levels: `ok`, `warn` (alert, still ready), `critical` (alert, `/readyz` returns 503). Provider outage and a stalled background task (`background` check: lease sweeper, orphan reconciler, jobs worker) are deliberately warn-only; `services` is critical when the budget/policy/routing configuration did not load.

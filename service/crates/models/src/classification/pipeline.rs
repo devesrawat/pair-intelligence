@@ -167,8 +167,18 @@ impl RoutingPipeline {
                 Ok((Some(c), "classifier ok".into(), Some(actual)))
             }
             Err(e) => {
-                // Unknown charge: the reservation stays unresolved (spec 6: never assume zero cost).
+                // Unknown charge: record it as unresolved so the full reservation stays counted AND
+                // visible to the unresolved-reservation alert (spec 6: never assume zero cost).
                 tracing::warn!(code = ?e.code, reservation = %reservation, "classifier failed; using baseline");
+                let unknown = UsageReport {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    actual_cost: None,
+                    price_version: price.version.clone(),
+                };
+                if let Err(re) = budget.reconcile(reservation, unknown).await {
+                    tracing::error!(error = %re, "could not mark the classifier reservation unresolved");
+                }
                 Ok((
                     None,
                     format!("classifier failed ({:?}); baseline used", e.code),
@@ -505,10 +515,13 @@ mod tests {
             .await
             .expect("route");
         assert_eq!(budget.reserved.lock().expect("lock").len(), 1);
-        assert!(
-            budget.reconciled.lock().expect("lock").is_empty(),
-            "never assume zero cost"
+        let reconciled = budget.reconciled.lock().expect("lock");
+        assert_eq!(
+            reconciled.len(),
+            1,
+            "the failed call is recorded, not dropped"
         );
+        assert_eq!(reconciled[0].actual_cost, None, "never assume zero cost");
     }
 
     #[tokio::test]

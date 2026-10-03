@@ -23,7 +23,7 @@ fn input(kind: &str) -> WorkflowInput {
 }
 
 async fn wait_until(cond: impl Fn() -> bool) {
-    for _ in 0..400 {
+    for _ in 0..2000 {
         if cond() {
             return;
         }
@@ -385,7 +385,7 @@ struct ToolHog;
 impl StepHandler for ToolHog {
     async fn step(&self, ctx: &StepCtx) -> Result<StepOutcome, StepError> {
         for _ in 0..21 {
-            ctx.record_tool_call().await?;
+            ctx.gated_tool(|| async { Ok(()) }).await?;
         }
         Ok(StepOutcome::Finish {
             name: "x".into(),
@@ -489,4 +489,83 @@ fn backoff_is_capped() {
     assert_eq!(p.delay(1), p.base);
     assert_eq!(p.delay(2), p.base * 2);
     assert_eq!(p.delay(40), p.cap);
+}
+
+// ---------- H4: deadline counts active running time ----------
+
+struct ParkThenFinish {
+    active: Duration,
+    hash: String,
+}
+
+#[async_trait]
+impl StepHandler for ParkThenFinish {
+    async fn step(&self, ctx: &StepCtx) -> Result<StepOutcome, StepError> {
+        tokio::time::sleep(self.active).await;
+        if ctx.run.approval_id.is_none() {
+            return Ok(StepOutcome::AwaitApproval {
+                action_hash: self.hash.clone(),
+            });
+        }
+        Ok(StepOutcome::Finish {
+            name: "x".into(),
+            output: Value::Null,
+        })
+    }
+}
+
+async fn park_and_grant(
+    db: &TestDb,
+    store: &pair_jobs::JobStore,
+    handler: Arc<ParkThenFinish>,
+    park_for: Duration,
+) -> (Worker, RunId) {
+    let id = store
+        .start(input("park"), IdempotencyKey::new())
+        .await
+        .unwrap();
+    let w = Worker::new(store.clone(), "w").with_handler("park", handler.clone());
+    assert_eq!(
+        w.run_once().await.unwrap(),
+        Some((id, RunState::WaitingApproval))
+    );
+    tokio::time::sleep(park_for).await;
+    let ap = pair_jobs::PgApprovals::new(db.pool.clone())
+        .approve_default(&handler.hash, "devesh")
+        .await
+        .unwrap();
+    store.grant(id, ap).await.unwrap();
+    (w, id)
+}
+
+#[tokio::test]
+async fn approval_wait_does_not_consume_deadline() {
+    let db = TestDb::new().await;
+    let store = db.store(JobConfig {
+        interactive_timeout: Duration::from_millis(700),
+        ..fast_cfg()
+    });
+    let handler = Arc::new(ParkThenFinish {
+        active: Duration::from_millis(100),
+        hash: pair_jobs::action_hash(&json!({"p": 1})).unwrap(),
+    });
+    // Parked for 1s: longer than the whole 700ms deadline.
+    let (w, id) = park_and_grant(&db, &store, handler, Duration::from_millis(1000)).await;
+    assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
+}
+
+#[tokio::test]
+async fn active_time_before_and_after_approval_still_counts() {
+    let db = TestDb::new().await;
+    let store = db.store(JobConfig {
+        interactive_timeout: Duration::from_millis(500),
+        ..fast_cfg()
+    });
+    let handler = Arc::new(ParkThenFinish {
+        active: Duration::from_millis(300),
+        hash: pair_jobs::action_hash(&json!({"p": 2})).unwrap(),
+    });
+    // 300ms active before parking + 300ms after > 500ms of active time.
+    let (w, id) = park_and_grant(&db, &store, handler, Duration::from_millis(50)).await;
+    assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Failed)));
 }

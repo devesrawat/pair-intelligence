@@ -1,4 +1,6 @@
-use crate::error::{is_lease_lost, StepError};
+use crate::error::{is_lease_lost, lease_lost, StepError};
+use crate::lease::{Lease, LeaseKeeper};
+use crate::orphans::UNRECONCILED_EFFECT;
 use crate::records::RunRecord;
 use crate::step::{StepCtx, StepHandler, StepOutcome};
 use crate::store::JobStore;
@@ -13,8 +15,12 @@ use std::time::Duration;
 const DEADLINE_FAILURE: &str = "deadline_exceeded";
 
 /// Claims runs under a lease and drives them step by step, checkpointing after each step.
-/// Dropping a worker mid-run leaves the lease to expire; `JobStore::sweep_expired` then marks the
-/// run interrupted and `resume` makes it claimable again.
+///
+/// While a run is driven, a background task renews the lease every `ttl / 3`; if the lease is lost
+/// (expired, stolen, run cancelled) the in-flight step future is dropped and the run abandoned,
+/// so a slow step can neither lose its lease silently nor keep acting after it. Dropping a worker
+/// mid-run leaves the lease to expire; `JobStore::sweep_expired` then marks the run interrupted
+/// and `resume` makes it claimable again.
 pub struct Worker {
     store: JobStore,
     id: String,
@@ -41,7 +47,7 @@ impl Worker {
             return Ok(None);
         };
         let id = run.id;
-        tracing::info!(run_id = %id, worker = %self.id, kind = %run.kind, "run claimed");
+        tracing::info!(run_id = %id, worker = %self.id, kind = %run.kind, epoch = run.lease_epoch, "run claimed");
         let state = match self.drive(run).await {
             Ok(state) => state,
             Err(e) if is_lease_lost(&e) => {
@@ -54,48 +60,60 @@ impl Worker {
     }
 
     async fn drive(&self, mut run: RunRecord) -> Result<RunState> {
+        let lease = Lease {
+            owner: self.id.clone(),
+            epoch: run.lease_epoch,
+        };
         let Some(handler) = self.handlers.get(&run.kind).cloned() else {
             return self
-                .fail(&run, &format!("no handler for kind {}", run.kind))
+                .fail(&run, &lease, &format!("no handler for kind {}", run.kind))
                 .await;
         };
+        let keeper = LeaseKeeper::start(self.store.clone(), run.id, lease.clone());
         loop {
             let now = Utc::now();
             if now >= run.deadline_at {
-                return self.fail(&run, DEADLINE_FAILURE).await;
+                return self.fail(&run, &lease, DEADLINE_FAILURE).await;
             }
-            self.store.heartbeat(run.id, &self.id).await?;
+            self.store.heartbeat(run.id, &lease).await?;
             let completed = self.store.steps(run.id).await?;
-            let ctx = StepCtx::new(run.clone(), completed, self.store.clone());
+            let ctx = StepCtx::new(run.clone(), completed, self.store.clone(), lease.clone());
             let remaining = (run.deadline_at - now).to_std().unwrap_or(Duration::ZERO);
-            let outcome =
-                match tokio::time::timeout(remaining, self.step_with_retry(handler.as_ref(), &ctx))
-                    .await
-                {
-                    Err(_elapsed) => return self.fail(&run, DEADLINE_FAILURE).await,
-                    Ok(Err(e)) => return self.fail(&run, &e.to_string()).await,
-                    Ok(Ok(outcome)) => outcome,
-                };
+            let attempt =
+                tokio::time::timeout(remaining, self.step_with_retry(handler.as_ref(), &ctx));
+            let result = tokio::select! {
+                biased;
+                () = keeper.lost() => return Err(lease_lost()),
+                r = attempt => r,
+            };
+            let outcome = match result {
+                Err(_elapsed) => return self.fail(&run, &lease, DEADLINE_FAILURE).await,
+                Ok(Err(StepError::Fatal(e))) if is_lease_lost(&e) => return Err(e),
+                Ok(Err(e)) => return self.fail(&run, &lease, &e.to_string()).await,
+                Ok(Ok(outcome)) => outcome,
+            };
             match outcome {
                 StepOutcome::Next { name, output } => {
                     self.store
-                        .checkpoint(run.id, &self.id, ctx.index, &name, &output, None)
+                        .checkpoint(run.id, &lease, ctx.index, &name, &output, None)
                         .await?;
                     run = RunRecord {
                         next_step: ctx.index + 1,
+                        approval_id: None,
+                        pending_action_hash: None,
                         ..run
                     };
                 }
                 StepOutcome::Finish { name, output } => {
                     self.store
-                        .checkpoint(run.id, &self.id, ctx.index, &name, &output, Some(&output))
+                        .checkpoint(run.id, &lease, ctx.index, &name, &output, Some(&output))
                         .await?;
                     return Ok(RunState::Succeeded);
                 }
                 StepOutcome::AwaitApproval { action_hash } => {
                     let to = RunState::WaitingApproval;
                     self.store
-                        .release(run.id, &self.id, to, None, Some(&action_hash))
+                        .release(run.id, &lease, to, None, Some(&action_hash))
                         .await?;
                     return Ok(to);
                 }
@@ -124,10 +142,18 @@ impl Worker {
         }
     }
 
-    async fn fail(&self, run: &RunRecord, reason: &str) -> Result<RunState> {
-        tracing::error!(run_id = %run.id, reason, "run failed");
+    /// Fail the run. If an effect intent is still unresolved (the step was cut off mid-effect) the
+    /// failure is prefixed `unreconciled_effect` so it cannot be mistaken for a clean failure;
+    /// `JobStore::reconcile_orphaned_intents` settles such intents.
+    async fn fail(&self, run: &RunRecord, lease: &Lease, reason: &str) -> Result<RunState> {
+        let reason = if self.store.has_unresolved_intents(run.id).await? {
+            format!("{UNRECONCILED_EFFECT}: {reason}")
+        } else {
+            reason.to_owned()
+        };
+        tracing::error!(run_id = %run.id, reason = %reason, "run failed");
         self.store
-            .release(run.id, &self.id, RunState::Failed, Some(reason), None)
+            .release(run.id, lease, RunState::Failed, Some(&reason), None)
             .await?;
         Ok(RunState::Failed)
     }

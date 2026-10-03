@@ -5,10 +5,12 @@ use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{ReservationId, TaskId};
 use pair_core::money::Micros;
-use pair_core::types::{BudgetCategory, ReserveRequest};
+use pair_core::types::{BudgetCategory, ReserveRequest, TaskKind};
 
-/// Single global lock key serializing all reservations (single-owner system).
-const RESERVE_LOCK_KEY: i64 = 0x5041_4952_4255_4447; // "PAIRBUDG"
+/// Single global lock key serializing all reservations AND reconciliations (single-owner system).
+/// Both take it, so a settlement that raises a reservation's counted amount (overrun) can never
+/// interleave with a reserve that has already checked the caps.
+pub const RESERVE_LOCK_KEY: i64 = 0x5041_4952_4255_4447; // "PAIRBUDG"
 
 struct Totals {
     task: i64,
@@ -35,13 +37,25 @@ fn within(counted: i64, add: Micros, cap: Micros, what: &str) -> Result<()> {
 }
 
 impl PgBudget {
+    /// Reserve with an explicit task kind. The first reservation for a task fixes its kind; a later
+    /// reservation of a different kind is a `Conflict`.
     pub async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
-        self.reserve_at(req, Utc::now()).await
+        self.reserve_at(req, false, Utc::now()).await
+    }
+
+    /// Reserve for a task whose kind the caller does not state: an already-registered task keeps
+    /// its kind (and cap); an unregistered one becomes `TaskKind::Default`.
+    pub(crate) async fn reserve_inheriting_kind(
+        &self,
+        req: ReserveRequest,
+    ) -> Result<ReservationId> {
+        self.reserve_at(req, true, Utc::now()).await
     }
 
     pub(crate) async fn reserve_at(
         &self,
-        req: ReserveRequest,
+        mut req: ReserveRequest,
+        inherit_kind: bool,
         now: DateTime<Utc>,
     ) -> Result<ReservationId> {
         let price_version = self.resolve_price_version(req.price_version.as_deref())?;
@@ -69,6 +83,7 @@ impl PgBudget {
             .await
             .map_err(|e| db_err("advisory lock", e))?;
 
+        req.kind = register_task_kind(&mut tx, &req, inherit_kind, now).await?;
         let t = totals(&mut tx, req.task, period).await?;
         within(t.task, req.max_cost, self.config.task_cap(req.kind), "task")?;
         within(t.day, req.max_cost, self.config.daily_cap(), "daily")?;
@@ -105,6 +120,57 @@ impl PgBudget {
         tracing::info!(reservation = %id, task = %req.task, micros = req.max_cost.0, "budget reserved");
         Ok(id)
     }
+}
+
+fn parse_kind(text: &str) -> Result<TaskKind> {
+    match text {
+        "default" => Ok(TaskKind::Default),
+        "research" => Ok(TaskKind::Research),
+        "coding" => Ok(TaskKind::Coding),
+        other => Err(PairError::new(
+            ErrorCode::Internal,
+            format!("unknown task kind {other:?}"),
+        )),
+    }
+}
+
+/// Persist the task's kind on first reserve and return the effective kind. Runs under the
+/// advisory lock, so two concurrent first reserves cannot register different kinds.
+async fn register_task_kind(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    req: &ReserveRequest,
+    inherit_kind: bool,
+    now: DateTime<Utc>,
+) -> Result<TaskKind> {
+    sqlx::query(
+        "INSERT INTO budget_tasks (task_id, task_kind, created_at) VALUES ($1, $2, $3) \
+         ON CONFLICT (task_id) DO NOTHING",
+    )
+    .bind(req.task.0)
+    .bind(req.kind.as_str())
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_err("register task kind", e))?;
+    let stored: String =
+        sqlx::query_scalar("SELECT task_kind FROM budget_tasks WHERE task_id = $1")
+            .bind(req.task.0)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| db_err("read task kind", e))?;
+    let stored = parse_kind(&stored)?;
+    if !inherit_kind && stored != req.kind {
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            format!(
+                "task {} is a {} task; cannot reserve as {}",
+                req.task,
+                stored.as_str(),
+                req.kind.as_str()
+            ),
+        ));
+    }
+    Ok(stored)
 }
 
 async fn totals(

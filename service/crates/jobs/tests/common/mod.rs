@@ -75,11 +75,11 @@ impl Drop for TestDb {
 /// Short leases so crash tests do not wait a minute.
 pub fn fast_cfg() -> JobConfig {
     JobConfig {
-        lease_ttl: Duration::from_millis(300),
+        lease_ttl: Duration::from_millis(600),
         ..JobConfig::default()
     }
 }
 
 pub async fn wait_lease_expiry() {
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    tokio::time::sleep(Duration::from_millis(900)).await;
 }

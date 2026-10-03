@@ -125,9 +125,8 @@ impl StepHandler for Pusher {
         if ctx.run.approval_id.is_none() {
             return Ok(StepOutcome::AwaitApproval { action_hash: hash });
         }
-        ctx.consume_approval(&hash).await?;
         let out = ctx
-            .effect(
+            .approved_effect(
                 "push",
                 self.payload.clone(),
                 || async {

@@ -20,6 +20,7 @@ const SHORT_TIMEOUT_MS = 200;
 const PRICE = { priceVersion: "pv-test", inputPerMtokMicros: 1_000_000, outputPerMtokMicros: 5_000_000 } as const;
 const RESERVATION = "0199c0de-aaaa-7abc-8def-0123456789ab";
 const CTX = { runId: "run-1", sessionKey: "agent:main:s1" };
+const ROUTED = { provider: "mock", model: "mock-routed" } as const;
 
 const reserveOk = (): ReturnType<Script> =>
   ok({ reservation_id: RESERVATION, task_id: "0199c0de-bbbb-7abc-8def-0123456789ab", kind: "default", category: "metered", price_version: "pv-test", max_cost_micros: 1 });
@@ -229,7 +230,7 @@ describe("llm_output: reconcile", () => {
       (path) => (path === "/v1/budget/reserve" ? reserveOk() : reconcileOk("settled")),
       async (g, mock) => {
         await g.beforeModelResolve({ prompt: "hi" }, CTX);
-        const r = await g.reconcile({ runId: "run-1", usage });
+        const r = await g.reconcile({ runId: "run-1", usage, ...ROUTED });
         assert.deepEqual(r, { state: "settled", overrun: false });
         const req = mock.requests[1];
         assert.ok(req);
@@ -250,7 +251,7 @@ describe("llm_output: reconcile", () => {
       (path) => (path === "/v1/budget/reserve" ? reserveOk() : reconcileOk("unresolved")),
       async (g, mock) => {
         await g.beforeModelResolve({ prompt: "hi" }, CTX);
-        const r = await g.reconcile({ runId: "run-1", usage: undefined });
+        const r = await g.reconcile({ runId: "run-1", usage: undefined, ...ROUTED });
         assert.deepEqual(r, { state: "unresolved", overrun: false });
         const body = mock.requests[1]?.body as Record<string, unknown>;
         assert.equal(body["actual_cost_micros"], null);
@@ -263,10 +264,10 @@ describe("llm_output: reconcile", () => {
     await withBudget(
       (path) => (path === "/v1/budget/reserve" ? reserveOk() : fail(500, "internal")),
       async (g, mock) => {
-        assert.equal(await g.reconcile({ runId: "ghost", usage }), undefined);
+        assert.equal(await g.reconcile({ runId: "ghost", usage, ...ROUTED }), undefined);
         assert.equal(mock.requests.length, 0);
         await g.beforeModelResolve({ prompt: "hi" }, CTX);
-        assert.equal(await g.reconcile({ runId: "run-1", usage }), undefined);
+        assert.equal(await g.reconcile({ runId: "run-1", usage, ...ROUTED }), undefined);
       },
     );
   });
@@ -276,7 +277,7 @@ describe("llm_output: reconcile", () => {
       (path) => (path === "/v1/budget/reserve" ? reserveOk() : ok({ state: "settled" })),
       async (g) => {
         await g.beforeModelResolve({ prompt: "hi" }, CTX);
-        assert.equal(await g.reconcile({ runId: "run-1", usage }), undefined);
+        assert.equal(await g.reconcile({ runId: "run-1", usage, ...ROUTED }), undefined);
       },
     );
   });
@@ -286,8 +287,8 @@ describe("llm_output: reconcile", () => {
       (path) => (path === "/v1/budget/reserve" ? reserveOk() : reconcileOk("settled")),
       async (g, mock) => {
         await g.beforeModelResolve({ prompt: "hi" }, CTX);
-        await g.reconcile({ runId: "run-1", usage });
-        assert.equal(await g.reconcile({ runId: "run-1", usage }), undefined);
+        await g.reconcile({ runId: "run-1", usage, ...ROUTED });
+        assert.equal(await g.reconcile({ runId: "run-1", usage, ...ROUTED }), undefined);
         assert.equal(mock.requests.filter((r) => r.path === "/v1/budget/reconcile").length, 1);
       },
     );

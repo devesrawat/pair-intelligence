@@ -2,7 +2,7 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use common::{candidate, days_ago, source, TestDb};
+use common::{candidate, days_ago, propose_verified, source, TestDb};
 use pair_core::{
     ids::MemoryId,
     traits::Memory,
@@ -28,8 +28,7 @@ async fn accept_fact(
     span: &str,
 ) -> (MemoryId, pair_core::ids::SourceId) {
     let src = source(mem, ext, TrustClass::Owner).await;
-    let cid = mem
-        .propose(candidate(kind, content, project, src.id, span))
+    let cid = propose_verified(&mem, candidate(kind, content, project, src.id, span))
         .await
         .unwrap();
     (mem.accept(cid, "owner").await.unwrap(), src.id)
@@ -177,27 +176,31 @@ async fn conflicting_decisions_flagged() {
     let mem = db.memory();
     let s1 = source(&mem, "adr-1", TrustClass::Owner).await;
     let s2 = source(&mem, "adr-2", TrustClass::Owner).await;
-    let c1 = mem
-        .propose(candidate(
+    let c1 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: Redis streams",
             Some("pair"),
             s1.id,
             "use Redis streams",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let old = mem.accept(c1, "owner").await.unwrap();
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: SQS with DLQ",
             Some("pair"),
             s2.id,
             "use SQS",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
 
     let hits = mem
@@ -243,27 +246,31 @@ async fn conflicting_decisions_flagged() {
     // Competing decisions deliberately kept side by side are flagged as conflicting.
     let s3 = source(&mem, "adr-3", TrustClass::Owner).await;
     let s4 = source(&mem, "adr-4", TrustClass::Owner).await;
-    let j = mem
-        .propose(candidate(
+    let j = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: JWT bearer tokens",
             Some("pair"),
             s3.id,
             "jwt",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let jwt = mem.accept(j, "owner").await.unwrap();
-    let s = mem
-        .propose(candidate(
+    let s = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: server sessions",
             Some("pair"),
             s4.id,
             "sessions",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let sess = mem
         .accept_with(
             s,
@@ -466,16 +473,18 @@ async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
     )
     .await;
     let s2 = source(&mem, "q2", TrustClass::Owner).await;
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: SQS with DLQ",
             Some("pair"),
             s2.id,
             "use SQS",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
 
     let items = mem
@@ -505,16 +514,18 @@ async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
     )
     .await;
     let s4 = source(&mem, "a2", TrustClass::Owner).await;
-    let sc = mem
-        .propose(candidate(
+    let sc = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: server sessions",
             Some("pair"),
             s4.id,
             "sessions",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let sess = mem
         .accept_with(
             sc,

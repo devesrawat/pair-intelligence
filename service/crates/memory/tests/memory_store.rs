@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 
-use common::{candidate, source, TestDb};
+use common::{candidate, propose_verified, source, TestDb};
 use pair_core::{
     error::ErrorCode,
     traits::Memory,
@@ -47,16 +47,18 @@ async fn accepted_memory_requires_evidence() {
 
     // With evidence, accept succeeds and the evidence is inspectable.
     let src = source(&mem, "note-1", TrustClass::Owner).await;
-    let cid = mem
-        .propose(candidate(
+    let cid = propose_verified(
+        &mem,
+        candidate(
             "fact",
             "The staging database listens on port 55432",
             Some("pair"),
             src.id,
             "staging db: 55432",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let mid = mem.accept(cid, "owner").await.unwrap();
     let rec = mem.get_memory(mid).await.unwrap();
     assert_eq!(rec.status, MemoryStatus::Accepted);
@@ -71,27 +73,31 @@ async fn supersession_preserves_history() {
     let s1 = source(&mem, "adr-1", TrustClass::Owner).await;
     let s2 = source(&mem, "adr-2", TrustClass::Owner).await;
 
-    let c1 = mem
-        .propose(candidate(
+    let c1 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Decision: use Redis for queues",
             Some("pair"),
             s1.id,
             "use Redis",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let old = mem.accept(c1, "owner").await.unwrap();
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Decision: use SQS for queues",
             Some("pair"),
             s2.id,
             "use SQS",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
 
     let old_rec = mem.get_memory(old).await.unwrap();
@@ -121,16 +127,18 @@ async fn supersession_preserves_history() {
 
     // A memory can only be superseded once.
     let s3 = source(&mem, "adr-3", TrustClass::Owner).await;
-    let c3 = mem
-        .propose(candidate(
+    let c3 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Decision: use Kafka for queues",
             Some("pair"),
             s3.id,
             "use Kafka",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     assert!(mem.accept_superseding(c3, "owner", old).await.is_err());
 }
 
@@ -142,16 +150,18 @@ async fn deleted_source_is_not_retrievable() {
     let shared_a = source(&mem, "doc-b", TrustClass::Owner).await;
     let shared_b = source(&mem, "doc-c", TrustClass::Owner).await;
 
-    let c1 = mem
-        .propose(candidate(
+    let c1 = propose_verified(
+        &mem,
+        candidate(
             "fact",
             "The vault passphrase hint is the dog name",
             None,
             only.id,
             "dog name",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let doomed = mem.accept(c1, "owner").await.unwrap();
 
     let mut two = candidate(
@@ -168,16 +178,12 @@ async fn deleted_source_is_not_retrievable() {
     let c2 = mem.propose(two).await.unwrap();
     let survivor = mem.accept(c2, "owner").await.unwrap();
 
-    let pending = mem
-        .propose(candidate(
-            "fact",
-            "Another fact from the doc",
-            None,
-            only.id,
-            "x",
-        ))
-        .await
-        .unwrap();
+    let pending = propose_verified(
+        &mem,
+        candidate("fact", "Another fact from the doc", None, only.id, "x"),
+    )
+    .await
+    .unwrap();
 
     let probe = |text: &str| pair_core::types::RetrievalQuery {
         text: text.into(),
@@ -232,9 +238,11 @@ async fn deleted_source_is_not_retrievable() {
         mem.accept(pending, "owner").await.unwrap_err().code,
         ErrorCode::SourceDeleted
     );
-    let late = mem
-        .propose(candidate("fact", "Yet another fact", None, only.id, "x"))
-        .await;
+    let late = propose_verified(
+        &mem,
+        candidate("fact", "Yet another fact", None, only.id, "x"),
+    )
+    .await;
     assert_eq!(late.unwrap_err().code, ErrorCode::SourceDeleted);
 
     let audit: i64 = sqlx::query_scalar(
@@ -301,27 +309,31 @@ async fn export_includes_evidence_and_redacts_deleted_sources() {
     let mem = db.memory();
     let keep = source(&mem, "keep", TrustClass::Owner).await;
     let gone = source(&mem, "gone", TrustClass::Owner).await;
-    let c1 = mem
-        .propose(candidate(
+    let c1 = propose_verified(
+        &mem,
+        candidate(
             "preference",
             "I prefer tabs over spaces",
             None,
             keep.id,
             "tabs please",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let m1 = mem.accept(c1, "owner").await.unwrap();
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "fact",
             "Secret project codename is Bluebird",
             None,
             gone.id,
             "codename Bluebird",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     mem.accept(c2, "owner").await.unwrap();
     mem.delete_source(gone.id, "owner").await.unwrap();
 

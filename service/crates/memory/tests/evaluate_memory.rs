@@ -79,6 +79,9 @@ async fn seed(
                 span: Some(rec.span.clone()),
             }],
         });
+        // Fixture spans are quotes from the (simulated) source, so they verify; auto-accept of
+        // preferences needs verified evidence.
+        draft = draft.with_source_text(sources[&rec.source], rec.span.clone());
         draft.topic = Some(rec.topic.clone());
         draft.reason = Some("fixture corpus".into());
         let proposal = mem.propose_with_outcome(draft).await.unwrap();

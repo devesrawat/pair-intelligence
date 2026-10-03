@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 
-use common::{candidate, source, TestDb};
+use common::{candidate, source, verified, TestDb};
 use pair_core::{
     error::ErrorCode,
     traits::Memory,
@@ -15,7 +15,7 @@ use pair_memory::{
 };
 
 fn draft(kind: &str, content: &str, src: pair_core::ids::SourceId, span: &str) -> CandidateDraft {
-    CandidateDraft::new(candidate(kind, content, Some("pair"), src, span))
+    verified(candidate(kind, content, Some("pair"), src, span))
 }
 
 #[tokio::test]
@@ -276,8 +276,8 @@ async fn untrusted_source_cannot_change_preferences() {
         .unwrap();
     assert!(t.auto_accepted.is_none());
 
-    // The owner can still restate it from an owner-trust source via edit.
-    let fixed = mem
+    // Adding an owner citation by edit does not launder the verified tool citation beside it.
+    let edited = mem
         .edit_candidate(
             t.id,
             "owner",
@@ -291,7 +291,22 @@ async fn untrusted_source_cannot_change_preferences() {
         )
         .await
         .unwrap();
-    assert!(mem.accept(fixed, "owner").await.is_ok());
+    assert_eq!(
+        mem.accept(edited, "owner").await.unwrap_err().code,
+        ErrorCode::PolicyDenied
+    );
+
+    // The owner restates it from their own source instead.
+    let restated = mem
+        .propose_with_outcome(draft(
+            "preference",
+            "Preferred shell: fish",
+            owner.id,
+            "I use fish",
+        ))
+        .await
+        .unwrap();
+    assert!(restated.auto_accepted.is_some());
 
     let prefs: i64 = sqlx::query_scalar("SELECT count(*) FROM memories WHERE kind = 'preference'")
         .fetch_one(&db.pool)
@@ -318,7 +333,7 @@ async fn inferred_stays_labeled() {
         id = src.id
     ))
     .unwrap();
-    let outcomes = mem.propose_batch(batch).await.unwrap();
+    let outcomes = mem.propose_batch(batch, &[src.id]).await.unwrap();
     assert_eq!(outcomes.len(), 3);
     assert!(
         outcomes[2].auto_accepted.is_none(),

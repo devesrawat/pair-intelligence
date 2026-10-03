@@ -129,8 +129,9 @@ pub(crate) async fn prepare(
     if rows.len() != distinct.len() {
         return Err(invalid("candidate references an unknown source"));
     }
+    let verified = verify_spans(&draft)?;
     let mut identities = std::collections::BTreeSet::new();
-    let mut facts = Vec::with_capacity(rows.len());
+    let mut by_source = std::collections::HashMap::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? != "active" {
             return Err(PairError::new(
@@ -143,12 +144,29 @@ pub(crate) async fn prepare(
             row.try_get::<String, _>("kind").map_err(db_err)?,
             row.try_get::<String, _>("external_id").map_err(db_err)?
         ));
-        facts.push(SourceFacts {
-            trust: parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?,
-            data_class: parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
-        });
+        by_source.insert(
+            row.try_get::<Uuid, _>("id").map_err(db_err)?,
+            (
+                parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?,
+                parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
+            ),
+        );
     }
-    let verified = verify_spans(&draft)?;
+    // One fact per evidence item: trust is only as good as the item's span verification.
+    let facts = draft
+        .candidate
+        .evidence
+        .iter()
+        .filter_map(|ev| {
+            by_source
+                .get(&ev.source.0)
+                .map(|(trust, data_class)| SourceFacts {
+                    trust: *trust,
+                    data_class: *data_class,
+                    span_verified: verified.contains(&(ev.source, ev.span.clone())),
+                })
+        })
+        .collect::<Vec<_>>();
     let material = format!(
         "{}\n{}\n{}",
         key_salt.unwrap_or(""),

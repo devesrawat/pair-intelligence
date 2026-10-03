@@ -4,14 +4,26 @@
 #   scripts/restore <backup-file> --target-db NAME [--drop-existing]
 #
 # Env: DATABASE_URL (server + credentials), PAIR_BACKUP_AGE_IDENTITY (age identity file,
-#      required for *.age backups).
-# Safety: the target must differ from the live database named in DATABASE_URL unless
-#      PAIR_RESTORE_CONFIRM_LIVE=<that db name> is set. A non-empty target is refused
-#      unless --drop-existing is passed.
+#      required for *.age backups), PAIR_LIVE_DB (the live database name, default `pair`).
+# Order of operations (the target is never touched until the restore has fully succeeded):
+#   1. prerequisites: age present, identity set and readable, dump readable, and
+#      `decrypt | pg_restore --list` succeeds;
+#   2. restore into a fresh `<target>_incoming` database;
+#   3. only then swap: the old target is renamed aside, `<target>_incoming` is renamed to
+#      `<target>`, and the old copy is dropped.
+# Safety:
+#   - Restoring over the live database (PAIR_LIVE_DB, a fixed name, not DATABASE_URL) requires
+#     PAIR_RESTORE_CONFIRM_LIVE=<that db name>.
+#   - --drop-existing always requires PAIR_RESTORE_CONFIRM_DROP=<target db name>.
+#   - A non-empty target is refused unless --drop-existing is passed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=lib/pgtools.sh
 source "$ROOT/scripts/lib/pgtools.sh"
+
+MAX_TARGET_LEN=48   # leaves room for the _incoming / _old suffixes within PostgreSQL's 63-byte limit
+LIVE_DB="${PAIR_LIVE_DB:-pair}"
+die() { echo "restore: $*" >&2; exit 1; }
 
 file="${1:-}"; shift || true
 target="" ; drop_existing=0
@@ -24,31 +36,72 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$file" ] || { echo "usage: scripts/restore <backup-file> --target-db NAME [--drop-existing]" >&2; exit 2; }
 [[ "$target" =~ ^[a-z_][a-z0-9_]*$ ]] || { echo "restore: --target-db must match [a-z_][a-z0-9_]*" >&2; exit 2; }
+[ "${#target}" -le "$MAX_TARGET_LEN" ] || { echo "restore: --target-db longer than $MAX_TARGET_LEN characters" >&2; exit 2; }
 
+incoming="${target}_incoming"
+old="${target}_old"
+[ "$incoming" != "$LIVE_DB" ] && [ "$old" != "$LIVE_DB" ] || die "refusing: scratch name collides with live database '$LIVE_DB'"
+
+if [ "$target" = "$LIVE_DB" ] && [ "${PAIR_RESTORE_CONFIRM_LIVE:-}" != "$target" ]; then
+  die "refusing to restore over live database '$target' (set PAIR_RESTORE_CONFIRM_LIVE=$target)"
+fi
+if [ "$drop_existing" -eq 1 ] && [ "${PAIR_RESTORE_CONFIRM_DROP:-}" != "$target" ]; then
+  die "--drop-existing replaces '$target'; confirm by setting PAIR_RESTORE_CONFIRM_DROP=$target"
+fi
+
+# Plaintext dump stream (decrypting when needed).
+dump_stream() {
+  if [[ "$file" == *.age ]]; then age -d -i "$PAIR_BACKUP_AGE_IDENTITY" "$file"; else cat "$file"; fi
+}
+
+# --- 1. prerequisites: everything that can fail without touching the database -------------
+if [[ "$file" == *.age ]]; then
+  command -v age >/dev/null || die "FATAL age not installed"
+  [ -n "${PAIR_BACKUP_AGE_IDENTITY:-}" ] || die "FATAL PAIR_BACKUP_AGE_IDENTITY not set"
+  [ -r "$PAIR_BACKUP_AGE_IDENTITY" ] || die "FATAL age identity file not readable: $PAIR_BACKUP_AGE_IDENTITY"
+fi
+[ -r "$file" ] || die "backup file not readable: $file"
 pg_init
-if [ "$target" = "$PG_DEFAULT_DB" ] && [ "${PAIR_RESTORE_CONFIRM_LIVE:-}" != "$target" ]; then
-  echo "restore: refusing to restore over live database '$target' (set PAIR_RESTORE_CONFIRM_LIVE=$target)" >&2; exit 1
+# pg_restore --list may stop reading before the stream ends, so the decrypting side can see SIGPIPE
+# (141); that is not a failure of the dump.
+set +e
+dump_stream 2>/dev/null | pg_restore_list_stdin >/dev/null 2>&1
+list_status=("${PIPESTATUS[@]}")
+set -e
+if [ "${list_status[1]}" -ne 0 ] || { [ "${list_status[0]}" -ne 0 ] && [ "${list_status[0]}" -ne 141 ]; }; then
+  die "FATAL backup failed verification (decrypt | pg_restore --list); target '$target' untouched"
 fi
 
 exists="$(pg_psql postgres -At -c "SELECT 1 FROM pg_database WHERE datname = '$target'")"
 if [ "$exists" = "1" ]; then
   tables="$(pg_psql "$target" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')")"
   if [ "$tables" != "0" ] && [ "$drop_existing" -ne 1 ]; then
-    echo "restore: target '$target' has $tables table(s); pass --drop-existing to replace it" >&2; exit 1
-  fi
-  if [ "$drop_existing" -eq 1 ]; then
-    pg_psql postgres -c "DROP DATABASE \"$target\" WITH (FORCE)"
-    exists=""
+    die "target '$target' has $tables table(s); pass --drop-existing to replace it"
   fi
 fi
-[ "$exists" = "1" ] || pg_psql postgres -c "CREATE DATABASE \"$target\""
 
+# --- 2. restore into <target>_incoming ----------------------------------------------------
 start=$SECONDS
-if [[ "$file" == *.age ]]; then
-  command -v age >/dev/null || { echo "restore: FATAL age not installed" >&2; exit 1; }
-  [ -n "${PAIR_BACKUP_AGE_IDENTITY:-}" ] || { echo "restore: FATAL PAIR_BACKUP_AGE_IDENTITY not set" >&2; exit 1; }
-  age -d -i "$PAIR_BACKUP_AGE_IDENTITY" "$file" | pg_restore_stdin "$target"
+pg_psql postgres -c "DROP DATABASE IF EXISTS \"$incoming\" WITH (FORCE)"
+pg_psql postgres -c "CREATE DATABASE \"$incoming\""
+discard_incoming() { pg_psql postgres -c "DROP DATABASE IF EXISTS \"$incoming\" WITH (FORCE)" >/dev/null 2>&1 || true; }
+if ! dump_stream | pg_restore_stdin "$incoming"; then
+  discard_incoming
+  die "restore into '$incoming' failed; target '$target' untouched"
+fi
+
+# --- 3. swap -------------------------------------------------------------------------------
+if [ "$exists" = "1" ]; then
+  pg_psql postgres -c "DROP DATABASE IF EXISTS \"$old\" WITH (FORCE)"
+  pg_psql postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$target' AND pid <> pg_backend_pid()" >/dev/null
+  pg_psql postgres -c "ALTER DATABASE \"$target\" RENAME TO \"$old\""
+  if ! pg_psql postgres -c "ALTER DATABASE \"$incoming\" RENAME TO \"$target\""; then
+    pg_psql postgres -c "ALTER DATABASE \"$old\" RENAME TO \"$target\"" || true
+    discard_incoming
+    die "swap failed; original '$target' restored"
+  fi
+  pg_psql postgres -c "DROP DATABASE IF EXISTS \"$old\" WITH (FORCE)"
 else
-  pg_restore_stdin "$target" < "$file"
+  pg_psql postgres -c "ALTER DATABASE \"$incoming\" RENAME TO \"$target\""
 fi
 echo "restore: restored $file into '$target' in $((SECONDS - start))s"

@@ -59,6 +59,7 @@ fn parse_decimal(text: &str) -> std::result::Result<Micros, String> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawBudget {
     currency: String,
     metered_monthly_cap: UsdAmount,
@@ -71,15 +72,28 @@ struct RawBudget {
     auto_top_up: bool,
 }
 
+/// Other keys of the shipped `schedule:` section; consumed elsewhere, accepted here.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // accepted for strict-key validation only
 struct RawSchedule {
     timezone: String,
+    #[serde(default)]
+    morning: Option<String>,
+    #[serde(default)]
+    review: Option<String>,
 }
 
+/// Unknown keys are rejected so a mistyped cap or `auto_top_up` fails loudly instead of being
+/// silently ignored. `execution` belongs to other crates and is accepted unparsed.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // `execution` is accepted for strict-key validation only
 struct RawFile {
     budget: RawBudget,
     schedule: RawSchedule,
+    #[serde(default)]
+    execution: Option<serde_yaml_ng::Value>,
 }
 
 /// Validated caps. Fields are private and there are no setters: nothing can raise a cap.
@@ -115,6 +129,8 @@ impl BudgetConfig {
         }
     }
 
+    /// Parse and validate keys, currency, timezone and `auto_top_up`. Does NOT check cap ordering
+    /// (test fixtures use arbitrary caps); production code must use `load` or `from_yaml_strict`.
     pub fn from_yaml(text: &str) -> Result<Self> {
         let raw: RawFile = serde_yaml_ng::from_str(text).map_err(|e| invalid(&e.to_string()))?;
         let b = raw.budget;
@@ -137,11 +153,41 @@ impl BudgetConfig {
         })
     }
 
+    /// `from_yaml` plus cap-ordering validation: every task cap <= daily <= monthly, and the
+    /// classifier sub-cap <= monthly.
+    pub fn from_yaml_strict(text: &str) -> Result<Self> {
+        let cfg = Self::from_yaml(text)?;
+        cfg.validate_ordering()?;
+        Ok(cfg)
+    }
+
+    fn validate_ordering(&self) -> Result<()> {
+        for (name, cap) in [
+            ("default_task_cap", self.default_task_cap),
+            ("research_task_cap", self.research_task_cap),
+            ("coding_task_cap", self.coding_task_cap),
+        ] {
+            if cap > self.daily_cap {
+                return Err(invalid(&format!("{name} must be <= metered_daily_cap")));
+            }
+        }
+        if self.daily_cap > self.monthly_cap {
+            return Err(invalid("metered_daily_cap must be <= metered_monthly_cap"));
+        }
+        if self.classifier_monthly_subcap > self.monthly_cap {
+            return Err(invalid(
+                "classifier_monthly_subcap must be <= metered_monthly_cap",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Load and strictly validate a config file (the production entry point).
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path)
             .map_err(|e| invalid(&format!("read {}: {e}", path.display())))?;
-        Self::from_yaml(&text)
+        Self::from_yaml_strict(&text)
     }
 }
 

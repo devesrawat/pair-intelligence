@@ -51,8 +51,12 @@ pub(crate) fn db_err(context: &str, e: sqlx::Error) -> PairError {
 
 #[async_trait]
 impl Budget for PgBudget {
+    /// Reserve for a task WITHOUT stating its kind. A task already registered via `reserve_with`
+    /// keeps its kind and cap; an unregistered task is a `TaskKind::Default` task and gets the
+    /// default (smallest) task cap. Coding and research callers must register the task first with
+    /// `BudgetEx::reserve_with` (the first reservation fixes the kind).
     async fn reserve(&self, task: TaskId, max_cost: Micros) -> Result<ReservationId> {
-        self.reserve_with(ReserveRequest {
+        self.reserve_inheriting_kind(ReserveRequest {
             task,
             max_cost,
             kind: TaskKind::Default,
@@ -63,7 +67,7 @@ impl Budget for PgBudget {
     }
 
     async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
-        self.reconcile_at(id, usage, Utc::now()).await
+        Ok(self.reconcile_at(id, usage, Utc::now()).await?.entry)
     }
 }
 

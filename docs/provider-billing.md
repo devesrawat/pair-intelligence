@@ -61,9 +61,22 @@ Implication: Ollama Cloud usage is a fixed subscription with included credits, n
 | Retention | 30-day default, no training; Fable/"covered models" excluded from ZDR | api-and-data-retention page | **UNVERIFIED** (snippet) |
 | Owner account: Console org, dedicated `pair` workspace, cap set | — | owner account | **pending owner** |
 
+## Subscription terms (verified 2026-10-03 against primary sources)
+
+Sources: Consumer Terms of Service (effective 8 Oct 2025) https://www.anthropic.com/legal/consumer-terms ; Claude Code legal and compliance https://code.claude.com/docs/en/legal-and-compliance ; authentication https://code.claude.com/docs/en/authentication ; headless https://code.claude.com/docs/en/headless.
+
+| Question | Finding |
+|---|---|
+| Is scripted/automated use of a subscription allowed? | Consumer Terms s.3 bars automated or non-human access "except when you are accessing our Services via an Anthropic API Key or where we otherwise explicitly permit it". Anthropic's docs explicitly document `claude -p` (non-interactive) and `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN` "for CI pipelines and scripts where browser login isn't available", authenticating "with your Claude subscription". That is the explicit permission, for the **unmodified Claude Code binary**. |
+| Using it from our own service code? | Not permitted: developers building products or services that interact with Claude "should use API key authentication"; no routing requests through Free/Pro/Max credentials on behalf of users; no collecting, storing or intermediating Claude.ai credentials. PAIR therefore never reads or forwards the credential: only the CLI does, and PAIR spawns it. |
+| Limits | OAuth is "designed to support ordinary use"; advertised Pro/Max limits "assume ordinary, individual usage of Claude Code and the Agent SDK". The adapter stops at 95% of any provider-reported window and never spends paid overage. |
+| Enforcement | Anthropic "may do so without prior notice". |
+
+**Conclusion:** the `claude_code` provider is within the published terms for **one owner running their own subscription on their own host through the unmodified CLI**. It is **not** permitted if PAIR ever serves another person, runs a hosted multi-user service, or modifies/wraps the CLI's authentication (use the API-key mode there). Interpretation of "ordinary, individual usage" for a 24/7 personal automation is Anthropic's; if in doubt, ask via https://www.anthropic.com/contact-sales. Re-verify when these pages change.
+
 ## Decision (provisional, pending owner rows)
 
-- PAIR server automation uses **Anthropic API key in a dedicated `pair` workspace with a monthly spend limit ≤ the PAIR metered cap**. The OpenClaw `claude-cli/*` subscription route is **not** used for PAIR automation (policy unstable, global constraint "never treat Claude Pro as an API entitlement").
+- PAIR supports **two** Anthropic auth modes: (a) an API key in a dedicated `pair` workspace with a monthly spend limit ≤ the PAIR metered cap (metered, dollar-budgeted); (b) the owner's own subscription through the unmodified `claude` CLI (`claude_code` provider, see "Subscription terms" below). Never treat a subscription as an API entitlement: the OpenClaw `claude-cli/*` route and any use of subscription tokens outside the unmodified CLI remain **not** used.
 - Ollama Cloud: candidate only after owner confirms plan, ToS automation permission and per-model prices. Until then, automatic paid execution via Ollama is disabled.
 - Jev: shadow mode only; pin by recording returned `model` field on every call until direct version pinning is verified.
 - Assumed SDK credit: **$0** (earlier "$20 SDK credit / $40 total" claims are unsupported).

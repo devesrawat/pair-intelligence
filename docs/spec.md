@@ -156,7 +156,7 @@ Do not create a Rust service solely for language preference. Phase 0 must prove 
 
 - Ollama Cloud is a preferred candidate for routine and strong inference, subject to verified API access, usage limits, model availability, and permitted automation.
 - Claude is the preferred premium candidate through a supported API or explicitly supported SDK authentication flow.
-- Claude Code remains a separate interactive development tool; do not assume its subscription grants server automation rights.
+- Claude Code remains a separate interactive development tool; do not assume its subscription grants server automation rights. Revision note 2026-10-03: the owner's own subscription may be used through the unmodified `claude` CLI, for one owner on their own host only (verified against Anthropic's published terms, see docs/provider-billing.md); API-key billing stays the mode for anything else.
 - Optional alternative cloud provider only after measured reliability or quality needs justify it.
 
 Use exact model IDs and provider versions from verified catalogs. Never route by an ambiguous alias without recording the resolved model.

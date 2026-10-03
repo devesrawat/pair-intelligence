@@ -329,3 +329,74 @@ async fn caps_to_zero_refuses_new_turns() {
     assert_eq!(stack.provider.hits(), 0);
     stack.finish().await;
 }
+
+mod subscription {
+    use super::*;
+    use common::stack::{SubscriptionOpts, SUB, SUB_TEXT};
+
+    async fn rows(stack: &Stack) -> Vec<(String, String, Option<i64>, String)> {
+        sqlx::query_as(
+            "SELECT c.requested_model, c.cost_state, c.cost_micros, r.state \
+             FROM model_calls c JOIN budget_reservations r ON r.id = c.reservation_id \
+             ORDER BY c.created_at",
+        )
+        .fetch_all(&stack.db.pool)
+        .await
+        .expect("model calls")
+    }
+
+    #[tokio::test]
+    async fn test_turn_subscription_primary_answers_records_and_settles_at_zero() {
+        let stack = Stack::start(StackOpts {
+            subscription: Some(SubscriptionOpts::Primary),
+            ..StackOpts::default()
+        })
+        .await;
+        let (resp, body) = send(&stack.app, post_json("/v1/turn", &turn("hi", "personal"))).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["text"], SUB_TEXT);
+        assert_eq!(body["data"]["resolved_model"], "claude-sonnet-5-5-test");
+        assert_eq!(body["data"]["cost_state"], "reconciled");
+        assert_eq!(stack.provider.hits(), 0, "no metered call may be made");
+        let rows = rows(&stack).await;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(
+            rows[0],
+            (SUB.into(), "reconciled".into(), Some(0), "settled".into())
+        );
+        stack.finish().await;
+    }
+
+    #[tokio::test]
+    async fn test_turn_metered_failure_falls_through_to_subscription_with_both_attempts_recorded() {
+        let stack = Stack::start(StackOpts {
+            subscription: Some(SubscriptionOpts::Fallback),
+            provider: ProviderMode::Fail(503),
+            ..StackOpts::default()
+        })
+        .await;
+        let (resp, body) = send(&stack.app, post_json("/v1/turn", &turn("hi", "personal"))).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["text"], SUB_TEXT);
+        let rows = rows(&stack).await;
+        assert_eq!(
+            rows.len(),
+            2,
+            "failed metered attempt and the subscription success: {rows:?}"
+        );
+        assert_eq!(
+            rows[0].0, MID,
+            "the failure stays attributed to the metered model"
+        );
+        assert_ne!(rows[0].1, "reconciled");
+        assert_eq!(
+            rows[0].2, None,
+            "a failed call's cost stays unknown, never assumed zero"
+        );
+        assert_eq!(
+            rows[1],
+            (SUB.into(), "reconciled".into(), Some(0), "settled".into())
+        );
+        stack.finish().await;
+    }
+}

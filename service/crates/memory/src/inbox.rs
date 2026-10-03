@@ -1,6 +1,7 @@
 //! Memory inbox: proposal pipeline (normalise, dedupe, contradiction links, policy) and the
 //! reviewer-facing views. Review actions (reject/edit/correct) live in `review`.
 use crate::{
+    contradiction::find_links,
     error::{db_err, invalid, not_found},
     model::{parse_data_class, parse_trust, validate_kind, CandidateDraft, VerifiedSpans},
     normalize::{normalize_content, topic_of},
@@ -217,54 +218,6 @@ fn verify_spans(draft: &CandidateDraft) -> Result<VerifiedSpans> {
     Ok(verified)
 }
 
-/// Accepted, currently valid memories on the same topic with different content.
-pub(crate) async fn find_memory_contradictions(
-    conn: &mut PgConnection,
-    kind: &str,
-    project: Option<&str>,
-    topic: &str,
-    normalized: &str,
-    as_of: DateTime<Utc>,
-) -> Result<Vec<MemoryId>> {
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM memories WHERE status = 'accepted' AND invalidated_reason IS NULL AND kind = $1 \
-         AND project IS NOT DISTINCT FROM $2 AND topic_key = $3 AND normalized_content <> $4 \
-         AND (valid_to IS NULL OR valid_to > $5) ORDER BY id",
-    )
-    .bind(kind)
-    .bind(project)
-    .bind(topic)
-    .bind(normalized)
-    .bind(as_of)
-    .fetch_all(conn)
-    .await
-    .map_err(db_err)?;
-    Ok(ids.into_iter().map(MemoryId).collect())
-}
-
-pub(crate) async fn find_candidate_contradictions(
-    conn: &mut PgConnection,
-    kind: &str,
-    project: Option<&str>,
-    topic: &str,
-    normalized: &str,
-    exclude: Option<Uuid>,
-) -> Result<Vec<CandidateId>> {
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM memory_candidates WHERE state = 'pending' AND kind = $1 AND project IS NOT DISTINCT FROM $2 \
-         AND topic_key = $3 AND normalized_content <> $4 AND id IS DISTINCT FROM $5 ORDER BY id",
-    )
-    .bind(kind)
-    .bind(project)
-    .bind(topic)
-    .bind(normalized)
-    .bind(exclude)
-    .fetch_all(conn)
-    .await
-    .map_err(db_err)?;
-    Ok(ids.into_iter().map(CandidateId).collect())
-}
-
 pub(crate) struct NewCandidateRow<'a> {
     pub prepared: &'a Prepared,
     pub review_reasons: &'a [String],
@@ -349,29 +302,17 @@ impl PgMemory {
         }
 
         let c = &prepared.draft.candidate;
-        let (mem_links, cand_links) = match &prepared.topic {
-            Some(topic) => (
-                find_memory_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    (self.clock)(),
-                )
-                .await?,
-                find_candidate_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    None,
-                )
-                .await?,
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
+        let links = find_links(
+            &mut tx,
+            &c.kind,
+            c.project.as_deref(),
+            prepared.topic.as_deref(),
+            &prepared.normalized,
+            (self.clock)(),
+            None,
+        )
+        .await?;
+        let (mem_links, cand_links) = (links.memories, links.candidates);
         let contradiction = !mem_links.is_empty() || !cand_links.is_empty();
         let assessment = policy::assess(
             &c.kind,

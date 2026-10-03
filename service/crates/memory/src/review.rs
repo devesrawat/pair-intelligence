@@ -2,11 +2,9 @@
 use crate::{
     accept::accept_in_tx,
     audit,
+    contradiction::find_links,
     error::{db_err, invalid, not_found},
-    inbox::{
-        find_candidate_contradictions, find_memory_contradictions, insert_candidate, prepare,
-        NewCandidateRow,
-    },
+    inbox::{insert_candidate, prepare, NewCandidateRow},
     model::{CandidateDraft, MemoryRecord, VerifiedSpans},
     policy,
     store::{AcceptMode, PgMemory},
@@ -177,29 +175,17 @@ impl PgMemory {
 
         let prepared = prepare(&mut tx, draft, None).await?;
         let c = &prepared.draft.candidate;
-        let (mem_links, cand_links) = match &prepared.topic {
-            Some(topic) => (
-                find_memory_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    (self.clock)(),
-                )
-                .await?,
-                find_candidate_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    Some(id.0),
-                )
-                .await?,
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
+        let links = find_links(
+            &mut tx,
+            &c.kind,
+            c.project.as_deref(),
+            prepared.topic.as_deref(),
+            &prepared.normalized,
+            (self.clock)(),
+            Some(id.0),
+        )
+        .await?;
+        let (mem_links, cand_links) = (links.memories, links.candidates);
         let mut assessment = policy::assess(
             &c.kind,
             c.inferred,

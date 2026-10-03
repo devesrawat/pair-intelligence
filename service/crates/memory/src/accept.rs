@@ -2,8 +2,8 @@
 //! resolution, provenance rows, chunks and audit, all inside the caller's transaction.
 use crate::{
     audit,
+    contradiction::find_memory_links,
     error::{db_err, not_found},
-    inbox::find_memory_contradictions,
     model::parse_trust,
     policy::{self, EvidenceTrust},
     store::{insert_evidence_and_chunks, AcceptMode},
@@ -82,20 +82,15 @@ pub(crate) async fn accept_in_tx(
     policy::check_accept(&cand.kind, &cand.content, &trusts)?;
 
     let now = clock();
-    let contradicted = match &cand.topic {
-        Some(topic) => {
-            find_memory_contradictions(
-                conn,
-                &cand.kind,
-                cand.project.as_deref(),
-                topic,
-                &cand.normalized,
-                now,
-            )
-            .await?
-        }
-        None => Vec::new(),
-    };
+    let contradicted = find_memory_links(
+        conn,
+        &cand.kind,
+        cand.project.as_deref(),
+        cand.topic.as_deref(),
+        &cand.normalized,
+        now,
+    )
+    .await?;
     let unresolved: Vec<Uuid> = contradicted
         .iter()
         .map(|m| m.0)

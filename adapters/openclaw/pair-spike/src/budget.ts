@@ -89,6 +89,9 @@ async function reserve(deps: Deps, runId: string, event: ModelResolveEvent): Pro
     task_id: taskId,
     kind: options.taskKind,
     category: "metered",
+    // The server computes the worst-case hold from this model's registry price; max_cost_micros
+    // can only raise it. The model must be priced under price_version or the reserve is refused.
+    model_id: options.overrideModel,
     max_cost_micros: maxCost,
     price_version: options.price.priceVersion,
   };
@@ -162,6 +165,8 @@ async function reconcileRun(deps: Deps, event: ReconcileEvent): Promise<Reconcil
     const usage = costFor(deps, event);
     const body = {
       reservation_id: state.reservationId,
+      // Must match the reserve's task: the server refuses a settlement from a different task.
+      task_id: taskIdFor(event.runId),
       input_tokens: usage.inputTokens,
       output_tokens: usage.outputTokens,
       actual_cost_micros: usage.costMicros,

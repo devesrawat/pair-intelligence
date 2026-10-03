@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { taskIdFor } from "../src/ids.ts";
 import { describe, it } from "node:test";
 
 import {
@@ -106,6 +107,8 @@ describe("before_model_resolve: reserve first, override only on success", () => 
       assert.equal(body["kind"], "default");
       assert.equal(body["category"], "metered");
       assert.equal(body["price_version"], "pv-test");
+      // The server prices the hold from this model's registry entry; the client figure can only raise it.
+      assert.equal(body["model_id"], "mock-routed");
       assert.equal(body["max_cost_micros"], estimateMaxCostMicros("hello".length, PRICE));
       assert.match(String(body["task_id"]), /^[0-9a-f-]{36}$/);
       assert.equal(req.headers["x-actor"], "openclaw-adapter");
@@ -237,6 +240,8 @@ describe("llm_output: reconcile", () => {
         assert.equal(req.path, "/v1/budget/reconcile");
         assert.deepEqual(req.body, {
           reservation_id: RESERVATION,
+          // Same task as the reserve: the server refuses a settlement from a different task.
+          task_id: taskIdFor("run-1"),
           input_tokens: 11,
           output_tokens: 7,
           actual_cost_micros: 46,

@@ -168,7 +168,7 @@ pub trait ExecutionRecorder: Send + Sync {
 
 /// Records nothing. Only for gates that are deliberately unaudited (`Gate::unaudited_for_tests`).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct NoopRecorder;
+pub(crate) struct NoopRecorder;
 
 #[async_trait]
 impl ExecutionRecorder for NoopRecorder {

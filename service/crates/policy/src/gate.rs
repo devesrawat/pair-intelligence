@@ -19,8 +19,10 @@ pub const APPROVALS_UNAVAILABLE: &str = "approvals_unavailable";
 /// forgetting a builder call. For anything that would run, the row is written BEFORE the closure
 /// and the closure is not invoked if that write fails (fail closed). When an approval is needed
 /// the `started` row is written BEFORE the approval is consumed, so a recorder outage cannot burn
-/// a single-use approval. Refusals are recorded best-effort and stay refusals either way. Raw
-/// arguments are never recorded, only their sha256.
+/// a single-use approval. If linking the consumed approval to that row then fails, the tool still
+/// runs (the approval is already spent for exactly this payload) and the failure is logged; the
+/// row stays findable by trace id and `approvals.consumed_at`. Refusals are recorded best-effort
+/// and stay refusals either way. Raw arguments are never recorded, only their sha256.
 ///
 /// ```compile_fail
 /// # use pair_policy::Gate;

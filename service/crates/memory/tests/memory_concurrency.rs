@@ -3,7 +3,10 @@
 mod common;
 
 use common::{candidate, source, verified, TestDb};
-use pair_core::types::TrustClass;
+use pair_core::{error::ErrorCode, traits::Memory, types::TrustClass};
+use std::time::Duration;
+
+const BLOCK_PROBE: Duration = Duration::from_millis(400);
 
 const RACE_ROUNDS: usize = 8;
 
@@ -63,4 +66,72 @@ async fn concurrent_contradictory_accepts_do_not_both_become_current() {
             .iter()
             .all(|p| p.needs_review && p.review_reasons.iter().any(|r| r == "contradiction")));
     }
+}
+
+#[tokio::test]
+async fn delete_source_takes_the_register_source_lock() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let src = source(&mem, "vault", TrustClass::Owner).await;
+
+    // Hold the identity lock register_source takes; delete_source must queue behind it.
+    let mut holder = db.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind("note:vault")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let deleter = {
+        let mem = mem.clone();
+        tokio::spawn(async move { mem.delete_source(src.id, "owner").await })
+    };
+    tokio::time::sleep(BLOCK_PROBE).await;
+    assert!(
+        !deleter.is_finished(),
+        "delete_source ignored the identity lock"
+    );
+    holder.commit().await.unwrap();
+    deleter.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn accept_waits_for_in_flight_source_deletion() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let src = source(&mem, "vault", TrustClass::Owner).await;
+    let cid = mem
+        .propose(candidate(
+            "fact",
+            "The vault code is 1234",
+            None,
+            src.id,
+            "code 1234",
+        ))
+        .await
+        .unwrap();
+
+    // A deletion that has marked the source but not yet committed.
+    let mut deleting = db.pool.begin().await.unwrap();
+    sqlx::query("UPDATE sources SET deletion_state = 'deleted', deleted_at = now() WHERE id = $1")
+        .bind(src.id.0)
+        .execute(&mut *deleting)
+        .await
+        .unwrap();
+    let accepting = {
+        let mem = mem.clone();
+        tokio::spawn(async move { mem.accept(cid, "owner").await })
+    };
+    tokio::time::sleep(BLOCK_PROBE).await;
+    assert!(
+        !accepting.is_finished(),
+        "accept read the source without locking it"
+    );
+    deleting.commit().await.unwrap();
+    let err = accepting.await.unwrap().unwrap_err();
+    assert_eq!(err.code, ErrorCode::SourceDeleted);
+    let memories: i64 = sqlx::query_scalar("SELECT count(*) FROM memories")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(memories, 0);
 }

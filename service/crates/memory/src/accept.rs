@@ -173,7 +173,9 @@ pub(crate) async fn accept_in_tx(
     Ok(memory_id)
 }
 
-/// Evidence on active sources plus the trust classes of those sources. Errors when the
+/// Evidence on active sources plus the trust classes of those sources. The source rows are locked
+/// FOR SHARE until commit, so a concurrent `delete_source` cannot mark them deleted between this
+/// check and the memory insert (it waits, and then invalidates the memory we just created). Errors when the
 /// candidate has no evidence at all, or only evidence from deleted sources.
 async fn live_evidence(
     conn: &mut PgConnection,
@@ -181,7 +183,7 @@ async fn live_evidence(
 ) -> Result<(Vec<(EvidenceRef, bool)>, Vec<EvidenceTrust>)> {
     let rows = sqlx::query(
         "SELECT e.source_id, e.span, e.span_verified, s.deletion_state, s.trust FROM memory_candidate_evidence e \
-         JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
+         JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id FOR SHARE OF s",
     )
     .bind(id.0)
     .fetch_all(&mut *conn)

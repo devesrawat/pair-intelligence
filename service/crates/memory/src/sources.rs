@@ -43,6 +43,20 @@ pub(crate) fn source_from_row(row: &PgRow) -> Result<SourceRecord> {
     })
 }
 
+/// Serialise registration and deletion of one source identity (every revision of it).
+async fn lock_source_identity(
+    conn: &mut sqlx::PgConnection,
+    kind: &str,
+    external_id: &str,
+) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("{kind}:{external_id}"))
+        .execute(conn)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
 const SOURCE_COLUMNS: &str =
     "id, kind, external_id, revision, content_hash, captured_at, data_class, trust, uri, visibility, deletion_state";
 
@@ -59,11 +73,7 @@ impl PgMemory {
             ));
         }
         let mut tx = self.pool.begin().await.map_err(db_err)?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("{}:{}", new.kind, new.external_id))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        lock_source_identity(&mut tx, &new.kind, &new.external_id).await?;
         let latest = sqlx::query(&format!(
             "SELECT {SOURCE_COLUMNS}, deleted_at FROM sources WHERE kind = $1 AND external_id = $2 \
              ORDER BY revision DESC LIMIT 1"
@@ -170,6 +180,7 @@ impl PgMemory {
         let src = self.get_source(id).await?;
         let now = (self.clock)();
         let mut tx = self.pool.begin().await.map_err(db_err)?;
+        lock_source_identity(&mut tx, &src.kind, &src.external_id).await?;
         let revisions = sqlx::query(
             "UPDATE sources SET deletion_state = 'deleted', deleted_at = $3 \
              WHERE kind = $1 AND external_id = $2 AND deletion_state = 'active'",

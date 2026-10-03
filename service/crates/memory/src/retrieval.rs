@@ -173,31 +173,34 @@ async fn fulltext_hits(
     let min_matched = ((required_terms as f64) * MIN_TERM_COVERAGE)
         .ceil()
         .max(1.0) as i64;
+    // The term-coverage gate runs in SQL, before the candidate limit: otherwise strongly ranked
+    // single-term matches could fill the window and push out the memories that do cover the query.
     let sql = format!(
-        "SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
-                (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
-                    SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
-                      AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
-         FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
-         WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
-         GROUP BY m.id ORDER BY rank DESC, m.id LIMIT {MAX_CANDIDATES}",
+        "SELECT * FROM ( \
+             SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
+                    (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
+                        SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
+                          AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
+             FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
+             WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
+             GROUP BY m.id) covered \
+         WHERE covered.matched >= $4 ORDER BY covered.rank DESC, covered.id LIMIT {MAX_CANDIDATES}",
         filter = VISIBLE_FILTER.replace("$PROJECT", "$3"),
     );
     let rows = sqlx::query(&sql)
         .bind(terms)
         .bind(terms.join(" | "))
         .bind(project)
+        .bind(min_matched)
         .fetch_all(&mut *conn)
         .await
         .map_err(db_err)?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let matched: i64 = r.try_get("matched").map_err(db_err)?;
-        if matched >= min_matched {
-            out.push(row0(r, r.try_get("rank").map_err(db_err)?, matched)?);
-        }
-    }
-    Ok(out)
+    rows.iter()
+        .map(|r| {
+            let matched: i64 = r.try_get("matched").map_err(db_err)?;
+            row0(r, r.try_get("rank").map_err(db_err)?, matched)
+        })
+        .collect()
 }
 
 /// Follow `supersedes_id` forward until a memory valid at `as_of` that is still visible.

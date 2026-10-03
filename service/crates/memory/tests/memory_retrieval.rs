@@ -661,3 +661,50 @@ async fn conflict_partner_beyond_limit_still_labels_conflicting() {
     assert_eq!(hits[0].item.status, EvidenceStatus::Conflicting);
     assert_eq!(hits[0].item.conflicts_with, vec![other]);
 }
+
+/// More single-term matches than the candidate pre-limit, all outranking the real answer.
+const NOISE_MEMORIES: i32 = 230;
+
+#[tokio::test]
+async fn coverage_filter_applies_before_the_candidate_limit() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let noise_src = source(&mem, "noise", TrustClass::Owner).await;
+    let noise_text = "zebra zebra zebra zebra zebra zebra zebra zebra";
+    // Each noise memory matches one of the four query terms, many times over, so by text rank
+    // alone they fill the candidate window; they fail the term-coverage gate.
+    sqlx::query(
+        "WITH m AS ( \
+             INSERT INTO memories (id, kind, status, content, normalized_content, valid_from, observed_at, confidence, accepted_by) \
+             SELECT gen_random_uuid(), 'fact', 'accepted', $2, $2, now() - interval '1 hour', now() - interval '1 hour', 'observed', 'bulk' \
+             FROM generate_series(1, $3) RETURNING id), \
+         e AS (INSERT INTO memory_evidence (memory_id, source_id, extraction_version) SELECT id, $1, 'v1' FROM m) \
+         INSERT INTO memory_chunks (id, memory_id, text) SELECT gen_random_uuid(), id, $2 FROM m",
+    )
+    .bind(noise_src.id.0)
+    .bind(noise_text)
+    .bind(NOISE_MEMORIES)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (target, _) = accept_fact(
+        &mem,
+        "fact",
+        "Zebra enclosure holds quartz",
+        None,
+        "target",
+        "quartz",
+    )
+    .await;
+    let hits = mem
+        .retrieve_detailed(query("zebra quartz marimba volcano", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "the covering memory was cut by the pre-limit"
+    );
+    assert_eq!(hits[0].item.memory, target);
+}

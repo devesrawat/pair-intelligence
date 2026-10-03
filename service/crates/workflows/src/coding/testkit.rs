@@ -79,27 +79,26 @@ pub struct FakePolicy {
 impl Policy for FakePolicy {
     fn authorize(&self, req: &ActionRequest, _ctx: &PolicyContext) -> PolicyOutcome {
         self.seen.lock().unwrap().push(req.clone());
-        let decision =
-            if matches!(req.tool.as_str(), GIT_PUSH | PR_CREATE) && !self.allow_remote_writes {
-                Decision::NeedsApproval {
-                    payload_hash: "hash".into(),
-                }
-            } else if self.denied_tools.contains(&req.tool)
-                || req
-                    .executable
-                    .as_ref()
-                    .is_some_and(|e| self.denied_exes.contains(e))
-                || req
-                    .destination
-                    .as_ref()
-                    .is_some_and(|d| self.denied_destinations.contains(d))
-            {
-                Decision::Deny {
-                    reason: "denied by fake policy".into(),
-                }
-            } else {
-                Decision::Allow
-            };
+        let denied = self.denied_tools.contains(&req.tool)
+            || req
+                .executable
+                .as_ref()
+                .is_some_and(|e| self.denied_exes.contains(e))
+            || req
+                .destination
+                .as_ref()
+                .is_some_and(|d| self.denied_destinations.contains(d));
+        let decision = if denied {
+            Decision::Deny {
+                reason: "denied by fake policy".into(),
+            }
+        } else if matches!(req.tool.as_str(), GIT_PUSH | PR_CREATE) && !self.allow_remote_writes {
+            Decision::NeedsApproval {
+                payload_hash: "hash".into(),
+            }
+        } else {
+            Decision::Allow
+        };
         PolicyOutcome {
             decision,
             policy_version: "fake-1".into(),

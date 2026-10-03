@@ -3,7 +3,7 @@ use super::testkit::*;
 use super::*;
 use pair_core::{
     error::ErrorCode,
-    ids::{ApprovalId, TaskId, TraceId},
+    ids::{TaskId, TraceId},
     types::Decision,
 };
 use pair_policy::Gate;
@@ -705,51 +705,6 @@ async fn patch_output_is_scoped() {
     .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
     assert!(err.message.contains("stray.txt"));
-}
-
-#[test]
-fn remote_write_requires_approval() {
-    let action = RemoteAction {
-        kind: RemoteKind::Push,
-        remote: "origin".into(),
-        host: "github.com".into(),
-        branch: "pair/x".into(),
-        head_sha: "abc".into(),
-        diff_sha256: "def".into(),
-        data_class: pair_core::types::DataClass::Personal,
-    };
-    let (task, trace) = (TaskId::new(), TraceId::new());
-    let strict = FakePolicy::default();
-    for kind in [RemoteKind::Push, RemoteKind::OpenPr] {
-        let a = RemoteAction {
-            kind,
-            ..action.clone()
-        };
-        let out = request_remote_write(&strict, "/ws", "v", task, trace, &a, &[]).unwrap();
-        assert!(
-            matches!(out, RemoteOutcome::NeedsApproval { .. }),
-            "{kind:?}"
-        );
-    }
-    // even a permissive policy cannot authorize without an approval id
-    let lax = FakePolicy {
-        allow_remote_writes: true,
-        ..FakePolicy::default()
-    };
-    let out = request_remote_write(&lax, "/ws", "v", task, trace, &action, &[]).unwrap();
-    assert!(matches!(out, RemoteOutcome::NeedsApproval { .. }));
-    let out =
-        request_remote_write(&lax, "/ws", "v", task, trace, &action, &[ApprovalId::new()]).unwrap();
-    assert!(matches!(out, RemoteOutcome::Authorized { .. }));
-    // payload hash binds the exact payload
-    let changed = RemoteAction {
-        head_sha: "zzz".into(),
-        ..action.clone()
-    };
-    assert_ne!(
-        action.payload_hash().unwrap(),
-        changed.payload_hash().unwrap()
-    );
 }
 
 #[test]

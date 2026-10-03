@@ -470,6 +470,83 @@ async fn required_hash(world: &World, task: TaskId, refspec: &str) -> String {
 }
 
 #[tokio::test]
+async fn push_approval_hash_equals_gate_hash_under_real_engine() {
+    use crate::coding::{request_remote_write, RemoteAction, RemoteCtx, RemoteKind, RemoteOutcome};
+    let world = World::new();
+    let head = String::from_utf8(
+        Command::new("git")
+            .current_dir(&world.repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let task = TaskId::new();
+    let action = RemoteAction {
+        kind: RemoteKind::Push,
+        remote_url: "git@github.com:acme/repo.git".into(),
+        branch: "pair/t".into(),
+        head_sha: head,
+        diff_sha256: "d".into(),
+        data_class: DataClass::Personal,
+    };
+    // the hash an approver is shown (scp-style remote: host derived, egress checked)
+    let ctx = world.ctx(Vec::new());
+    let shown = request_remote_write(
+        &RemoteCtx {
+            policy: world.engine.as_ref(),
+            ctx: &ctx,
+            task,
+            trace: TraceId::new(),
+            cwd: &world.repo,
+        },
+        &action,
+    )
+    .unwrap();
+    let RemoteOutcome::NeedsApproval {
+        payload_hash: shown,
+    } = shown
+    else {
+        panic!("expected NeedsApproval, got {shown:?}");
+    };
+    // the hash the Gate demands when the real `git push` argv is executed
+    let gate = engine_gate(&world, None);
+    let runner = world.runner(&gate, task, Vec::new());
+    let host = action.host().unwrap();
+    let err = runner
+        .run_tool(GIT_PUSH, &action.push_argv(), &world.repo, Some(&host))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ApprovalRequired);
+    let demanded = err.message.rsplit(' ').next().unwrap();
+    assert_eq!(
+        shown, demanded,
+        "approval would bind to a different payload"
+    );
+
+    // a host that is not on the egress list is denied up front for scp-style remotes too
+    let evil = RemoteAction {
+        remote_url: "git@evil.example:a/b.git".into(),
+        ..action
+    };
+    let err = request_remote_write(
+        &RemoteCtx {
+            policy: world.engine.as_ref(),
+            ctx: &ctx,
+            task,
+            trace: TraceId::new(),
+            cwd: &world.repo,
+        },
+        &evil,
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
+}
+
+#[tokio::test]
 async fn approved_push_executes_once_and_modified_command_or_reuse_is_denied() {
     let db = ApprovalDb::create().await;
     let world = World::new();

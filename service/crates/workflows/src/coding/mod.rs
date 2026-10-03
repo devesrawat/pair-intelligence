@@ -18,7 +18,10 @@ pub use classify::{classify_failure, FailureClass};
 pub use config::RepoConfig;
 pub use edits::{apply_edits, parse_edit_set, EditContext, FileEdit};
 pub use exec::{CommandExecutor, ExecOutput, ExecSpec, ProcessExecutor};
-pub use remote::{request_remote_write, RemoteAction, RemoteKind, RemoteOutcome};
+pub use remote::{
+    egress_host, request_remote_write, resolve_push_url, RemoteAction, RemoteCtx, RemoteKind,
+    RemoteOutcome,
+};
 pub use runner::{CmdReport, Runner, RunnerSetup};
 pub use sandbox::{ContainerSandbox, HostSandbox, Sandbox, HOST_EXEC_ENV, WORKER_IMAGE_ENV};
 pub use scope::{is_secret_path, Scope};
@@ -28,6 +31,8 @@ pub use workflow::{
 
 #[cfg(test)]
 mod exec_tests;
+#[cfg(test)]
+mod remote_tests;
 #[cfg(test)]
 mod sandbox_tests;
 #[cfg(test)]

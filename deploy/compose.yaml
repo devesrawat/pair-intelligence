@@ -1,10 +1,11 @@
-# Dev/staging Postgres. Bound to loopback only; credentials are placeholders from .env.
+# Staging/production-shaped stack. No default credentials: POSTGRES_PASSWORD must be set
+# (compose refuses to start without it). For local development use deploy/compose.dev.yaml.
 services:
   postgres:
-    image: postgres:17
+    image: postgres:17.11
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pair}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-pair}
     ports: ["127.0.0.1:55432:5432"]
     healthcheck:
@@ -24,16 +25,24 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-pair}:${POSTGRES_PASSWORD:-pair}@postgres:5432/${POSTGRES_DB:-pair}
+      DATABASE_URL: postgres://${POSTGRES_USER:-pair}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pair}
       PAIR_SERVICE_TOKEN: ${PAIR_SERVICE_TOKEN:-}  # required (>=16 chars); the service refuses to start without it
       PAIR_BIND: 0.0.0.0:8080
+      # Migrations and models.yaml are baked into the image (see deploy/api/Dockerfile);
+      # the paths are explicit so a missing file fails startup instead of reading as ready.
       PAIR_MIGRATIONS_DIR: /app/migrations
+      PAIR_MODELS_CONFIG: /app/config/models.yaml
       PAIR_DATA_DIR: /var/lib/pair
       RUST_LOG: info
     ports: ["127.0.0.1:8080:8080"]
     volumes:
-      - ../migrations:/app/migrations:ro
       - pairdata:/var/lib/pair
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "/usr/local/bin/pair-api", "--healthcheck"]
       interval: 5s

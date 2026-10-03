@@ -12,6 +12,21 @@ use pair_core::types::{BudgetCategory, ReserveRequest, TaskKind};
 /// interleave with a reserve that has already checked the caps.
 pub const RESERVE_LOCK_KEY: i64 = 0x5041_4952_4255_4447; // "PAIRBUDG"
 
+/// Hard ceiling on one reservation or settlement (one million USD). Far above any cap, and low
+/// enough that no realistic number of rows can overflow the `SUM(counted_micros)` the cap checks
+/// run: a single absurd settlement must not be able to make every later reserve fail.
+pub const MAX_COST_MICROS: i64 = 1_000_000_000_000;
+
+/// What a reservation was made for, as stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservationBinding {
+    pub task: TaskId,
+    /// `None` for reservations made without a model (turn pipeline, classifier, older builds).
+    pub model_id: Option<String>,
+    pub price_version: String,
+    pub reserved: Micros,
+}
+
 struct Totals {
     task: i64,
     day: i64,
@@ -40,7 +55,37 @@ impl PgBudget {
     /// Reserve with an explicit task kind. The first reservation for a task fixes its kind; a later
     /// reservation of a different kind is a `Conflict`.
     pub async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
-        self.reserve_at(req, false, Utc::now()).await
+        self.reserve_at(req, false, None, Utc::now()).await
+    }
+
+    /// Reserve for an adapter call that names the model it will use. The model is stored with the
+    /// reservation so a settlement can be checked against that model's registry price.
+    pub async fn reserve_for_model(
+        &self,
+        req: ReserveRequest,
+        model_id: Option<&str>,
+    ) -> Result<ReservationId> {
+        self.reserve_at(req, false, model_id, Utc::now()).await
+    }
+
+    /// What a reservation was made for: who may settle it and against which model.
+    pub async fn reservation_binding(&self, id: ReservationId) -> Result<ReservationBinding> {
+        let row: Option<(uuid::Uuid, Option<String>, String, i64)> = sqlx::query_as(
+            "SELECT task_id, model_id, price_version, reserved_micros \
+             FROM budget_reservations WHERE id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| db_err("read reservation", e))?;
+        let (task, model_id, price_version, reserved) =
+            row.ok_or_else(|| PairError::new(ErrorCode::NotFound, "reservation not found"))?;
+        Ok(ReservationBinding {
+            task: TaskId(task),
+            model_id,
+            price_version,
+            reserved: Micros(reserved),
+        })
     }
 
     /// Reserve for a task whose kind the caller does not state: an already-registered task keeps
@@ -49,13 +94,14 @@ impl PgBudget {
         &self,
         req: ReserveRequest,
     ) -> Result<ReservationId> {
-        self.reserve_at(req, true, Utc::now()).await
+        self.reserve_at(req, true, None, Utc::now()).await
     }
 
     pub(crate) async fn reserve_at(
         &self,
         mut req: ReserveRequest,
         inherit_kind: bool,
+        model_id: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<ReservationId> {
         let price_version = self.resolve_price_version(req.price_version.as_deref())?;
@@ -69,6 +115,12 @@ impl PgBudget {
             return Err(PairError::new(
                 ErrorCode::InvalidInput,
                 "max_cost must be positive",
+            ));
+        }
+        if req.max_cost.0 > MAX_COST_MICROS {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!("max_cost exceeds the hard ceiling of {MAX_COST_MICROS} micro-USD"),
             ));
         }
         let period = Period::at(now);
@@ -101,8 +153,8 @@ impl PgBudget {
         sqlx::query(
             "INSERT INTO budget_reservations \
              (id, task_id, category, task_kind, price_version, period_day, period_month, \
-              reserved_micros, counted_micros, state, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, 'held', $9)",
+              reserved_micros, counted_micros, state, created_at, model_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, 'held', $9, $10)",
         )
         .bind(id.0)
         .bind(req.task.0)
@@ -113,6 +165,7 @@ impl PgBudget {
         .bind(period.month)
         .bind(req.max_cost.0)
         .bind(now)
+        .bind(model_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| db_err("insert reservation", e))?;

@@ -1,10 +1,15 @@
 //! `POST /v1/turn`: refuse disallowed data classes, classify (shadow), plan a route within the
 //! task cap, compile context, call the provider through the budget, persist with a cost state.
 
+mod claim;
+mod guard;
+mod open;
 mod persist;
 pub mod recording;
+mod replay;
 pub mod request;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use pair_core::error::{ErrorCode, PairError, Result};
@@ -12,25 +17,28 @@ use pair_core::ids::{ConversationId, TraceId};
 use pair_core::money::Micros;
 use pair_core::traits::{BudgetEx, ContextCompiler};
 use pair_core::types::{
-    ClassificationInput, ModelLimits, ModelMessage, ModelRequest, TaskContext, TaskProfile,
-    TrustClass,
+    ClassificationInput, ModelLimits, ModelMessage, ModelRequest, ModelResponse, TaskContext,
+    TaskProfile,
 };
 use pair_models::classification::pipeline::{PipelineOutcome, PipelineRequest};
-use pair_models::provider::store::{NewMessage, StoredMessage};
+use pair_models::provider::store::StoredMessage;
 use pair_models::router::RouteConstraints;
 use pair_workflows::calls::{ModelCaller, ModelPlanner};
 use pair_workflows::limits::{RunLimits, MAX_TOOL_CALLS};
 use serde_json::json;
 
 use crate::services::Services;
+use claim::ClaimStore;
+use guard::{settle_dangling, TurnGuard};
+use open::{open_conversation, Fresh, Opened};
 use persist::{persist_attempts, CallContext};
 use recording::{AttemptOutcome, AttemptTrace, TracedBudget, TracedProvider, TurnTrace};
 pub use request::{TurnRequest, TurnResponse, ValidTurn};
 
 const RECENT_MESSAGES: usize = 12;
+const TITLE_CHARS: usize = 60;
 const SUMMARY_MESSAGES: usize = 3;
 const SUMMARY_CHARS: usize = 160;
-const TITLE_CHARS: usize = 60;
 const ROUTING_BYTES_PER_TOKEN: usize = 4;
 const CONTEXT_OVERHEAD_TOKENS: u64 = 400;
 const WORKFLOWS: [&str; 5] = [
@@ -57,38 +65,129 @@ impl ModelPlanner for FixedPlan {
     }
 }
 
+/// Everything fixed before the first provider call: the request, the vetted model order and why.
+struct Prepared {
+    request: ModelRequest,
+    plan: Vec<String>,
+    route_reason: String,
+}
+
+/// Identity of one turn, shared by the stages that follow the provider call.
+struct TurnIds {
+    task: pair_core::ids::TaskId,
+    trace: TraceId,
+    conversation: ConversationId,
+    user_client_id: String,
+}
+
 pub async fn run_turn(
     svc: &Services,
     actor: &str,
     trace: TraceId,
     turn: ValidTurn,
 ) -> Result<TurnResponse> {
+    // The turn budget covers the whole turn (classifier and database time included), not just the
+    // provider attempts.
+    let started = Instant::now();
     let task = turn.task_id();
-    let (conversation, history, user_client_id) =
-        open_conversation(svc, &turn, task, trace).await?;
-    let recent = recent_messages(&history);
+    let fresh = match open_conversation(svc, &turn, task, trace).await? {
+        Opened::Answered(response) => return Ok(response),
+        Opened::Fresh(fresh) => fresh,
+    };
+    let claim = fresh.claim;
+    let claims = ClaimStore::new(svc.store.pool().clone());
+    let attempt_trace = TurnTrace::default();
+    // If this future is dropped from here on, the guard settles what was reserved as unresolved
+    // and releases the claim.
+    let mut guard = TurnGuard::arm(
+        Arc::clone(&svc.budget),
+        attempt_trace.clone(),
+        svc.turns.clone(),
+        claim.map(|task| (claims.clone(), task)),
+    );
+    let result = run_claimed(svc, actor, trace, turn, fresh, (&attempt_trace, started)).await;
+    if let Some(task) = claim {
+        claims.finish(task, result.is_ok()).await;
+    }
+    guard.disarm();
+    result
+}
+
+/// The paid part of a turn: route, call the provider through the budget, persist.
+async fn run_claimed(
+    svc: &Services,
+    actor: &str,
+    trace: TraceId,
+    turn: ValidTurn,
+    fresh: Fresh,
+    (attempt_trace, started): (&TurnTrace, Instant),
+) -> Result<TurnResponse> {
+    let task = turn.task_id();
+    // Everything below (routing, the classifier summary, the provider call) runs under the
+    // conversation's highest class, not just this turn's.
+    let turn = ValidTurn {
+        data_class: fresh.class,
+        ..turn
+    };
+    let recent = recent_messages(&fresh.history);
 
     let outcome = route(svc, &turn, task, &recent).await?;
     record_shadow(svc, actor, trace, task, &outcome).await;
+    let prepared = prepare(svc, &turn, (task, trace), &recent, &outcome, started)?;
+
+    let generated = generate(svc, &turn, &prepared, attempt_trace, started).await;
+    let ids = TurnIds {
+        task,
+        trace,
+        conversation: fresh.conversation,
+        user_client_id: fresh.user_client_id,
+    };
+    finish(svc, &ids, &prepared, attempt_trace, generated).await
+}
+
+fn prepare(
+    svc: &Services,
+    turn: &ValidTurn,
+    (task, trace): (pair_core::ids::TaskId, TraceId),
+    recent: &[ModelMessage],
+    outcome: &PipelineOutcome,
+    started: Instant,
+) -> Result<Prepared> {
     let plan = vet_plan(svc, outcome.plan.attempt_order())?;
     let route_reason = format!(
         "{}; classifier: {}",
         outcome.plan.decision.reason, outcome.classifier_note
     );
-
     let limits_model = model_limits(svc, &plan)?;
-    let compiled = compile(svc, &turn, &recent, &limits_model)?;
+    let compiled = compile(svc, turn, recent, &limits_model)?;
     let request = ModelRequest {
         model_id: String::new(),
         messages: compiled.messages,
         max_output_tokens: u32::try_from(limits_model.max_output_tokens).unwrap_or(u32::MAX),
-        deadline_ms: u64::try_from(svc.turn_budget.as_millis()).unwrap_or(u64::MAX),
+        deadline_ms: u64::try_from(
+            svc.turn_budget
+                .saturating_sub(started.elapsed())
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
         data_class: turn.data_class,
         task,
         trace,
     };
+    Ok(Prepared {
+        request,
+        plan,
+        route_reason,
+    })
+}
 
-    let attempt_trace = TurnTrace::default();
+async fn generate(
+    svc: &Services,
+    turn: &ValidTurn,
+    prepared: &Prepared,
+    attempt_trace: &TurnTrace,
+    started: Instant,
+) -> Result<ModelResponse> {
     let budget = TracedBudget {
         inner: &svc.budget,
         attempts: &svc.attempts,
@@ -98,8 +197,8 @@ pub async fn run_turn(
         inner: svc.provider.as_ref(),
         trace: attempt_trace.clone(),
     };
-    let run_limits = RunLimits::with_deadline(MAX_TOOL_CALLS, Instant::now() + svc.turn_budget);
-    let planner = FixedPlan(plan);
+    let run_limits = RunLimits::with_deadline(MAX_TOOL_CALLS, started + svc.turn_budget);
+    let planner = FixedPlan(prepared.plan.clone());
     let caller = ModelCaller {
         provider: &provider,
         budget: &budget,
@@ -109,20 +208,32 @@ pub async fn run_turn(
         kind: turn.kind,
         intent: TURN_INTENT,
     };
-    let generated = caller.generate(request.clone()).await;
+    let generated = caller.generate(prepared.request.clone()).await;
+    // A reconcile that failed (or never ran) must not leave the reservation `held`.
+    settle_dangling(&svc.budget, attempt_trace).await;
+    generated
+}
 
+/// Persist every attempt, then turn the provider result into the response.
+async fn finish(
+    svc: &Services,
+    ids: &TurnIds,
+    prepared: &Prepared,
+    attempt_trace: &TurnTrace,
+    generated: Result<ModelResponse>,
+) -> Result<TurnResponse> {
     let call_ctx = CallContext {
         store: &svc.store,
         registry: &svc.registry,
-        conversation,
-        trace,
-        route_reason: &route_reason,
-        assistant_client_id: format!("{user_client_id}:assistant"),
+        conversation: ids.conversation,
+        trace: ids.trace,
+        route_reason: &prepared.route_reason,
+        assistant_client_id: format!("{}:assistant", ids.user_client_id),
     };
     let attempts = attempt_trace.snapshot();
-    let persisted = persist_attempts(&call_ctx, &request, &attempts).await?;
+    let persisted = persist_attempts(&call_ctx, &prepared.request, &attempts).await?;
     let response = generated.map_err(|e| {
-        tracing::warn!(%task, %trace, code = ?e.code, "turn ended without a response");
+        tracing::warn!(task = %ids.task, trace = %ids.trace, code = ?e.code, "turn ended without a response");
         root_cause(e, &attempts)
     })?;
     let persisted = persisted.ok_or_else(|| {
@@ -134,15 +245,16 @@ pub async fn run_turn(
     Ok(TurnResponse {
         text: response.text,
         resolved_model: response.resolved_model,
-        route_reason,
+        route_reason: prepared.route_reason.clone(),
         cost_state: if persisted.reconciled {
             COST_RECONCILED
         } else {
             COST_UNRESOLVED
         },
-        trace_id: trace.0.to_string(),
-        conversation_id: conversation.to_string(),
+        trace_id: ids.trace.0.to_string(),
+        conversation_id: ids.conversation.to_string(),
         message_id: persisted.message_id.to_string(),
+        replayed: false,
     })
 }
 
@@ -170,48 +282,6 @@ fn root_cause(error: PairError, attempts: &[AttemptTrace]) -> PairError {
         ),
         None => error,
     }
-}
-
-async fn open_conversation(
-    svc: &Services,
-    turn: &ValidTurn,
-    task: pair_core::ids::TaskId,
-    trace: TraceId,
-) -> Result<(ConversationId, Vec<StoredMessage>, String)> {
-    let (conversation, history) = match turn.conversation {
-        Some(c) => (c, svc.store.list_messages(c).await?),
-        None => {
-            let title: String = turn.message.chars().take(TITLE_CHARS).collect();
-            (
-                svc.store.create_conversation(&title, trace).await?,
-                Vec::new(),
-            )
-        }
-    };
-    let user_client_id = turn
-        .client_message_id
-        .clone()
-        .unwrap_or_else(|| format!("{task}:user"));
-    let (stored, inserted) = svc
-        .store
-        .append_message(NewMessage {
-            conversation,
-            client_message_id: user_client_id.clone(),
-            role: "user".into(),
-            content: turn.message.clone(),
-            trust: TrustClass::Owner,
-            trace,
-        })
-        .await?;
-    let assistant_id = format!("{user_client_id}:assistant");
-    if !inserted && history.iter().any(|m| m.client_message_id == assistant_id) {
-        return Err(PairError::new(
-            ErrorCode::Conflict,
-            "this turn was already answered; read the conversation instead of repeating it",
-        ));
-    }
-    let history = history.into_iter().filter(|m| m.id != stored.id).collect();
-    Ok((conversation, history, user_client_id))
 }
 
 fn recent_messages(history: &[StoredMessage]) -> Vec<ModelMessage> {

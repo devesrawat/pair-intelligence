@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use pair_core::error::ErrorCode;
 use serde_json::json;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_IN_FLIGHT: usize = 64;
@@ -31,6 +31,12 @@ impl Default for Limits {
     }
 }
 
+/// The request's in-flight permit, shareable: a handler that detaches work from the request moves a
+/// clone into the spawned task, so the slot stays taken until that work ends even if the request
+/// is cut off (timeout, disconnect).
+#[derive(Clone)]
+pub struct InFlightPermit(#[allow(dead_code)] Arc<OwnedSemaphorePermit>);
+
 fn rejection(status: StatusCode, message: &str) -> Response {
     let body = json!({
         "success": false,
@@ -48,16 +54,24 @@ where
 {
     let permits = Arc::new(Semaphore::new(limits.max_in_flight));
     let timeout = limits.request_timeout;
-    router.layer(from_fn(move |req: Request, next: Next| {
+    router.layer(from_fn(move |mut req: Request, next: Next| {
         let permits = Arc::clone(&permits);
         async move {
-            let Ok(_permit) = permits.try_acquire_owned() else {
+            let Ok(permit) = permits.try_acquire_owned() else {
                 return rejection(StatusCode::SERVICE_UNAVAILABLE, "server is at capacity");
             };
-            match tokio::time::timeout(timeout, next.run(req)).await {
+            // This layer keeps its own handle for the life of the request (a handler without
+            // extractors drops the request's extensions early); a handler that detaches work
+            // takes another and outlives it.
+            let held = Arc::new(permit);
+            req.extensions_mut()
+                .insert(InFlightPermit(Arc::clone(&held)));
+            let response = match tokio::time::timeout(timeout, next.run(req)).await {
                 Ok(resp) => resp,
                 Err(_) => rejection(StatusCode::GATEWAY_TIMEOUT, "request timed out"),
-            }
+            };
+            drop(held);
+            response
         }
     }))
 }

@@ -10,6 +10,8 @@ pub use pair_telemetry::TRACE_HEADER;
 use pair_telemetry::{parse_trace_header, trace_header_value};
 use tracing::Instrument;
 
+use crate::error::InternalDetail;
+
 /// Trace id (canonical UUID text) attached to every request's extensions.
 #[derive(Clone, Debug)]
 pub struct TraceCtx(pub String);
@@ -30,6 +32,9 @@ pub async fn trace_layer(mut req: Request, next: Next) -> Response {
         path = %req.uri().path()
     );
     let mut resp = next.run(req).instrument(span).await;
+    if let Some(detail) = resp.extensions().get::<InternalDetail>() {
+        tracing::error!(trace_id = %id, detail = %detail.0, "internal error");
+    }
     if let Ok(value) = HeaderValue::from_str(&id) {
         resp.headers_mut().insert(TRACE_HEADER, value);
     }

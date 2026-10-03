@@ -6,7 +6,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::stack::{Stack, StackOpts, PRICE_VERSION};
+use common::stack::{Stack, StackOpts, CHEAP, PRICE_VERSION};
 use common::{post_json, send};
 use serde_json::{json, Value};
 
@@ -52,6 +52,8 @@ async fn zeroing_the_shipped_budget_yaml_as_the_runbook_says_refuses_turns_and_a
     let (resp, body) = send(&stack.app, post_json("/v1/turn", &turn("hello", "public"))).await;
     assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED, "{body}");
     let reserve = json!({
+        "task_id": "0199c0de-1234-7abc-8def-0123456789ab",
+        "model_id": CHEAP,
         "kind": "default",
         "category": "metered",
         "max_cost_micros": 1,

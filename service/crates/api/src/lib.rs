@@ -1,6 +1,7 @@
 //! pair-api: HTTP surface. `/healthz` is open; everything else needs the service
 //! token and an `X-Actor`. Every response carries `X-Trace-Id`.
 
+pub mod adapter_budget;
 pub mod attempts;
 pub mod auth;
 pub mod background;
@@ -32,7 +33,8 @@ use crate::auth::{require_auth, Actor};
 use crate::state::AppState;
 use crate::trace::{trace_layer, TraceCtx};
 
-/// No endpoint accepts a request body today; keep the cap small.
+/// The largest body is a turn: at most 16,000 characters, 64,000 bytes of UTF-8 in the worst case,
+/// so 64 KiB leaves room for the JSON envelope. Nothing else needs more.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
 /// Build the full router. Trace layer is outermost so 401s also carry a trace id.

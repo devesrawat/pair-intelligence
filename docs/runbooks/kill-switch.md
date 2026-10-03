@@ -14,7 +14,7 @@ Model output cannot override permissions or budgets (spec global constraints); t
 - Anything PAIR holds for approval (for example `git push`) is blocked on the adapter path, not approved.
 - Proven with a mock model only; no real provider call has been made.
 - The control that holds regardless of PAIR is the provider console (A) and stopping the OpenClaw gateway (B).
-- Interrupting jobs (level 2) has no mechanism and stays **NOT EFFECTIVE**.
+- Interrupting jobs (level 2) has no operator command and stays **NOT EFFECTIVE** (see level 2).
 
 ## Levels, lowest first (stop at the lowest level that contains the problem)
 
@@ -22,7 +22,7 @@ Model output cannot override permissions or budgets (spec global constraints); t
 
 Edit `config/budget.yaml` (or the file named by `PAIR_BUDGET_CONFIG`) and set **every** cap to `0.00`: `metered_monthly_cap`, `metered_daily_cap`, `classifier_monthly_subcap`, `default_task_cap`, `research_task_cap`, `coding_task_cap`. Setting only the daily cap to `0` fails startup validation (a task cap above the daily cap is rejected), so all six must change together. Restart `pair-api` (caps are read once at startup; there is no live reload; a baked image needs a rebuilt or re-mounted file).
 
-Effect: every new `POST /v1/turn` and `POST /v1/budget/reserve` is refused with `budget_exceeded` (HTTP 402) before any provider call. In-flight turns finish and settle normally. Reservations already unresolved stay counted.
+Effect: every new `POST /v1/turn` and `POST /v1/budget/reserve` is refused with `budget_exceeded` (HTTP 402) before any provider call. In-flight turns finish and settle normally (a turn outlives its HTTP request, so a client timeout does not stop it). Reservations already unresolved stay counted. A turn cut off between reserve and reconcile (process killed, task dropped) is settled as `unresolved`, never left `held`.
 
 Proof: `crates/api/tests/kill_switch.rs::zeroing_the_shipped_budget_yaml_as_the_runbook_says_refuses_turns_and_adapter_reserves` (performs this exact edit on the shipped file), `turn.rs::caps_to_zero_refuses_new_turns`.
 
@@ -30,7 +30,7 @@ Adapter path (proven live, `wired.sh` phase 7): with every cap at `0.00` the ada
 
 ### Level 2: interrupt in-flight jobs (NOT EFFECTIVE)
 
-There is no interrupt command, and no workflow step handler is registered in `pair-api`, so there are no PAIR-driven jobs to interrupt. The lease sweeper marks runs whose lease expired as interrupted and requeues them; that is crash recovery, not a kill. Do not rely on this level.
+There is no interrupt command, and no workflow step handler is registered in `pair-api`, so there are no PAIR-driven jobs to interrupt. The pieces a future command needs exist in the jobs crate: `JobStore::operator_interrupt` marks a running run interrupted on purpose, and the sweeper does not undo it (it requeues only crash interruptions, and fails a run that has been interrupted 5 times instead of looping). Nothing calls `operator_interrupt` yet, so do not rely on this level; `resume` is how an interrupted run goes back to the queue.
 
 ### Level 3: rotate `PAIR_SERVICE_TOKEN` (EFFECTIVE for callers of `pair-api`; proven)
 
@@ -46,7 +46,7 @@ Adapter path (proven live, `wired.sh` phase 6): after rotation, the adapter (sti
 In each provider console (Anthropic, Ollama Cloud, TypeSafe): revoke or rotate the API key, and lower the workspace spend limit to the minimum. This is the only control that holds if PAIR or the host is compromised. Never enable auto top-up.
 
 **B. Stop the processes**
-- API: `docker compose -f deploy/compose.yaml --profile app stop pair-api`. SIGTERM stops accepting requests (in-flight turns finish and settle) and signals the background tasks, which may finish their current iteration for up to `PAIR_SHUTDOWN_DRAIN_SECS` (default 20) before they are aborted.
+- API: `docker compose -f deploy/compose.yaml --profile app stop pair-api`. SIGTERM stops accepting requests, waits up to `PAIR_SHUTDOWN_DRAIN_SECS` (default 20) for in-flight turns (they outlive their HTTP request) to finish and settle, and signals the background tasks, which may finish their current iteration for up to the same time before they are aborted. A turn still running when the process ends keeps its reservation counted: `held` until reconciled by hand, or `unresolved` if the drop guard ran ([reservation-reconciliation](reservation-reconciliation.md)).
 - Tool worker, if any is running: `docker kill $(docker ps -q --filter name=pair-worker)`. Containers started with `docker compose run --rm` die with the kill.
 - OpenClaw gateway: stop the process however it is launched on the host (service manager or container). This is what actually stops agent turns and tool calls.
 - `docker compose stop` for the whole stack if unsure. Database data is preserved (named volume).

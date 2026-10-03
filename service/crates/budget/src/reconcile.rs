@@ -1,6 +1,6 @@
 //! Reconciliation: idempotent settlement of a reservation against a usage report.
 use crate::ledger::{db_err, PgBudget};
-use crate::reserve::RESERVE_LOCK_KEY;
+use crate::reserve::{MAX_COST_MICROS, RESERVE_LOCK_KEY};
 use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{LedgerEntryId, ReservationId};
@@ -74,6 +74,12 @@ impl PgBudget {
                 return Err(PairError::new(
                     ErrorCode::InvalidInput,
                     "actual_cost must not be negative",
+                ));
+            }
+            if cost.0 > MAX_COST_MICROS {
+                return Err(PairError::new(
+                    ErrorCode::InvalidInput,
+                    format!("actual_cost exceeds the hard ceiling of {MAX_COST_MICROS} micro-USD"),
                 ));
             }
             if !self.prices.is_known(&usage.price_version) {

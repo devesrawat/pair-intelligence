@@ -13,11 +13,15 @@ use pair_models::provider::store::ConversationStore;
 use pair_models::provider::ProviderRegistry;
 use pair_policy::recorder::ExecutionRecorder;
 use pair_policy::PolicyEngine;
+use tokio_util::task::TaskTracker;
 
+use crate::adapter_budget::AdapterBudget;
 use crate::attempts::AttemptStore;
 
-/// Total wall-clock a turn may spend on provider attempts. Below the 30 s HTTP request timeout so
-/// a slow provider ends the turn cleanly instead of being cut off between reserve and reconcile.
+/// Wall-clock deadline of a whole turn, measured from its start: the classifier and database time
+/// count against it, and the provider attempts get what is left. Below the 30 s HTTP request
+/// timeout so a turn normally answers in time; one that does not keeps running detached (the client
+/// sees a 504 and a retry returns the stored answer).
 pub const DEFAULT_TURN_BUDGET: Duration = Duration::from_secs(25);
 
 #[derive(Clone)]
@@ -41,4 +45,11 @@ pub struct Services {
     /// Same decision the provider adapters were built with (`PAIR_ALLOW_UNVERIFIED_MODEL_IDS`).
     pub allow_unverified_ids: bool,
     pub turn_budget: Duration,
+    /// Server-side cost rules for the adapter routes `/v1/budget/*`.
+    pub adapter_budget: AdapterBudget,
+    /// `PAIR_TURN_ALLOW_KIND_OVERRIDE`: when false, `/v1/turn` only runs `default` tasks (research
+    /// and coding caps are for server-side workflows, not for a caller to pick).
+    pub allow_turn_kind_override: bool,
+    /// Every spawned turn. A turn outlives its HTTP request, so shutdown waits on this tracker.
+    pub turns: TaskTracker,
 }

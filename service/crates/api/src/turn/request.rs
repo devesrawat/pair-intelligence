@@ -55,6 +55,8 @@ pub struct TurnResponse {
     pub trace_id: String,
     pub conversation_id: String,
     pub message_id: String,
+    /// True when this is the stored answer of an earlier, finished turn (no new provider call).
+    pub replayed: bool,
 }
 
 fn parse_data_class(raw: &str) -> Result<DataClass> {
@@ -73,6 +75,21 @@ fn parse_data_class(raw: &str) -> Result<DataClass> {
             format!("no provider is authorized for {class:?} data"),
         ))
     }
+}
+
+/// Order of data classes: a higher rank is more sensitive (public < personal < sensitive < employer).
+pub fn class_rank(class: DataClass) -> u8 {
+    match class {
+        DataClass::Public => 0,
+        DataClass::Personal => 1,
+        DataClass::Sensitive => 2,
+        DataClass::Employer => 3,
+    }
+}
+
+/// NUL (which Postgres text cannot store) and every other control character except newline and tab.
+fn has_forbidden_control(s: &str) -> bool {
+    s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
 }
 
 fn safe_id(s: &str) -> bool {
@@ -94,6 +111,12 @@ impl TurnRequest {
                 format!("message must be 1..={MAX_MESSAGE_CHARS} characters"),
             ));
         }
+        if has_forbidden_control(&message) {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                "message must not contain control characters other than newline and tab",
+            ));
+        }
         if let Some(id) = &self.client_message_id {
             if !safe_id(id) {
                 return Err(PairError::new(
@@ -102,14 +125,12 @@ impl TurnRequest {
                 ));
             }
         }
-        if self
-            .project_type
-            .as_deref()
-            .is_some_and(|p| p.is_empty() || p.len() > MAX_PROJECT_TYPE_LEN)
-        {
+        if self.project_type.as_deref().is_some_and(|p| {
+            p.is_empty() || p.len() > MAX_PROJECT_TYPE_LEN || has_forbidden_control(p)
+        }) {
             return Err(PairError::new(
                 ErrorCode::InvalidInput,
-                "project_type must be 1..=64 characters",
+                "project_type must be 1..=64 characters without control characters",
             ));
         }
         Ok(ValidTurn {
@@ -194,6 +215,26 @@ mod tests {
             r.validate().expect_err("refused").code,
             ErrorCode::ProviderDisallowed
         );
+    }
+
+    #[test]
+    fn test_validate_control_characters_refused_except_newline_and_tab() {
+        for bad in [
+            "a\u{0}b",
+            "a\u{7}",
+            "a\u{1b}[0m",
+            "a\u{7f}",
+            "a\u{85}b",
+            "a\rb",
+        ] {
+            let mut r = req("public");
+            r.message = bad.into();
+            let err = r.validate().expect_err(bad);
+            assert_eq!(err.code, ErrorCode::InvalidInput, "{bad:?}");
+        }
+        let mut ok = req("public");
+        ok.message = "one\n\ttwo".into();
+        assert!(ok.validate().is_ok());
     }
 
     #[test]

@@ -3,7 +3,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::stack::{Stack, StackOpts, PRICE_VERSION};
+use common::stack::{Stack, StackOpts, CHEAP, PRICE_VERSION};
 use common::{post_json, send};
 use serde_json::{json, Value};
 
@@ -12,9 +12,21 @@ const TASK: &str = "0199c0de-1234-7abc-8def-0123456789ab";
 fn reserve_body(kind: &str, max_cost_micros: i64) -> Value {
     json!({
         "task_id": TASK,
+        "model_id": CHEAP,
         "kind": kind,
         "category": "metered",
         "max_cost_micros": max_cost_micros,
+        "price_version": PRICE_VERSION,
+    })
+}
+
+fn settle_body(reservation: &str, cost: Value) -> Value {
+    json!({
+        "reservation_id": reservation,
+        "task_id": TASK,
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "actual_cost_micros": cost,
         "price_version": PRICE_VERSION,
     })
 }
@@ -30,9 +42,10 @@ async fn reservation(stack: &Stack, id: &str) -> (String, i64) {
 #[tokio::test]
 async fn adapter_reserve_then_reconcile_roundtrip() {
     let stack = Stack::start(StackOpts::default()).await;
+    // A client figure above the server's worst case is honoured: it may only raise the hold.
     let (resp, body) = send(
         &stack.app,
-        post_json("/v1/budget/reserve", &reserve_body("coding", 50_000)),
+        post_json("/v1/budget/reserve", &reserve_body("coding", 150_000)),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
@@ -41,15 +54,10 @@ async fn adapter_reserve_then_reconcile_roundtrip() {
         .expect("reservation id")
         .to_owned();
     assert_eq!(body["data"]["task_id"], TASK);
-    assert_eq!(reservation(&stack, &id).await, ("held".to_owned(), 50_000));
+    assert_eq!(body["data"]["max_cost_micros"], 150_000);
+    assert_eq!(reservation(&stack, &id).await, ("held".to_owned(), 150_000));
 
-    let settle = json!({
-        "reservation_id": id,
-        "input_tokens": 100,
-        "output_tokens": 20,
-        "actual_cost_micros": 1_234,
-        "price_version": PRICE_VERSION,
-    });
+    let settle = settle_body(&id, json!(1_234));
     let (resp, body) = send(&stack.app, post_json("/v1/budget/reconcile", &settle)).await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(body["data"]["settled"], true);
@@ -99,7 +107,13 @@ async fn reserve_with_unknown_price_version_is_budget_unknown_price() {
 #[tokio::test]
 async fn reserve_requires_explicit_kind_and_category() {
     let stack = Stack::start(StackOpts::default()).await;
-    for missing in ["kind", "category", "price_version", "max_cost_micros"] {
+    for missing in [
+        "kind",
+        "category",
+        "price_version",
+        "max_cost_micros",
+        "task_id",
+    ] {
         let mut req = reserve_body("default", 10_000);
         req.as_object_mut().expect("object").remove(missing);
         let (resp, body) = send(&stack.app, post_json("/v1/budget/reserve", &req)).await;
@@ -131,20 +145,15 @@ async fn reconcile_unknown_cost_is_unresolved() {
         .as_str()
         .expect("reservation id")
         .to_owned();
-    let settle = json!({
-        "reservation_id": id,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "actual_cost_micros": null,
-        "price_version": PRICE_VERSION,
-    });
+    let held = reservation(&stack, &id).await.1;
+    let settle = settle_body(&id, Value::Null);
     let (resp, body) = send(&stack.app, post_json("/v1/budget/reconcile", &settle)).await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(body["data"]["settled"], false);
     assert_eq!(body["data"]["state"], "unresolved");
     assert_eq!(
         reservation(&stack, &id).await,
-        ("unresolved".to_owned(), 40_000),
+        ("unresolved".to_owned(), held),
         "never assumed zero"
     );
     stack.finish().await;
@@ -153,13 +162,7 @@ async fn reconcile_unknown_cost_is_unresolved() {
 #[tokio::test]
 async fn reconcile_unknown_reservation_is_not_found() {
     let stack = Stack::start(StackOpts::default()).await;
-    let settle = json!({
-        "reservation_id": TASK,
-        "input_tokens": 1,
-        "output_tokens": 1,
-        "actual_cost_micros": 1,
-        "price_version": PRICE_VERSION,
-    });
+    let settle = settle_body(TASK, json!(1));
     let (resp, body) = send(&stack.app, post_json("/v1/budget/reconcile", &settle)).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{body}");
     stack.finish().await;

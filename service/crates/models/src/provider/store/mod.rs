@@ -1,5 +1,7 @@
 //! Conversation persistence (Postgres). Everything here survives a service restart.
 mod calls;
+mod classes;
+mod recent;
 mod reconcile;
 
 pub use calls::{CallStatus, CostState, ModelCallRecord};

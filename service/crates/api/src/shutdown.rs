@@ -2,6 +2,28 @@
 
 use std::future::Future;
 use std::io;
+use std::time::Duration;
+
+use tokio_util::task::TaskTracker;
+
+/// Stop accepting tracked turns and wait up to `within` for the running ones to finish. A turn
+/// outlives its HTTP request, so serving stopping does not mean the work did. Returns whether
+/// every turn finished in time.
+pub async fn drain_turns(turns: &TaskTracker, within: Duration) -> bool {
+    turns.close();
+    let in_flight = turns.len();
+    if in_flight > 0 {
+        tracing::info!(in_flight, "waiting for detached turns to finish");
+    }
+    let drained = tokio::time::timeout(within, turns.wait()).await.is_ok();
+    if !drained {
+        tracing::warn!(
+            remaining = turns.len(),
+            "detached turns still running at the drain deadline"
+        );
+    }
+    drained
+}
 
 /// Install the signal handlers now and return a future that resolves on the first
 /// SIGTERM or SIGINT. Handlers are registered before this returns, so no signal is missed.

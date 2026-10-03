@@ -282,6 +282,20 @@ async fn observe(case: &Case) -> (Expected, bool) {
         let direct = f.engine.authorize(&req, &ctx).decision;
         assert_eq!(kind(&direct), observed, "{}: authorize vs gate", case.id);
     }
+    if let Some(text) = &case.tool_output {
+        // The injected text has no channel into authorize except as data in the request; carrying
+        // it as an extra argument must not move the verdict.
+        let mut carried = req.clone();
+        carried.args.push(text.clone());
+        let with_text = f.engine.authorize(&carried, &ctx).decision;
+        let without = f.engine.authorize(&req, &ctx).decision;
+        assert_eq!(
+            kind(&with_text),
+            kind(&without),
+            "{}: injected tool output changed the verdict",
+            case.id
+        );
+    }
     (observed, ran.load(Ordering::SeqCst) > 0)
 }
 

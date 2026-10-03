@@ -1,10 +1,12 @@
 //! Ollama Cloud adapter: `POST {base}/api/chat` with Bearer auth, NDJSON streaming.
 //! The base URL comes from the registry entry and must pass the cloud-only guard.
 use super::common::{
-    allow_unverified_from_env, http_error, net_error, read_lines, usage_report, vet_request,
-    wire_role, with_deadline,
+    admit_subscription, allow_unverified_from_env, http_error, net_error, read_lines, usage_report,
+    vet_request, wire_role, with_deadline,
 };
 use super::guard::{guarded_client, GuardedResolver};
+use super::limits::{now_epoch, Block, LimitGate};
+use super::quota::QuotaLimiter;
 use super::registry::{ModelEntry, ProviderKind, ProviderRegistry};
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
@@ -19,6 +21,8 @@ use tracing::{info, warn};
 
 pub const OLLAMA_KEY_ENV: &str = "OLLAMA_API_KEY";
 const CHAT_PATH: &str = "/api/chat";
+/// Backoff after a 429 that carries no usable `Retry-After`.
+const DEFAULT_RETRY_AFTER_SECS: u64 = 60;
 
 pub struct OllamaCloudProvider {
     client: reqwest::Client,
@@ -26,6 +30,8 @@ pub struct OllamaCloudProvider {
     registry: Arc<ProviderRegistry>,
     redactor: Redactor,
     allow_unverified: bool,
+    quota: QuotaLimiter,
+    gate: LimitGate,
 }
 
 impl std::fmt::Debug for OllamaCloudProvider {
@@ -52,6 +58,8 @@ impl OllamaCloudProvider {
             registry,
             redactor,
             allow_unverified: allow_unverified_from_env(),
+            quota: QuotaLimiter::per_minute(),
+            gate: LimitGate::default(),
         })
     }
 
@@ -90,6 +98,12 @@ impl OllamaCloudProvider {
             .send()
             .await
             .map_err(|e| net_error(&self.redactor, e))?;
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.gate.record(Some(Block {
+                until: now_epoch() + retry_after_secs(&resp),
+                reason: "rate limited (HTTP 429)".to_owned(),
+            }));
+        }
         if !resp.status().is_success() {
             return Err(http_error(&self.redactor, resp).await);
         }
@@ -126,6 +140,8 @@ impl Provider for OllamaCloudProvider {
             ProviderKind::OllamaCloud,
             self.allow_unverified,
         )?;
+        self.gate.check(&entry.id)?;
+        admit_subscription(&entry, &self.quota)?;
         let trace = req.trace;
         let result = with_deadline(req.deadline_ms, self.call(&entry, &req)).await;
         match &result {
@@ -136,6 +152,16 @@ impl Provider for OllamaCloudProvider {
         }
         result
     }
+}
+
+/// Seconds the provider asked us to wait. Only the delta-seconds form is read; an HTTP-date or a
+/// missing header falls back to a conservative minute.
+fn retry_after_secs(resp: &reqwest::Response) -> u64 {
+    resp.headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_RETRY_AFTER_SECS)
 }
 
 fn chat_messages(msgs: &[ModelMessage]) -> Result<Vec<serde_json::Value>> {

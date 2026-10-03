@@ -1,5 +1,6 @@
 //! Logic shared by provider adapters: request vetting, deadlines, error mapping, line streaming.
-use super::registry::{Health, ModelEntry, ProviderKind, ProviderRegistry};
+use super::quota::QuotaLimiter;
+use super::registry::{Billing, Health, ModelEntry, ProviderKind, ProviderRegistry};
 use futures_util::StreamExt;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::money::Price;
@@ -105,6 +106,20 @@ pub(crate) fn wire_role(m: &ModelMessage) -> Result<&'static str> {
     } else {
         "user"
     })
+}
+
+/// Subscription-billed entries are bounded by provider-reported limits and an optional local quota,
+/// not by the dollar budget.
+pub(crate) fn admit_subscription(entry: &ModelEntry, quota: &QuotaLimiter) -> Result<()> {
+    if entry.billing != Billing::Subscription {
+        return Ok(());
+    }
+    // A configured quota is an extra local burst cap; the provider's own reported limits (see
+    // `limits.rs`) are what actually bound a subscription.
+    match entry.quota_requests_per_minute {
+        Some(limit) => quota.admit(&entry.id, limit),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn usage_report(price: &Price, input_tokens: u64, output_tokens: u64) -> UsageReport {

@@ -20,7 +20,8 @@ use pair_models::classification::config::RoutingConfig;
 use pair_models::classification::jev::{ApiKey, JevClassifier, JevSettings};
 use pair_models::classification::questions::QuestionSet;
 use pair_models::provider::{
-    AnthropicProvider, CloudProvider, Endpoint, Health, ModelEntry, ProviderKind, ProviderRegistry,
+    AnthropicProvider, Billing, ClaudeCodeProvider, CloudProvider, Endpoint, Health, ModelEntry,
+    ProviderKind, ProviderRegistry,
 };
 use pair_policy::PolicyEngine;
 use pair_telemetry::health::{DiskStats, BYTES_PER_GIB};
@@ -49,7 +50,20 @@ pub struct StackOpts {
     pub limits: Option<Limits>,
     /// `PAIR_TURN_ALLOW_KIND_OVERRIDE`: `/v1/turn` may carry `kind: research|coding`.
     pub allow_turn_kind_override: bool,
+    /// Adds the subscription model `SUB` (served by a fake `claude` CLI printing `SUB_TEXT`).
+    pub subscription: Option<SubscriptionOpts>,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SubscriptionOpts {
+    /// `SUB` is the fallback behind `MID` in the strong tier.
+    Fallback,
+    /// `SUB` is the primary of the strong tier.
+    Primary,
+}
+
+pub const SUB: &str = "sub-sonnet";
+pub const SUB_TEXT: &str = "hello from the subscription";
 
 impl Default for StackOpts {
     fn default() -> Self {
@@ -63,8 +77,44 @@ impl Default for StackOpts {
             public_only_models: false,
             limits: None,
             allow_turn_kind_override: false,
+            subscription: None,
         }
     }
+}
+
+fn sub_entry(base: &str) -> ModelEntry {
+    let mut e = entry(
+        SUB,
+        base,
+        (0, 0),
+        true,
+        &[DataClass::Public, DataClass::Personal],
+    );
+    e.provider = ProviderKind::ClaudeCode;
+    e.billing = Billing::Subscription;
+    e.upstream_id = "sonnet".to_owned();
+    e.price = Some(Price {
+        version: "subscription".to_owned(),
+        input_per_mtok: Micros(0),
+        output_per_mtok: Micros(0),
+    });
+    e
+}
+
+/// A fake `claude` CLI that answers `SUB_TEXT` as the real one would.
+fn fake_claude(dir: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let json = format!(
+        r#"{{"type":"result","is_error":false,"result":"{SUB_TEXT}","uuid":"sub-req-1","usage":{{"input_tokens":11,"output_tokens":7}},"modelUsage":{{"claude-sonnet-5-5-test":{{"outputTokens":7}}}}}}"#
+    );
+    let path = dir.join("claude");
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\ncat >/dev/null\ncat <<'EOF'\n{json}\nEOF\n"),
+    )
+    .expect("write fake claude");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    path
 }
 
 pub fn budget_yaml(month: &str, day: &str, classifier: &str, task: &str) -> String {
@@ -100,6 +150,8 @@ fn entry(
     let (in_micros, out_micros) = prices;
     ModelEntry {
         id: id.to_owned(),
+        upstream_id: id.to_owned(),
+        billing: Billing::Metered,
         provider: ProviderKind::Anthropic,
         endpoint: Endpoint::unchecked_for_tests(base),
         modalities: vec!["text".to_owned()],
@@ -120,7 +172,7 @@ fn entry(
     }
 }
 
-fn routing_yaml(baseline: &str, max_attempts: usize) -> String {
+fn routing_yaml(baseline: &str, max_attempts: usize, sub: Option<SubscriptionOpts>) -> String {
     let by_intent: String = [
         "coding",
         "research",
@@ -134,6 +186,18 @@ fn routing_yaml(baseline: &str, max_attempts: usize) -> String {
     .map(|i| format!("{i}: {baseline}"))
     .collect::<Vec<_>>()
     .join(", ");
+    let sub_line = format!("- {{id: {SUB}, provider: claude_code, tier: strong, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 0, output_price_micros_per_mtok: 0}}\n    ");
+    let mid_line = format!("- {{id: {MID}, provider: anthropic, tier: strong, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 2000000, output_price_micros_per_mtok: 10000000}}\n    ");
+    let strong = match sub {
+        None => mid_line,
+        Some(SubscriptionOpts::Fallback) => format!("{mid_line}{sub_line}"),
+        Some(SubscriptionOpts::Primary) => format!("{sub_line}{mid_line}"),
+    };
+    let providers = if sub.is_some() {
+        "[anthropic, claude_code]"
+    } else {
+        "[anthropic]"
+    };
     format!(
         "routing:\n  classifier:\n    mode: shadow\n    endpoint: https://api.typesafe.ai/v1/systemone\n    \
          model: jev-1.13.0\n    deadline_ms: 1000\n    input_price_micros_per_mtok: 42000\n    \
@@ -143,9 +207,9 @@ fn routing_yaml(baseline: &str, max_attempts: usize) -> String {
          tier_order: [routine, strong, deep]\n  \
          tier_by_difficulty: {{routine: routine, substantial: strong, deep: deep}}\n  \
          baseline:\n    default_tier: {baseline}\n    by_intent: {{{by_intent}}}\n  thresholds: []\n  \
-         data_class_providers:\n    public: [anthropic]\n    personal: [anthropic]\n  candidates:\n    \
+         data_class_providers:\n    public: {providers}\n    personal: {providers}\n  candidates:\n    \
          - {{id: {CHEAP}, provider: anthropic, tier: routine, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 1000000, output_price_micros_per_mtok: 5000000}}\n    \
-         - {{id: {MID}, provider: anthropic, tier: strong, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 2000000, output_price_micros_per_mtok: 10000000}}\n    \
+         {strong}\
          - {{id: {PREMIUM}, provider: anthropic, tier: deep, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 4000000, output_price_micros_per_mtok: 20000000}}\n"
     )
 }
@@ -174,26 +238,27 @@ impl Stack {
             &[DataClass::Public, DataClass::Personal]
         };
         let base = &provider.base;
-        let registry = Arc::new(
-            ProviderRegistry::from_entries(vec![
-                entry(
-                    CHEAP,
-                    base,
-                    (1_000_000, 5_000_000),
-                    verified(CHEAP),
-                    classes,
-                ),
-                entry(MID, base, (2_000_000, 10_000_000), verified(MID), classes),
-                entry(
-                    PREMIUM,
-                    base,
-                    (4_000_000, 20_000_000),
-                    verified(PREMIUM),
-                    classes,
-                ),
-            ])
-            .expect("registry"),
-        );
+        let mut entries = vec![
+            entry(
+                CHEAP,
+                base,
+                (1_000_000, 5_000_000),
+                verified(CHEAP),
+                classes,
+            ),
+            entry(MID, base, (2_000_000, 10_000_000), verified(MID), classes),
+            entry(
+                PREMIUM,
+                base,
+                (4_000_000, 20_000_000),
+                verified(PREMIUM),
+                classes,
+            ),
+        ];
+        if opts.subscription.is_some() {
+            entries.push(sub_entry(base));
+        }
+        let registry = Arc::new(ProviderRegistry::from_entries(entries).expect("registry"));
         let adapter = AnthropicProvider::new(Secret::new("mock-key-not-real"), registry.clone())
             .expect("anthropic adapter")
             .with_allow_unverified_ids(false);
@@ -224,17 +289,28 @@ impl Stack {
         std::fs::create_dir_all(&home).expect("home");
         let policy = PolicyEngine::from_config_file(&repo_root().join("config/policy.yaml"), &home)
             .expect("policy");
+        let cloud = CloudProvider::new(registry.clone(), Some(adapter), None);
+        let cloud = if opts.subscription.is_some() {
+            let cli = fake_claude(&scratch);
+            cloud.with_claude_code(ClaudeCodeProvider::new(cli, registry.clone()))
+        } else {
+            cloud
+        };
         let mut services = build_services(ServiceInputs {
             pool: db.pool.clone(),
             budget: BudgetConfig::from_yaml(&opts.budget_yaml).expect("budget"),
             registry: registry.clone(),
-            routing: RoutingConfig::from_yaml(&routing_yaml(opts.baseline_tier, opts.max_attempts))
-                .expect("routing"),
+            routing: RoutingConfig::from_yaml(&routing_yaml(
+                opts.baseline_tier,
+                opts.max_attempts,
+                opts.subscription,
+            ))
+            .expect("routing"),
             classifier,
             questions,
             context,
             policy,
-            provider: Arc::new(CloudProvider::new(registry.clone(), Some(adapter), None)),
+            provider: Arc::new(cloud),
             workspace_root: Some(workspace.clone()),
             approver_token: Some(APPROVER_TOKEN.to_owned()),
             allow_unverified_ids: false,

@@ -2,7 +2,7 @@
 use super::mock::{self, Mock, Reply, TestDb};
 use super::store::{ConversationStore, CostState, ModelCallRecord, NewMessage};
 use super::{
-    AnthropicProvider, Endpoint, Health, ModelEntry, OllamaCloudProvider, ProviderKind,
+    AnthropicProvider, Billing, Endpoint, Health, ModelEntry, OllamaCloudProvider, ProviderKind,
     ProviderRegistry,
 };
 use pair_core::error::ErrorCode;
@@ -22,6 +22,8 @@ const KEY: &str = "k_live_plainsecret99";
 fn entry(id: &str, kind: ProviderKind, base: &str, priced: bool) -> ModelEntry {
     ModelEntry {
         id: id.to_owned(),
+        upstream_id: id.to_owned(),
+        billing: Billing::Metered,
         provider: kind,
         endpoint: Endpoint::unchecked_for_tests(base),
         modalities: vec!["text".to_owned()],
@@ -333,6 +335,95 @@ async fn ollama_cloud_streams_ndjson_with_bearer_auth() {
     assert_eq!(cap[0].path, "/api/chat");
     assert_eq!(cap[0].headers["authorization"], format!("Bearer {KEY}"));
     assert_eq!(cap[0].body["options"]["num_predict"], 256);
+}
+
+fn ollama_subscription_entry(base: &str, quota: u32) -> ModelEntry {
+    let mut e = entry("gemma4:31b", ProviderKind::OllamaCloud, base, false);
+    e.billing = Billing::Subscription;
+    e.price = Some(Price {
+        version: super::SUBSCRIPTION_PRICE_VERSION.to_owned(),
+        input_per_mtok: Micros(0),
+        output_per_mtok: Micros(0),
+    });
+    e.quota_requests_per_minute = Some(quota);
+    e
+}
+
+fn ollama_done_stream() -> Reply {
+    let line = r#"{"model":"gemma4:31b","message":{"role":"assistant","content":"ok"},"done":true,"prompt_eval_count":7,"eval_count":2}"#;
+    Reply::Stream {
+        status: 200,
+        headers: vec![],
+        chunks: vec![format!("{line}\n")],
+    }
+}
+
+#[tokio::test]
+async fn test_ollama_subscription_call_is_zero_cost() {
+    let m = mock::start(ollama_done_stream()).await;
+    let reg =
+        ProviderRegistry::from_entries(vec![ollama_subscription_entry(&m.base, 5)]).expect("reg");
+    let p = OllamaCloudProvider::new(Secret::new(KEY), Arc::new(reg)).expect("provider");
+    let resp = p
+        .generate(request("gemma4:31b", 5_000))
+        .await
+        .expect("generate");
+    assert_eq!(resp.usage.actual_cost, Some(Micros(0)));
+    assert_eq!(resp.usage.price_version, super::SUBSCRIPTION_PRICE_VERSION);
+}
+
+#[tokio::test]
+async fn test_ollama_subscription_over_quota_is_refused_before_network() {
+    let m = mock::start(ollama_done_stream()).await;
+    let reg =
+        ProviderRegistry::from_entries(vec![ollama_subscription_entry(&m.base, 1)]).expect("reg");
+    let p = OllamaCloudProvider::new(Secret::new(KEY), Arc::new(reg)).expect("provider");
+    p.generate(request("gemma4:31b", 5_000))
+        .await
+        .expect("first");
+    let err = p
+        .generate(request("gemma4:31b", 5_000))
+        .await
+        .expect_err("second refused");
+    assert_eq!(err.code, ErrorCode::ProviderUnavailable);
+    assert_eq!(
+        m.captured.lock().expect("lock").len(),
+        1,
+        "no second request sent"
+    );
+}
+
+#[tokio::test]
+async fn test_ollama_429_retry_after_blocks_further_calls_without_network() {
+    let m = mock::start(Reply::Stream {
+        status: 429,
+        headers: vec![("retry-after", "120".to_owned())],
+        chunks: vec!["{\"error\":\"too many requests\"}".to_owned()],
+    })
+    .await;
+    let reg =
+        ProviderRegistry::from_entries(vec![ollama_subscription_entry(&m.base, 100)]).expect("reg");
+    let p = OllamaCloudProvider::new(Secret::new(KEY), Arc::new(reg)).expect("provider");
+    let first = p
+        .generate(request("gemma4:31b", 5_000))
+        .await
+        .expect_err("429");
+    assert_eq!(first.code, ErrorCode::ProviderUnavailable);
+    let second = p
+        .generate(request("gemma4:31b", 5_000))
+        .await
+        .expect_err("blocked locally");
+    assert_eq!(second.code, ErrorCode::ProviderUnavailable);
+    assert!(
+        second.message.contains("provider reports"),
+        "{}",
+        second.message
+    );
+    assert_eq!(
+        m.captured.lock().expect("lock").len(),
+        1,
+        "no second request sent"
+    );
 }
 
 #[tokio::test]

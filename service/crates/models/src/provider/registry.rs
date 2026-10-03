@@ -12,7 +12,22 @@ use std::path::Path;
 pub enum ProviderKind {
     Anthropic,
     OllamaCloud,
+    /// Claude served through the `claude` CLI on the PAIR host (subscription login).
+    ClaudeCode,
 }
+
+/// How a model is paid for. Subscription calls have zero marginal cost, so the dollar budget
+/// cannot bound them; they are bounded by a mandatory per-minute request quota instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Billing {
+    #[default]
+    Metered,
+    Subscription,
+}
+
+/// Price version recorded on usage for subscription-billed calls.
+pub const SUBSCRIPTION_PRICE_VERSION: &str = "subscription";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +49,11 @@ struct PriceConfig {
 struct EntryConfig {
     id: String,
     provider: ProviderKind,
+    /// Id sent to the provider when it differs from the registry id (e.g. a CLI alias).
+    #[serde(default)]
+    upstream_id: Option<String>,
+    #[serde(default)]
+    billing: Billing,
     endpoint: String,
     #[serde(default = "default_modalities")]
     modalities: Vec<String>,
@@ -74,6 +94,9 @@ fn default_modalities() -> Vec<String> {
 pub struct ModelEntry {
     pub id: String,
     pub provider: ProviderKind,
+    /// Id sent to the provider; equals `id` unless the registry sets `upstream_id`.
+    pub upstream_id: String,
+    pub billing: Billing,
     pub endpoint: Endpoint,
     pub modalities: Vec<String>,
     pub context_tokens: u64,
@@ -196,7 +219,51 @@ fn build_entry(e: EntryConfig, endpoint: Endpoint) -> Result<ModelEntry> {
             format!("model {}: invalid token limits", e.id),
         ));
     }
+    if e.billing == Billing::Subscription {
+        if e.provider == ProviderKind::Anthropic {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "model {}: the Anthropic API is always metered; use provider claude_code for a subscription",
+                    e.id
+                ),
+            ));
+        }
+        if e.price.is_some() {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!("model {}: subscription billing takes no price", e.id),
+            ));
+        }
+        if e.quota_requests_per_minute == Some(0) {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "model {}: quota_requests_per_minute must be > 0 when set",
+                    e.id
+                ),
+            ));
+        }
+    }
+    if e.billing == Billing::Metered
+        && e.price
+            .as_ref()
+            .is_some_and(|p| p.input_per_mtok_micros == 0 && p.output_per_mtok_micros == 0)
+    {
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "model {}: a zero price on a metered entry would bypass the budget; use billing: subscription",
+                e.id
+            ),
+        ));
+    }
     let price = match e.price {
+        _ if e.billing == Billing::Subscription => Some(Price {
+            version: SUBSCRIPTION_PRICE_VERSION.to_owned(),
+            input_per_mtok: Micros(0),
+            output_per_mtok: Micros(0),
+        }),
         Some(p) if p.input_per_mtok_micros < 0 || p.output_per_mtok_micros < 0 => {
             return Err(PairError::new(
                 ErrorCode::InvalidInput,
@@ -211,6 +278,8 @@ fn build_entry(e: EntryConfig, endpoint: Endpoint) -> Result<ModelEntry> {
         None => None,
     };
     Ok(ModelEntry {
+        upstream_id: e.upstream_id.unwrap_or_else(|| e.id.clone()),
+        billing: e.billing,
         id: e.id,
         provider: e.provider,
         endpoint,
@@ -256,6 +325,80 @@ models:
         let r = ProviderRegistry::from_yaml_str(YAML).expect("parse");
         assert!(r.get("m-priced").expect("entry").paid_execution_enabled());
         assert!(!r.get("m-unpriced").expect("entry").paid_execution_enabled());
+    }
+
+    const SUB_YAML: &str = r#"
+models:
+  - id: claude-code/sonnet
+    provider: claude_code
+    upstream_id: sonnet
+    billing: subscription
+    endpoint: https://api.anthropic.com
+    context_tokens: 200000
+    max_output_tokens: 16000
+    quota_requests_per_minute: 10
+    data_policy: subscription_terms
+    allowed_data_classes: [public, personal]
+"#;
+
+    #[test]
+    fn registry_subscription_entry_is_zero_cost_and_enabled() {
+        let r = ProviderRegistry::from_yaml_str(SUB_YAML).expect("parse");
+        let e = r.get("claude-code/sonnet").expect("entry");
+        assert_eq!(e.provider, ProviderKind::ClaudeCode);
+        assert_eq!(e.billing, Billing::Subscription);
+        assert_eq!(e.upstream_id, "sonnet");
+        assert!(e.paid_execution_enabled());
+        let price = e.price.as_ref().expect("synthetic zero price");
+        assert_eq!(price.version, SUBSCRIPTION_PRICE_VERSION);
+        assert_eq!(price.max_cost(1_000_000, 16_000), Some(Micros(0)));
+    }
+
+    #[test]
+    fn registry_subscription_without_quota_is_accepted() {
+        let ok = SUB_YAML.replace("    quota_requests_per_minute: 10\n", "");
+        let r = ProviderRegistry::from_yaml_str(&ok).expect("the provider reports its own limits");
+        assert_eq!(
+            r.get("claude-code/sonnet")
+                .expect("entry")
+                .quota_requests_per_minute,
+            None
+        );
+    }
+
+    #[test]
+    fn registry_subscription_with_explicit_price_is_rejected() {
+        let bad = SUB_YAML.replace(
+            "    billing: subscription\n",
+            "    billing: subscription\n    price: { version: v1, input_per_mtok_micros: 1, output_per_mtok_micros: 1 }\n",
+        );
+        let err = ProviderRegistry::from_yaml_str(&bad).expect_err("price forbidden");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn registry_subscription_on_anthropic_api_is_rejected() {
+        let bad = SUB_YAML.replace("provider: claude_code", "provider: anthropic");
+        let err = ProviderRegistry::from_yaml_str(&bad).expect_err("api key is metered");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn registry_metered_zero_price_is_rejected() {
+        let bad = YAML.replace(
+            "input_per_mtok_micros: 2000000, output_per_mtok_micros: 10000000",
+            "input_per_mtok_micros: 0, output_per_mtok_micros: 0",
+        );
+        let err = ProviderRegistry::from_yaml_str(&bad).expect_err("zero price is a typo");
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn registry_metered_entry_defaults_upstream_id_to_id() {
+        let r = ProviderRegistry::from_yaml_str(YAML).expect("parse");
+        let e = r.get("m-priced").expect("entry");
+        assert_eq!(e.billing, Billing::Metered);
+        assert_eq!(e.upstream_id, "m-priced");
     }
 
     #[test]

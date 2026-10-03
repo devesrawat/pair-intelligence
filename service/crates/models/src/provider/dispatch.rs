@@ -1,5 +1,6 @@
 //! Routes a `ModelRequest` to the adapter that serves its model id.
 use super::anthropic::AnthropicProvider;
+use super::claude_code::ClaudeCodeProvider;
 use super::ollama_cloud::OllamaCloudProvider;
 use super::registry::{ProviderKind, ProviderRegistry};
 use async_trait::async_trait;
@@ -13,6 +14,7 @@ pub struct CloudProvider {
     registry: Arc<ProviderRegistry>,
     anthropic: Option<AnthropicProvider>,
     ollama: Option<OllamaCloudProvider>,
+    claude_code: Option<ClaudeCodeProvider>,
 }
 
 impl CloudProvider {
@@ -25,7 +27,15 @@ impl CloudProvider {
             registry,
             anthropic,
             ollama,
+            claude_code: None,
         }
+    }
+
+    /// Enable subscription-billed Claude through the `claude` CLI.
+    #[must_use]
+    pub fn with_claude_code(mut self, provider: ClaudeCodeProvider) -> Self {
+        self.claude_code = Some(provider);
+        self
     }
 }
 
@@ -45,6 +55,7 @@ impl Provider for CloudProvider {
         let adapter: Option<&dyn Provider> = match kind {
             ProviderKind::Anthropic => self.anthropic.as_ref().map(|p| p as &dyn Provider),
             ProviderKind::OllamaCloud => self.ollama.as_ref().map(|p| p as &dyn Provider),
+            ProviderKind::ClaudeCode => self.claude_code.as_ref().map(|p| p as &dyn Provider),
         };
         match adapter {
             Some(p) => p.generate(req).await,

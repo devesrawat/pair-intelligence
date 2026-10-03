@@ -5,7 +5,9 @@
 use pair_core::ids::{TaskId, TraceId};
 use pair_core::traits::Provider;
 use pair_core::types::{DataClass, ModelMessage, ModelRequest, TrustClass};
-use pair_models::provider::{AnthropicProvider, ProviderKind, ProviderRegistry};
+use pair_models::provider::{
+    AnthropicProvider, ClaudeCodeProvider, ProviderKind, ProviderRegistry,
+};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,6 +45,37 @@ async fn live_anthropic_smoke() {
     assert!(!resp.text.is_empty());
     assert!(resp.usage.input_tokens > 0 && resp.usage.output_tokens > 0);
     assert!(resp.usage.actual_cost.is_some());
+}
+
+/// One real call through the `claude` CLI on this host, using its subscription login.
+/// Run: `cargo test -p pair-models --test live_smoke live_claude_code_smoke -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "live call; needs the claude CLI logged in with a subscription"]
+async fn live_claude_code_smoke() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml");
+    let registry = Arc::new(ProviderRegistry::load(&path).expect("models.yaml"));
+    let provider = ClaudeCodeProvider::from_env(registry);
+    let req = ModelRequest {
+        model_id: "claude-code/haiku".to_owned(),
+        messages: vec![ModelMessage {
+            role: "user".into(),
+            content: "Reply with the single word: pong".into(),
+            trust: TrustClass::Owner,
+        }],
+        max_output_tokens: SMOKE_MAX_OUTPUT_TOKENS,
+        deadline_ms: SMOKE_DEADLINE_MS,
+        data_class: DataClass::Public,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+    };
+    let resp = provider.generate(req).await.expect("live call");
+    println!(
+        "resolved_model={} text={:?} usage={:?}",
+        resp.resolved_model, resp.text, resp.usage
+    );
+    assert!(resp.text.to_lowercase().contains("pong"));
+    assert!(resp.resolved_model.contains("haiku"));
+    assert_eq!(resp.usage.price_version, "subscription");
 }
 
 const MODELS_URL: &str = "https://api.anthropic.com/v1/models?limit=1000";

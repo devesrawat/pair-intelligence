@@ -148,13 +148,15 @@ mod tests {
     use super::*;
     use pair_core::money::Price;
     use pair_core::types::DataClass;
-    use pair_models::provider::{Endpoint, Health, ProviderKind};
+    use pair_models::provider::{Billing, Endpoint, Health, ProviderKind};
 
     const VERSION: &str = "pv";
 
     fn entry(id: &str, input: i64, output: i64) -> ModelEntry {
         ModelEntry {
             id: id.to_owned(),
+            upstream_id: id.to_owned(),
+            billing: Billing::Metered,
             provider: ProviderKind::Anthropic,
             endpoint: Endpoint::unchecked_for_tests("http://127.0.0.1:1"),
             modalities: vec!["text".to_owned()],

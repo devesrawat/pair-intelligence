@@ -55,6 +55,8 @@ pub struct TurnResponse {
     pub trace_id: String,
     pub conversation_id: String,
     pub message_id: String,
+    /// True when this is the stored answer of an earlier, finished turn (no new provider call).
+    pub replayed: bool,
 }
 
 fn parse_data_class(raw: &str) -> Result<DataClass> {

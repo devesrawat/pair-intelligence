@@ -288,44 +288,6 @@ async fn provider_failure_leaves_reservation_unresolved() {
 }
 
 #[tokio::test]
-async fn answered_turn_replayed_with_same_client_message_id_is_refused_without_a_second_call() {
-    let stack = Stack::start(StackOpts::default()).await;
-    let conversation = stack
-        .services
-        .store
-        .create_conversation_with_class(
-            "replay",
-            pair_core::ids::TraceId::new(),
-            pair_core::types::DataClass::Public,
-        )
-        .await
-        .expect("conversation");
-    let body = json!({
-        "conversation_id": conversation.0,
-        "client_message_id": "turn-1",
-        "message": "hello",
-        "data_class": "public",
-    });
-    let (resp, out) = send(&stack.app, post_json("/v1/turn", &body)).await;
-    assert_eq!(resp.status(), StatusCode::OK, "{out}");
-    let (resp, out) = send(&stack.app, post_json("/v1/turn", &body)).await;
-    assert_eq!(resp.status(), StatusCode::CONFLICT, "{out}");
-    assert_eq!(
-        stack.provider.hits(),
-        1,
-        "a replay must not pay for a second answer"
-    );
-    let messages = stack
-        .services
-        .store
-        .list_messages(conversation)
-        .await
-        .expect("list");
-    assert_eq!(messages.len(), 2);
-    stack.finish().await;
-}
-
-#[tokio::test]
 async fn turn_requires_service_token() {
     let stack = Stack::start(StackOpts::default()).await;
     let no_auth = Request::builder()

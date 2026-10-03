@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use pair_api::limits::Limits;
 use pair_api::providers::ProviderHealth;
 use pair_api::services::Services;
 use pair_api::state::AppState;
@@ -45,6 +46,7 @@ pub struct StackOpts {
     pub max_attempts: usize,
     /// Registry models that may see public data only (a personal turn is then `provider_disallowed`).
     pub public_only_models: bool,
+    pub limits: Option<Limits>,
 }
 
 impl Default for StackOpts {
@@ -57,6 +59,7 @@ impl Default for StackOpts {
             baseline_tier: "strong",
             max_attempts: 3,
             public_only_models: false,
+            limits: None,
         }
     }
 }
@@ -236,6 +239,7 @@ impl Stack {
         .expect("services");
         services.turn_budget = TURN_BUDGET;
         let state = AppState::new(db.pool.clone(), super::TOKEN)
+            .with_limits(opts.limits.unwrap_or_default())
             .with_services(services.clone())
             .with_providers(registry as Arc<dyn ProviderHealth>)
             .with_disk_probe(roomy_disk());

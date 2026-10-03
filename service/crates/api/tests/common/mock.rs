@@ -17,6 +17,8 @@ pub enum ProviderMode {
         input_tokens: u64,
         output_tokens: u64,
     },
+    /// Like `Ok`, after waiting `delay_ms` (the request is counted when it arrives).
+    Slow { text: String, delay_ms: u64 },
     /// Non-2xx response: the adapter maps it to `ProviderUnavailable`.
     Fail(u16),
 }
@@ -89,7 +91,17 @@ async fn provider_handler(State(st): State<ProviderState>, body: String) -> Resp
         .lock()
         .expect("models lock")
         .push(model.clone());
+    if let ProviderMode::Slow { text, delay_ms } = st.mode.clone() {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            stream_body(&model, &text, 120, 30),
+        )
+            .into_response();
+    }
     match st.mode {
+        ProviderMode::Slow { .. } => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         ProviderMode::Ok {
             text,
             input_tokens,

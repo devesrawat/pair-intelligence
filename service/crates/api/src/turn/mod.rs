@@ -1,9 +1,11 @@
 //! `POST /v1/turn`: refuse disallowed data classes, classify (shadow), plan a route within the
 //! task cap, compile context, call the provider through the budget, persist with a cost state.
 
+mod claim;
 mod open;
 mod persist;
 pub mod recording;
+mod replay;
 pub mod request;
 
 use std::time::Instant;
@@ -24,12 +26,14 @@ use pair_workflows::limits::{RunLimits, MAX_TOOL_CALLS};
 use serde_json::json;
 
 use crate::services::Services;
-use open::open_conversation;
+use claim::ClaimStore;
+use open::{open_conversation, Fresh, Opened};
 use persist::{persist_attempts, CallContext};
 use recording::{AttemptOutcome, AttemptTrace, TracedBudget, TracedProvider, TurnTrace};
 pub use request::{TurnRequest, TurnResponse, ValidTurn};
 
 const RECENT_MESSAGES: usize = 12;
+const TITLE_CHARS: usize = 60;
 const SUMMARY_MESSAGES: usize = 3;
 const SUMMARY_CHARS: usize = 160;
 const ROUTING_BYTES_PER_TOKEN: usize = 4;
@@ -80,14 +84,36 @@ pub async fn run_turn(
     turn: ValidTurn,
 ) -> Result<TurnResponse> {
     let task = turn.task_id();
-    let opened = open_conversation(svc, &turn, task, trace).await?;
+    let fresh = match open_conversation(svc, &turn, task, trace).await? {
+        Opened::Answered(response) => return Ok(response),
+        Opened::Fresh(fresh) => fresh,
+    };
+    let claim = fresh.claim;
+    let result = run_claimed(svc, actor, trace, turn, fresh).await;
+    if let Some(task) = claim {
+        ClaimStore::new(svc.store.pool().clone())
+            .finish(task, result.is_ok())
+            .await;
+    }
+    result
+}
+
+/// The paid part of a turn: route, call the provider through the budget, persist.
+async fn run_claimed(
+    svc: &Services,
+    actor: &str,
+    trace: TraceId,
+    turn: ValidTurn,
+    fresh: Fresh,
+) -> Result<TurnResponse> {
+    let task = turn.task_id();
     // Everything below (routing, the classifier summary, the provider call) runs under the
     // conversation's highest class, not just this turn's.
     let turn = ValidTurn {
-        data_class: opened.class,
+        data_class: fresh.class,
         ..turn
     };
-    let recent = recent_messages(&opened.history);
+    let recent = recent_messages(&fresh.history);
 
     let outcome = route(svc, &turn, task, &recent).await?;
     record_shadow(svc, actor, trace, task, &outcome).await;
@@ -98,8 +124,8 @@ pub async fn run_turn(
     let ids = TurnIds {
         task,
         trace,
-        conversation: opened.conversation,
-        user_client_id: opened.user_client_id,
+        conversation: fresh.conversation,
+        user_client_id: fresh.user_client_id,
     };
     finish(svc, &ids, &prepared, &attempt_trace, generated).await
 }
@@ -204,6 +230,7 @@ async fn finish(
         trace_id: ids.trace.0.to_string(),
         conversation_id: ids.conversation.to_string(),
         message_id: persisted.message_id.to_string(),
+        replayed: false,
     })
 }
 

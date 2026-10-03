@@ -1,7 +1,7 @@
 //! `pair-ops purge|export`. Reads DATABASE_URL (required: there is deliberately no default, so a
 //! typo can never point a purge at the live database).
-use ops::cli::{self, Command, USAGE};
-use ops::{export, retention, OpsError};
+use ops::cli::{self, Command, EXIT_STUCK_FOUND, USAGE};
+use ops::{audit, export, retention, OpsError};
 use sqlx::postgres::PgPoolOptions;
 use std::process::ExitCode;
 
@@ -9,9 +9,48 @@ const DATABASE_URL_ENV: &str = "DATABASE_URL";
 const MAX_CONNECTIONS: u32 = 2;
 const EXIT_USAGE: u8 = 2;
 
-async fn run(command: Command) -> Result<String, OpsError> {
+/// Text for stdout and the process exit code.
+struct Outcome {
+    text: String,
+    exit: ExitCode,
+}
+
+impl Outcome {
+    fn ok(text: String) -> Self {
+        Self {
+            text,
+            exit: ExitCode::SUCCESS,
+        }
+    }
+}
+
+async fn stuck_report(
+    pool: &sqlx::PgPool,
+    older_than: chrono::Duration,
+) -> Result<Outcome, OpsError> {
+    let rows = audit::stuck_executions(pool, older_than).await?;
+    let total = audit::stuck_count(pool, older_than).await?;
+    let mut text = format!(
+        "{total} tool execution(s) still 'started' after {} minute(s)\n",
+        older_than.num_minutes()
+    );
+    for r in &rows {
+        text.push_str(&format!(
+            "  {} tool={} decision={} age={}s trace={} task={}\n",
+            r.id, r.tool, r.decision, r.age_secs, r.trace_id, r.task_id
+        ));
+    }
+    let exit = if total > 0 {
+        ExitCode::from(EXIT_STUCK_FOUND)
+    } else {
+        ExitCode::SUCCESS
+    };
+    Ok(Outcome { text, exit })
+}
+
+async fn run(command: Command) -> Result<Outcome, OpsError> {
     if command == Command::Help {
-        return Ok(USAGE.to_owned());
+        return Ok(Outcome::ok(USAGE.to_owned()));
     }
     let url = std::env::var(DATABASE_URL_ENV)
         .map_err(|_| OpsError::InvalidArgument(format!("{DATABASE_URL_ENV} is not set")))?;
@@ -36,7 +75,9 @@ async fn run(command: Command) -> Result<String, OpsError> {
                 out.push_str(&format!("  {}: {}\n", t.target, t.erased));
             }
             for s in &report.skipped {
-                out.push_str(&format!("  {s}: skipped (not in this schema)\n"));
+                out.push_str(&format!(
+                    "  {s}: skipped (nothing to erase in this schema)\n"
+                ));
             }
             out
         }
@@ -54,10 +95,15 @@ async fn run(command: Command) -> Result<String, OpsError> {
             }
             out
         }
+        Command::AuditStuck { older_than } => {
+            let outcome = stuck_report(&pool, older_than).await;
+            pool.close().await;
+            return outcome;
+        }
         Command::Help => USAGE.to_owned(),
     };
     pool.close().await;
-    Ok(text)
+    Ok(Outcome::ok(text))
 }
 
 #[tokio::main]
@@ -70,9 +116,9 @@ async fn main() -> ExitCode {
         }
     };
     match run(command).await {
-        Ok(text) => {
-            print!("{text}");
-            ExitCode::SUCCESS
+        Ok(outcome) => {
+            print!("{}", outcome.text);
+            outcome.exit
         }
         Err(e) => {
             eprintln!("pair-ops: {e}");

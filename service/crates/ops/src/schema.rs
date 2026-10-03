@@ -9,13 +9,17 @@ pub(crate) struct ColumnInfo {
     pub nullable: bool,
 }
 
-/// Columns of `table` in the current schema, in ordinal order. Empty when the table does not exist.
+/// Columns of the ordinary table that the unqualified name `table` resolves to through the
+/// session's `search_path` (exactly what the purge SQL hits), in ordinal order. Empty when no
+/// such table is visible. `to_regclass` + `pg_attribute` rather than `information_schema` with
+/// `current_schema()`, which can name a different schema than the one the SQL resolves to.
 pub(crate) async fn columns(pool: &PgPool, table: &str) -> Result<Vec<ColumnInfo>> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT column_name::text, data_type::text, is_nullable::text \
-         FROM information_schema.columns \
-         WHERE table_schema = current_schema() AND table_name = $1 \
-         ORDER BY ordinal_position",
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT a.attname::text, format_type(a.atttypid, NULL)::text, NOT a.attnotnull \
+         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+         WHERE a.attrelid = to_regclass($1) AND c.relkind IN ('r', 'p') \
+           AND a.attnum > 0 AND NOT a.attisdropped \
+         ORDER BY a.attnum",
     )
     .bind(table)
     .fetch_all(pool)
@@ -25,7 +29,7 @@ pub(crate) async fn columns(pool: &PgPool, table: &str) -> Result<Vec<ColumnInfo
         .map(|(name, data_type, nullable)| ColumnInfo {
             name,
             data_type,
-            nullable: nullable == "YES",
+            nullable,
         })
         .collect())
 }

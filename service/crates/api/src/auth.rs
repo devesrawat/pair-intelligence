@@ -11,7 +11,8 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub const ACTOR_HEADER: &str = "x-actor";
-const MAX_ACTOR_LEN: usize = 128;
+/// Actor ids are persisted and logged; restrict them to a conservative charset.
+const MAX_ACTOR_LEN: usize = 64;
 const BEARER_PREFIX: &str = "bearer ";
 
 /// Authenticated actor id from `X-Actor`.
@@ -36,8 +37,12 @@ pub fn tokens_match(expected: &str, provided: &str) -> bool {
     expected.as_bytes().ct_eq(provided.as_bytes()).into()
 }
 
-fn valid_actor(s: &str) -> bool {
-    !s.is_empty() && s.len() <= MAX_ACTOR_LEN && !s.chars().any(char::is_control)
+/// `[A-Za-z0-9._:@-]{1,64}`
+pub fn valid_actor(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_ACTOR_LEN
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'@' | b'-'))
 }
 
 pub async fn require_auth(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
@@ -76,6 +81,32 @@ mod tests {
         assert!(!tokens_match("secret-token", "secret-tokeN"));
         assert!(!tokens_match("secret-token", "secret"));
         assert!(!tokens_match("secret-token", ""));
+    }
+
+    #[test]
+    fn test_valid_actor_allows_only_safe_charset() {
+        for ok in [
+            "tester",
+            "svc:openclaw",
+            "a.b_c-d@host",
+            &"a".repeat(MAX_ACTOR_LEN),
+        ] {
+            assert!(valid_actor(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "a b",
+            "a/b",
+            "a\nb",
+            "a\u{200b}b",
+            "a\u{202e}b",
+            "caf\u{e9}",
+            "a;b",
+            "a<b>",
+            &"a".repeat(MAX_ACTOR_LEN + 1),
+        ] {
+            assert!(!valid_actor(bad), "{bad:?}");
+        }
     }
 
     #[test]

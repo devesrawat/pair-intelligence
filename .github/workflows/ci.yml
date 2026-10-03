@@ -14,35 +14,28 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Postgres service container below; tests create per-test databases (pair_t_*_<uuid>).
-  DATABASE_URL: postgres://pair:pair@127.0.0.1:5432/pair
+  # Dev-only Postgres from deploy/compose.dev.yaml (fixed dev password, loopback); tests create
+  # per-test databases (pair_t_*_<uuid>).
+  DATABASE_URL: postgres://pair:pair@127.0.0.1:55432/pair
+  # Runner psql/pg_dump may be older than the server; ops scripts use the container's matching tools.
+  PAIR_PG_MODE: docker
 
 jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: pair
-          POSTGRES_PASSWORD: pair
-          POSTGRES_DB: pair
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U pair"
-          --health-interval 3s
-          --health-timeout 3s
-          --health-retries 20
     defaults:
       run:
         working-directory: service
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: postgres (dev compose override)
+        working-directory: .
+        run: docker compose -f deploy/compose.dev.yaml up -d --wait postgres
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch head; re-pin when bumping
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: service
       - name: fmt
@@ -56,9 +49,15 @@ jobs:
         env:
           PAIR_SMOKE_PORT: "18080"
         run: scripts/check smoke
-      - name: ops script tests
+      - name: ops script tests (restore, backup, retention, pgtools, compose, openclaw gate)
         working-directory: .
-        run: bash scripts/tests/test_retention.sh
+        run: |
+          for t in scripts/tests/*.sh; do bash "$t"; done
+      - name: restore drill (seeded scratch database)
+        working-directory: .
+        env:
+          PAIR_BACKUP_UNENCRYPTED: "1"
+        run: scripts/restore-drill --seed-demo
 
   supply-chain:
     # Non-blocking: advisories should be visible but must not gate merges.
@@ -66,8 +65,8 @@ jobs:
     continue-on-error: true
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch head; re-pin when bumping
       - name: cargo audit
         run: |
           cargo install cargo-audit --locked

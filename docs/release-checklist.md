@@ -25,15 +25,15 @@ These are release prerequisites, not §2 gates. "Built" means code or docs exist
 
 | Item | Status | Evidence / limitation |
 |---|---|---|
-| Health checks: readiness, migrations, queue backlog, provider availability | built, locally tested | `pair-api` tests (`readyz_*`); provider source is a stub until `crates/models` implements `ProviderHealth`; backlog reads `jobs(state, created_at)`, which must match the jobs migration |
+| Health checks: readiness, migrations, queue backlog, provider availability | built, locally tested | `pair-api` tests (`crates/api/tests/http.rs`, `hardening.rs`: `readyz_fails_when_db_down`, `readyz_reports_migration_failure_and_pending`, `readyz_fails_when_no_migrations_applied`, `readyz_warns_on_stub_providers`, `readyz_provider_outage_degrades_but_stays_ready`). Providers come from `ProviderRegistry` (`config/models.yaml`, baked into the image); an empty registry is a Warn. Backlog reads `workflow_runs(state, created_at)` from `migrations/030_jobs.sql`; nothing in `pair-api` enqueues runs yet, so the depth is always 0 in the running service |
 | Boot smoke check (`scripts/check smoke`) | built, passes locally | dev-machine run; not run on the target host |
-| Operational checks as tests (disk, backlog threshold, migration failure) | built | `pair-telemetry` health tests; `readyz_fails_when_disk_critical`, `readyz_queue_backlog_gauge_and_thresholds`, `readyz_reports_migration_failure_and_pending` |
-| Alerts defined | thresholds only | `config/alerts.yaml`; no scheduler or notifier wired; owner supplies channel |
-| Daily encrypted backup, 7 daily + 4 weekly retention | built, retention tested; encryption path not exercised (`age` absent on dev machine) | `scripts/backup`, `scripts/tests/test_retention.sh`; off-host copy and source-artifact backup not built |
+| Operational checks as tests (disk, backlog threshold, migration failure) | built | `pair-telemetry` health tests (`crates/telemetry/src/health.rs`); `readyz_fails_when_disk_critical`, `readyz_queue_backlog_reads_workflow_runs`, `readyz_queue_backlog_age_thresholds`, `readyz_reports_migration_failure_and_pending` |
+| Alerts defined | thresholds only, **not wired** | `config/alerts.yaml`; no scheduler or notifier exists, so no alert (including `backup_stale`) fires; owner supplies channel |
+| Daily encrypted backup, 7 daily + 4 weekly retention | built; retention, restore safety, backup permissions tested; real `age` encryption path not exercised (`age` absent on dev machine; the restore tests use an `age` shim) | `scripts/backup`, `scripts/tests/test_retention.sh`, `test_retention_safety.sh`, `test_backup_perms.sh`, `test_restore.sh`; off-host copy and source-artifact backup not built; no scheduler runs the backup |
 | Restore drill performed | tooling drill only; production drill unmeasured | [restore-drill](runbooks/restore-drill.md) |
 | RPO 24 h / RTO 4 h | unmeasured | owner-verified on the real host only |
-| Rollback procedure | documented, unverified | [rollback](runbooks/rollback.md); image build not exercised |
-| Runbooks: provider outage, queue backlog, full disk, migration failure, backup/restore, reservation reconciliation, kill switch | documented, unverified on real host | [runbooks](runbooks/README.md) |
+| Rollback procedure | documented, unverified | [rollback](runbooks/rollback.md); the image was built and booted once by hand on the dev machine (read-only rootfs, SIGTERM stop), not in CI |
+| Runbooks: provider outage, queue backlog, full disk, migration failure, backup/restore, reservation reconciliation, kill switch | documented, unverified on real host; the kill switch lists which levels are NOT EFFECTIVE until `pair-api` hosts budget/jobs | [runbooks](runbooks/README.md) |
 | Export (conversations, memories with evidence, goals, configuration, billing ledger) and deletion | not built | depends on memory and budget crates; owner of those tasks |
 | Staging and production credentials/data separated | unmeasured | host provisioning not done |
 | Immutable image tags | policy documented | `PAIR_IMAGE_TAG`; CI does not yet build or push the image |
@@ -42,7 +42,7 @@ These are release prerequisites, not §2 gates. "Built" means code or docs exist
 
 ## 3. Automated checks to run before sign-off
 
-`scripts/check release` (fmt, clippy -D warnings, workspace tests, shell syntax, retention test). Passing it means the automated checks pass. It says nothing about the gates in section 1.
+`scripts/check release` (fmt, clippy -D warnings, workspace tests, shell syntax, every `scripts/tests/*.sh`, the boot smoke check, and a restore drill on a seeded scratch database). Passing it means the automated checks pass. It says nothing about the gates in section 1; the real-host restore drill, `age` encryption path and off-host copy stay unmeasured. Current state of everything: [STATUS](STATUS.md).
 
 ## 4. Known limitations to accept or fix (fill in at release)
 

@@ -1,7 +1,6 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { decideToolCall } from "./rules.js";
+import { createToolGate } from "./gate.ts";
+import { appendJsonl } from "./jsonl.ts";
 
 type SpikeConfig = {
   readonly usageLogPath: string;
@@ -25,11 +24,6 @@ function isSpikeConfig(value: unknown): value is SpikeConfig {
   return stringsOk && (v["injectPolicyError"] === undefined || typeof v["injectPolicyError"] === "boolean");
 }
 
-function appendJsonl(path: string, record: Readonly<Record<string, unknown>>): void {
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`);
-}
-
 export default definePluginEntry({
   id: "pair-spike",
   name: "PAIR Spike",
@@ -47,35 +41,11 @@ export default definePluginEntry({
 
     api.on(
       "before_tool_call",
-      (event) => {
-        try {
-          if (cfg.injectPolicyError === true) throw new Error("injected policy error");
-          const decision = decideToolCall(event.toolName, event.params);
-          hookLog("before_tool_call", {
-            toolName: event.toolName,
-            params: event.params,
-            decision: decision.kind,
-          });
-          if (decision.kind === "deny") {
-            return { block: true, blockReason: decision.reason };
-          }
-          if (decision.kind === "approve") {
-            return {
-              requireApproval: {
-                title: decision.title,
-                description: decision.description,
-                severity: "warning" as const,
-                timeoutMs: APPROVAL_TIMEOUT_MS,
-              },
-            };
-          }
-          return undefined;
-        } catch (err) {
-          // Fail closed: any policy error blocks the call.
-          hookLog("before_tool_call", { error: String(err), decision: "deny-on-error" });
-          return { block: true, blockReason: "pair-spike: policy error, failing closed" };
-        }
-      },
+      createToolGate({
+        log: hookLog,
+        approvalTimeoutMs: APPROVAL_TIMEOUT_MS,
+        ...(cfg.injectPolicyError === undefined ? {} : { injectPolicyError: cfg.injectPolicyError }),
+      }),
       { priority: GATE_PRIORITY },
     );
 

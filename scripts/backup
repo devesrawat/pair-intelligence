@@ -13,7 +13,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/retention.sh"
 # Default lives outside the repository working tree so dumps can never be committed.
 BACKUP_DIR="${PAIR_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pair/backups}"
-mkdir -p "$BACKUP_DIR"
+# Backups hold the whole database: everything this script creates is owner-only.
+umask 077
+mkdir -p -m 700 "$BACKUP_DIR"
 
 if [ "${1:-}" = "--prune-only" ]; then
   retention_prune "$BACKUP_DIR"; exit 0

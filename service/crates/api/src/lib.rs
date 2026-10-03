@@ -5,12 +5,14 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod healthcheck;
+pub mod limits;
 pub mod providers;
 pub mod readiness;
+pub mod shutdown;
 pub mod state;
 pub mod trace;
 
-use axum::extract::{Extension, State};
+use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::StatusCode;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
@@ -22,12 +24,18 @@ use crate::auth::{require_auth, Actor};
 use crate::state::AppState;
 use crate::trace::{trace_layer, TraceCtx};
 
+/// No endpoint accepts a request body today; keep the cap small.
+const MAX_BODY_BYTES: usize = 64 * 1024;
+
 /// Build the full router. Trace layer is outermost so 401s also carry a trace id.
 pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/readyz", get(readyz))
         .route("/v1/whoami", get(whoami))
-        .route_layer(from_fn_with_state(state.clone(), require_auth));
+        .route_layer(from_fn_with_state(state.clone(), require_auth))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
+    // `/healthz` stays outside the limits: the container healthcheck must not be shed under load.
+    let protected = limits::apply(protected, state.limits);
     Router::new()
         .route("/healthz", get(healthz))
         .merge(protected)

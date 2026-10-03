@@ -1,0 +1,12 @@
+.git
+.claude
+.superpowers
+upstream
+service/target
+**/target
+**/node_modules
+.env
+.env.*
+!.env.example
+adapters
+docs

@@ -1,11 +1,10 @@
 //! Budgeted model calls for the research stages. Page-derived content is always sent as
 //! `TrustClass::Untrusted`; instructions come only from this module (`TrustClass::Owner`).
-use crate::calls::{budgeted_generate, data_message, PriceSource};
+use crate::calls::{data_message, ModelCaller};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    traits::{BudgetEx, Provider},
-    types::{DataClass, ModelMessage, ModelRequest, TaskKind, TrustClass},
+    types::{DataClass, ModelMessage, ModelRequest, TrustClass},
 };
 use serde::de::DeserializeOwned;
 
@@ -13,12 +12,9 @@ const MAX_OUTPUT_TOKENS: u32 = 4096;
 const CALL_DEADLINE_MS: u64 = 120_000;
 
 pub struct ResearchLlm<'a> {
-    pub provider: &'a dyn Provider,
-    pub budget: &'a dyn BudgetEx,
-    pub prices: &'a dyn PriceSource,
+    pub caller: ModelCaller<'a>,
     pub task: TaskId,
     pub trace: TraceId,
-    pub model_id: String,
     pub data_class: DataClass,
 }
 
@@ -39,7 +35,7 @@ pub fn untrusted_msg(source: &str, content: &str) -> ModelMessage {
 impl ResearchLlm<'_> {
     pub async fn ask(&self, messages: Vec<ModelMessage>) -> Result<String> {
         let req = ModelRequest {
-            model_id: self.model_id.clone(),
+            model_id: String::new(),
             messages,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             deadline_ms: CALL_DEADLINE_MS,
@@ -47,15 +43,7 @@ impl ResearchLlm<'_> {
             task: self.task,
             trace: self.trace,
         };
-        Ok(budgeted_generate(
-            self.provider,
-            self.budget,
-            self.prices,
-            TaskKind::Research,
-            req,
-        )
-        .await?
-        .text)
+        Ok(self.caller.generate(req).await?.text)
     }
 
     /// Structured output only: the reply must contain one JSON object matching `T`.

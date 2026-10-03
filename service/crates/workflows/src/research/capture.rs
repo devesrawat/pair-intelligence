@@ -18,6 +18,10 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 const MAX_QUERIES: usize = 8;
+const _: () = assert!(
+    MAX_QUERIES + crate::limits::MAX_RESEARCH_SOURCES <= crate::limits::MAX_TOOL_CALLS,
+    "a full research run must fit the tool-call limit"
+);
 
 /// Network access for research. Every search and fetch runs inside `Gate::execute`, so the
 /// `SourceFetcher` is only called after policy allows it.
@@ -34,6 +38,8 @@ pub struct Network<'a> {
     pub search_host: String,
     /// The scope's declared data class, sent with every policy request.
     pub data_class: DataClass,
+    /// Every search and every fetch counts as one tool call.
+    pub limits: std::sync::Arc<crate::limits::RunLimits>,
 }
 
 impl Network<'_> {
@@ -53,6 +59,7 @@ impl Network<'_> {
     async fn search(&self, query: &str) -> Result<Vec<Candidate>> {
         tracing::debug!(task = %self.task, %query, "research search");
         let req = self.request(WEB_SEARCH, &self.search_host);
+        self.limits.begin_tool_call()?;
         self.gate
             .execute(&req, &self.ctx, || self.fetcher.search(query))
             .await
@@ -60,6 +67,7 @@ impl Network<'_> {
 
     async fn fetch(&self, url: &str, normalized: &str) -> Result<FetchOutcome> {
         let req = self.request(WEB_FETCH, normalized);
+        self.limits.begin_tool_call()?;
         self.gate
             .execute(&req, &self.ctx, || self.fetcher.fetch(url))
             .await
@@ -103,8 +111,10 @@ fn unavailable(url: &str, normalized: &str, reason: String) -> Source {
     }
 }
 
-async fn capture_one(net: &Network<'_>, url: &str, normalized: &str) -> Source {
-    match net.fetch(url, normalized).await {
+async fn capture_one(net: &Network<'_>, url: &str, normalized: &str) -> Result<Source> {
+    Ok(match net.fetch(url, normalized).await {
+        // a run limit ends the whole run; it is not a property of the page
+        Err(e) if e.code == ErrorCode::LimitExceeded => return Err(e),
         Err(e) if e.code == ErrorCode::PolicyDenied || e.code == ErrorCode::ApprovalRequired => {
             unavailable(url, normalized, format!("blocked by policy: {}", e.message))
         }
@@ -127,7 +137,7 @@ async fn capture_one(net: &Network<'_>, url: &str, normalized: &str) -> Source {
             text: Some(text),
             duplicate_of: None,
         },
-    }
+    })
 }
 
 /// Marks later sources with identical content as duplicates of the first.
@@ -163,7 +173,7 @@ pub async fn capture_sources(net: &Network<'_>, scope: &ResearchScope) -> Result
     urls.truncate(scope.max_sources);
     let mut sources = Vec::with_capacity(urls.len());
     for (url, normalized) in &urls {
-        sources.push(capture_one(net, url, normalized).await);
+        sources.push(capture_one(net, url, normalized).await?);
     }
     dedupe(&mut sources);
     Ok(sources)

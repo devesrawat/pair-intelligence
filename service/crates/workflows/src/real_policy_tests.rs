@@ -328,6 +328,7 @@ async fn research(world: &World, page: &str) -> (Vec<crate::research::Source>, S
         ctx: world.ctx(Vec::new()),
         search_host: ALLOWED_SEARCH_HOST.into(),
         data_class: DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let scope = ResearchScope {
         question: "q".into(),
@@ -377,6 +378,7 @@ async fn real_engine_denies_search_when_service_host_not_listed() {
         ctx: world.ctx(Vec::new()),
         search_host: "search.unlisted.example.org".into(),
         data_class: DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let scope = ResearchScope {
         question: "q".into(),

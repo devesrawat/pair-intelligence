@@ -10,7 +10,7 @@ use super::{
     worktree,
 };
 use crate::{
-    calls::{budgeted_generate, data_message, PriceSource},
+    calls::{data_message, ModelCaller, ModelPlanner, PriceSource},
     limits::RunLimits,
 };
 use chrono::Utc;
@@ -63,6 +63,8 @@ pub struct CodingDeps<'a> {
     pub budget: &'a dyn BudgetEx,
     /// Registry prices: reservations are derived from these, never from a caller figure.
     pub prices: &'a dyn PriceSource,
+    /// The router: which model(s) to call. Workflows never choose a model themselves.
+    pub planner: &'a dyn ModelPlanner,
     pub memory: &'a dyn Memory,
     pub compiler: &'a dyn ContextCompiler,
     /// Policy context for every command: active policy version (`PolicyEngine::version()`),
@@ -83,7 +85,6 @@ pub struct CodingTask {
     pub repo: PathBuf,
     pub scope: Scope,
     pub workspaces_root: PathBuf,
-    pub model_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +139,7 @@ impl Ctx<'_, '_> {
             trust: TrustClass::Owner,
         });
         let req = ModelRequest {
-            model_id: self.task.model_id.clone(),
+            model_id: String::new(),
             messages,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             deadline_ms: CALL_DEADLINE_MS,
@@ -146,15 +147,16 @@ impl Ctx<'_, '_> {
             task: self.task.id,
             trace: self.task.trace,
         };
-        let resp = budgeted_generate(
-            self.deps.provider,
-            self.deps.budget,
-            self.deps.prices,
-            TaskKind::Coding,
-            req,
-        )
-        .await?;
-        Ok(resp.text)
+        let caller = ModelCaller {
+            provider: self.deps.provider,
+            budget: self.deps.budget,
+            prices: self.deps.prices,
+            planner: self.deps.planner,
+            limits: &self.deps.limits,
+            kind: TaskKind::Coding,
+            intent: "coding",
+        };
+        Ok(caller.generate(req).await?.text)
     }
 }
 

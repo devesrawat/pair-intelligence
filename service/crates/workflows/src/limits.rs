@@ -8,6 +8,9 @@ use std::{
 };
 
 pub const MAX_TOOL_CALLS: usize = 20;
+/// Most sources one research run may capture (config constant). Together with the query
+/// cap it keeps a full run inside [`MAX_TOOL_CALLS`] (searches + fetches).
+pub const MAX_RESEARCH_SOURCES: usize = 12;
 pub const INTERACTIVE_WALL: Duration = Duration::from_secs(15 * 60);
 pub const BACKGROUND_WALL: Duration = Duration::from_secs(30 * 60);
 

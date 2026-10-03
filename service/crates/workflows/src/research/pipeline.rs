@@ -11,13 +11,13 @@ use super::{
     synth::synthesize,
     types::{Report, ResearchScope},
 };
-use crate::data_class::require_data_class;
+use crate::{calls::ModelCaller, data_class::require_data_class};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
     traits::{BudgetEx, Provider},
-    types::DataClass,
+    types::{DataClass, TaskKind},
 };
 
 pub struct ResearchDeps<'a> {
@@ -25,6 +25,10 @@ pub struct ResearchDeps<'a> {
     pub gate: &'a pair_policy::Gate,
     pub budget: &'a dyn BudgetEx,
     pub prices: &'a dyn crate::calls::PriceSource,
+    /// The router: which model(s) to call.
+    pub planner: &'a dyn crate::calls::ModelPlanner,
+    /// Tool-call and wall-clock limits of this run (`RunLimits::background()`).
+    pub limits: std::sync::Arc<crate::limits::RunLimits>,
     pub fetcher: &'a dyn SourceFetcher,
     pub store: &'a EvidenceStore,
     /// Optional semantic veto on top of the deterministic support check.
@@ -39,7 +43,6 @@ pub struct ResearchDeps<'a> {
 pub struct ResearchRun {
     pub task: TaskId,
     pub trace: TraceId,
-    pub model_id: String,
 }
 
 #[derive(Debug)]
@@ -56,6 +59,16 @@ fn validate_scope(scope: &ResearchScope) -> Result<DataClass> {
         return Err(PairError::new(
             ErrorCode::InvalidInput,
             "research scope needs a question and max_sources > 0",
+        ));
+    }
+    if scope.max_sources > crate::limits::MAX_RESEARCH_SOURCES {
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "max_sources {} exceeds the limit of {}",
+                scope.max_sources,
+                crate::limits::MAX_RESEARCH_SOURCES
+            ),
         ));
     }
     Ok(class)
@@ -97,14 +110,20 @@ async fn execute(
         ctx: deps.policy.clone(),
         search_host: deps.search_host.clone(),
         data_class,
+        limits: deps.limits.clone(),
     };
     let llm = ResearchLlm {
-        provider: deps.provider,
-        budget: deps.budget,
-        prices: deps.prices,
+        caller: ModelCaller {
+            provider: deps.provider,
+            budget: deps.budget,
+            prices: deps.prices,
+            planner: deps.planner,
+            limits: &deps.limits,
+            kind: TaskKind::Research,
+            intent: "research",
+        },
         task: run.task,
         trace: run.trace,
-        model_id: run.model_id.clone(),
         data_class,
     };
 

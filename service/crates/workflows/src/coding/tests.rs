@@ -73,7 +73,6 @@ impl Fixture {
             repo: self.repo(),
             scope: Scope::new(scope.iter().map(|s| (*s).to_string()).collect()),
             workspaces_root: self.root.join("ws"),
-            model_id: "fake".into(),
         }
     }
 }
@@ -107,6 +106,21 @@ async fn run(
     provider: &FnProvider,
     policy: &Arc<FakePolicy>,
 ) -> pair_core::error::Result<CodingResult> {
+    run_limited(
+        fx_task,
+        provider,
+        policy,
+        Arc::new(crate::limits::RunLimits::interactive()),
+    )
+    .await
+}
+
+async fn run_limited(
+    fx_task: &CodingTask,
+    provider: &FnProvider,
+    policy: &Arc<FakePolicy>,
+    limits: Arc<crate::limits::RunLimits>,
+) -> pair_core::error::Result<CodingResult> {
     let budget = FakeBudget::default();
     let gate = Gate::new(policy.clone(), None);
     let deps = CodingDeps {
@@ -114,11 +128,12 @@ async fn run(
         gate: &gate,
         budget: &budget,
         prices: &FixedPrices::standard(),
+        planner: &FixedPlanner::single(),
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
         policy: fake_ctx(&fx_task.workspaces_root),
         sandbox: host_sandbox(),
-        limits: Arc::new(crate::limits::RunLimits::interactive()),
+        limits,
     };
     run_coding_task(&deps, fx_task).await
 }
@@ -350,6 +365,7 @@ async fn container_sandbox_without_image_never_runs_acceptance_on_the_host() {
         gate: &gate,
         budget: &budget,
         prices: &FixedPrices::standard(),
+        planner: &FixedPlanner::single(),
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
         policy: fake_ctx(&task.workspaces_root),
@@ -401,6 +417,41 @@ async fn edit_write_denied_by_gate_leaves_file_untouched() {
         .paths
         .iter()
         .all(|p| p.starts_with(wt.to_str().unwrap())));
+}
+
+#[tokio::test]
+async fn coding_task_stops_at_the_tool_call_cap_and_the_deadline() {
+    use crate::limits::{RunLimits, MAX_TOOL_CALLS};
+    // 25 passing commands + the write batch exceed the 20-call cap
+    let many = vec![r#"["true"]"#; 25].join(",");
+    let fx = Fixture::new(&many);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded, "{}", err.message);
+
+    // a deadline that has already passed stops the task before any model call
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let expired = Arc::new(RunLimits::with_deadline(
+        MAX_TOOL_CALLS,
+        std::time::Instant::now(),
+    ));
+    let err = run_limited(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+        expired,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded);
+    assert_eq!(provider.call_count(), 0);
 }
 
 #[tokio::test]

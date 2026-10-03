@@ -130,6 +130,8 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         gate: &gate,
         budget: &budget,
         prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(crate::limits::RunLimits::background()),
         fetcher: &fetcher,
         store: &store,
         judge,
@@ -139,7 +141,6 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
     let run = ResearchRun {
         task: TaskId::new(),
         trace: TraceId::new(),
-        model_id: "fake".into(),
     };
     let scope = ResearchScope {
         question: fx.question,
@@ -213,6 +214,7 @@ async fn research_network_access_only_happens_after_gate_allow() {
         ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
         search_host: SEARCH_HOST.into(),
         data_class: pair_core::types::DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, pair_core::error::ErrorCode::PolicyDenied);
@@ -399,6 +401,8 @@ async fn research_scope_without_usable_data_class_refused() {
         gate: &gate,
         budget: &budget,
         prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(crate::limits::RunLimits::background()),
         fetcher: &fetcher,
         store: &store,
         judge: None,
@@ -408,7 +412,6 @@ async fn research_scope_without_usable_data_class_refused() {
     let run = ResearchRun {
         task: TaskId::new(),
         trace: TraceId::new(),
-        model_id: "fake".into(),
     };
     for class in [None, Some("employer"), Some("classified")] {
         let scope = ResearchScope {
@@ -424,6 +427,69 @@ async fn research_scope_without_usable_data_class_refused() {
     }
     assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
     assert_eq!(provider.call_count(), 0);
+}
+
+#[tokio::test]
+async fn research_scope_max_sources_is_capped_and_tool_calls_limited() {
+    use crate::limits::{RunLimits, MAX_RESEARCH_SOURCES};
+    let fetcher = CountingFetcher::default();
+    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let net = |limits: RunLimits| Network {
+        gate: &gate,
+        fetcher: &fetcher,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+        ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+        data_class: pair_core::types::DataClass::Public,
+        limits: Arc::new(limits),
+    };
+    // search + fetch are tool calls: a budget of 1 allows the search and stops at the fetch
+    let err = capture_sources(
+        &net(RunLimits::with_deadline(
+            1,
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+        )),
+        &gated_scope(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, pair_core::error::ErrorCode::LimitExceeded);
+    assert_eq!(fetcher.fetches.load(Ordering::SeqCst), 0);
+
+    // the scope cap is enforced before anything happens
+    let db = TestDb::create().await;
+    let provider = FnProvider::scripted(vec![]);
+    let budget = FakeBudget::default();
+    let store = EvidenceStore::new(db.pool.clone());
+    let deps = ResearchDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(RunLimits::background()),
+        fetcher: &fetcher,
+        store: &store,
+        judge: None,
+        policy: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+    };
+    let run = ResearchRun {
+        task: TaskId::new(),
+        trace: TraceId::new(),
+    };
+    let scope = ResearchScope {
+        max_sources: MAX_RESEARCH_SOURCES + 1,
+        ..gated_scope()
+    };
+    let err = run_research(&deps, &run, &scope).await.unwrap_err();
+    assert_eq!(err.code, pair_core::error::ErrorCode::InvalidInput);
+    assert_eq!(
+        fetcher.searches.load(Ordering::SeqCst),
+        1,
+        "only the earlier probe searched"
+    );
 }
 
 #[tokio::test]

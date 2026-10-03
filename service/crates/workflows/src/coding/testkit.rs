@@ -1,7 +1,7 @@
 //! In-test fakes of external services (policy engine, model provider, budget ledger,
 //! memory store, context compiler). Test-only.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use crate::calls::{ModelTerms, PriceSource};
+use crate::calls::{ModelPlanner, ModelTerms, PriceSource};
 use crate::coding::{CommandExecutor, ExecOutput, ExecSpec, HostSandbox, ProcessExecutor, Sandbox};
 use crate::tools::{GIT_PUSH, PR_CREATE};
 use async_trait::async_trait;
@@ -281,5 +281,30 @@ impl CommandExecutor for RecordingExecutor {
         } else {
             r.first().cloned().unwrap_or_default()
         }
+    }
+}
+
+/// Router stand-in with a fixed attempt order; records the profiles it was asked about.
+pub struct FixedPlanner {
+    pub order: Vec<String>,
+    pub profiles: Mutex<Vec<TaskProfile>>,
+}
+
+impl FixedPlanner {
+    pub fn new(order: &[&str]) -> Self {
+        Self {
+            order: order.iter().map(|s| (*s).to_string()).collect(),
+            profiles: Mutex::new(Vec::new()),
+        }
+    }
+    pub fn single() -> Self {
+        Self::new(&["fake"])
+    }
+}
+
+impl ModelPlanner for FixedPlanner {
+    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>> {
+        self.profiles.lock().unwrap().push(profile.clone());
+        Ok(self.order.clone())
     }
 }

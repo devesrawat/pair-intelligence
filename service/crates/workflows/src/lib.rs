@@ -11,4 +11,6 @@ pub mod tools;
 #[cfg(test)]
 mod calls_tests;
 #[cfg(test)]
+mod limits_tests;
+#[cfg(test)]
 mod real_policy_tests;

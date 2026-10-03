@@ -3,17 +3,21 @@
 //! The reservation is derived from the registry price and the request itself, never from a
 //! caller-supplied figure. A failed provider call leaves its reservation UNRESOLVED (actual
 //! cost unknown, full reservation stays counted); it is never reconciled at zero cost.
+use crate::limits::RunLimits;
 use pair_context::wrap_external;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     money::{Micros, Price},
     traits::{BudgetEx, Provider},
     types::{
-        DataClass, ModelMessage, ModelRequest, ModelResponse, ReserveRequest, TaskKind, TrustClass,
-        UsageReport,
+        DataClass, ModelMessage, ModelRequest, ModelResponse, ReserveRequest, TaskKind,
+        TaskProfile, TrustClass, UsageReport,
     },
 };
-use pair_models::provider::ProviderRegistry;
+use pair_models::{
+    provider::ProviderRegistry,
+    router::{AttemptLimiter, ConfigRouter},
+};
 
 /// Content from anyone but the owner (page text, model output, diffs, tool output) reaches a
 /// model only as a delimited, labelled data block that cannot forge its own delimiters.
@@ -23,6 +27,78 @@ pub fn data_message(source: &str, trust: TrustClass, content: &str) -> ModelMess
         role: "user".into(),
         content: wrap_external(source, trust, content),
         trust,
+    }
+}
+
+/// Maximum model attempts (generation, repair, escalation) for one logical call (spec 6).
+pub const MAX_MODEL_ATTEMPTS: usize = 3;
+const PROFILE_DIFFICULTY: &str = "substantial";
+
+/// The router's ordered model choices for a task profile. Hard constraints (provider, data
+/// class, capability, budget) are the router's job; this crate never picks a model itself.
+pub trait ModelPlanner: Send + Sync {
+    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>>;
+}
+
+impl ModelPlanner for ConfigRouter {
+    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>> {
+        Ok(self
+            .plan(profile, None, &self.default_constraints())?
+            .attempt_order())
+    }
+}
+
+/// Every model call of one run: router plan -> attempt limiter -> deadline -> budget.
+pub struct ModelCaller<'a> {
+    pub provider: &'a dyn Provider,
+    pub budget: &'a dyn BudgetEx,
+    pub prices: &'a dyn PriceSource,
+    pub planner: &'a dyn ModelPlanner,
+    pub limits: &'a RunLimits,
+    pub kind: TaskKind,
+    /// Router intent of the workflow (`coding`, `research`).
+    pub intent: &'static str,
+}
+
+impl ModelCaller<'_> {
+    /// Tries the router's models in order, at most [`MAX_MODEL_ATTEMPTS`] attempts in total.
+    /// Only an unavailable or timed-out provider moves on to the next model; every other
+    /// error (budget, policy, bad request) stops immediately.
+    pub async fn generate(&self, req: ModelRequest) -> Result<ModelResponse> {
+        let profile = TaskProfile {
+            intent: self.intent.to_string(),
+            difficulty: PROFILE_DIFFICULTY.to_string(),
+            data_class: req.data_class,
+            needs_tools: false,
+            est_input_tokens: estimate_input_tokens(&req),
+        };
+        let mut attempts = AttemptLimiter::new(MAX_MODEL_ATTEMPTS);
+        let mut last = PairError::new(ErrorCode::ProviderUnavailable, "router offered no model");
+        for model_id in self.planner.attempt_order(&profile)? {
+            attempts = attempts.begin_attempt()?;
+            let left = self.limits.remaining()?;
+            let mut attempt = req.clone();
+            attempt.model_id = model_id;
+            attempt.deadline_ms = req
+                .deadline_ms
+                .min(u64::try_from(left.as_millis()).unwrap_or(u64::MAX));
+            match budgeted_generate(self.provider, self.budget, self.prices, self.kind, attempt)
+                .await
+            {
+                Ok(resp) => return Ok(resp),
+                Err(e)
+                    if matches!(
+                        e.code,
+                        ErrorCode::ProviderUnavailable | ErrorCode::ProviderTimeout
+                    ) =>
+                {
+                    tracing::warn!(error = %e, "model attempt failed; trying the router's next model");
+                    last = e;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last)
     }
 }
 

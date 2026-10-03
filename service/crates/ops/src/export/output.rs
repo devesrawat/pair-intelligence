@@ -136,3 +136,41 @@ fn previous_export_files(dir: &Path, entries: &[String]) -> Result<Vec<String>> 
     }
     Ok(entries.to_vec())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn scratch() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("pair_ops_out_{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// The race after `prepare`: something appears at a file name before it is written. Writing
+    /// must fail (`O_EXCL`) and must never follow a symlink to its target.
+    #[tokio::test]
+    async fn test_write_refuses_existing_path_and_never_follows_symlink() {
+        let root = scratch();
+        let victim = root.join("victim");
+        std::fs::write(&victim, "keep").expect("victim");
+        let out = root.join("out");
+        let dir = OutDir::prepare(&out).await.expect("prepare");
+        symlink(&victim, out.join("planted.jsonl")).expect("plant symlink");
+        std::fs::write(out.join("existing.jsonl"), "old").expect("existing file");
+
+        assert!(dir.write("planted.jsonl", "new").await.is_err());
+        assert!(dir.write("existing.jsonl", "new").await.is_err());
+
+        assert_eq!(std::fs::read_to_string(&victim).expect("victim"), "keep");
+        assert_eq!(
+            std::fs::read_to_string(out.join("existing.jsonl")).expect("file"),
+            "old"
+        );
+        dir.write("fresh.jsonl", "x")
+            .await
+            .expect("a new name is fine");
+    }
+}

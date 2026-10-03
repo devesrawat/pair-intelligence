@@ -10,21 +10,38 @@ use sqlx::PgConnection;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Serialise contradiction check + write for one (kind, project, topic). Without this, two
-/// contradictory statements racing under READ COMMITTED each see no conflict and both commit.
-/// Transaction-scoped: released at commit or rollback.
+/// Serialise contradiction check + write. Without this, two contradictory statements racing under
+/// READ COMMITTED each see no conflict and both commit. Transaction-scoped: released at commit or
+/// rollback.
+///
+/// Two locks, always taken coarse first, then fine (a fixed order cannot deadlock):
+/// * for kinds checked by wording similarity, one lock over (kind, project), because that check
+///   spans every topic: statements with different extractor topics must still be ordered;
+/// * the per-topic lock over (kind, project, topic).
 pub(crate) async fn lock_topic(
     conn: &mut PgConnection,
     kind: &str,
     project: Option<&str>,
     topic: Option<&str>,
 ) -> Result<()> {
+    if SIMILARITY_KINDS.contains(&kind) {
+        advisory_lock(conn, kind, project, "*").await?;
+    }
+    advisory_lock(conn, kind, project, topic.unwrap_or("")).await
+}
+
+async fn advisory_lock(
+    conn: &mut PgConnection,
+    kind: &str,
+    project: Option<&str>,
+    scope: &str,
+) -> Result<()> {
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1 || '|' || coalesce($2, '') || '|' || $3, 0))",
     )
     .bind(kind)
     .bind(project)
-    .bind(topic.unwrap_or(""))
+    .bind(scope)
     .execute(conn)
     .await
     .map_err(db_err)?;

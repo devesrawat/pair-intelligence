@@ -64,7 +64,8 @@ pub async fn run_turn(
     turn: ValidTurn,
 ) -> Result<TurnResponse> {
     let task = turn.task_id();
-    let (conversation, history, user_client_id) = open_conversation(svc, &turn, task, trace).await?;
+    let (conversation, history, user_client_id) =
+        open_conversation(svc, &turn, task, trace).await?;
     let recent = recent_messages(&history);
 
     let outcome = route(svc, &turn, task, &recent).await?;
@@ -125,7 +126,10 @@ pub async fn run_turn(
         root_cause(e, &attempts)
     })?;
     let persisted = persisted.ok_or_else(|| {
-        PairError::new(ErrorCode::Internal, "provider answered but nothing was recorded")
+        PairError::new(
+            ErrorCode::Internal,
+            "provider answered but nothing was recorded",
+        )
     })?;
     Ok(TurnResponse {
         text: response.text,
@@ -150,7 +154,10 @@ fn root_cause(error: PairError, attempts: &[AttemptTrace]) -> PairError {
     }
     let failed = attempts.iter().find_map(|a| match &a.outcome {
         Some(AttemptOutcome::Failed { code, .. })
-            if matches!(code, ErrorCode::ProviderUnavailable | ErrorCode::ProviderTimeout) =>
+            if matches!(
+                code,
+                ErrorCode::ProviderUnavailable | ErrorCode::ProviderTimeout
+            ) =>
         {
             Some(*code)
         }
@@ -175,7 +182,10 @@ async fn open_conversation(
         Some(c) => (c, svc.store.list_messages(c).await?),
         None => {
             let title: String = turn.message.chars().take(TITLE_CHARS).collect();
-            (svc.store.create_conversation(&title, trace).await?, Vec::new())
+            (
+                svc.store.create_conversation(&title, trace).await?,
+                Vec::new(),
+            )
         }
     };
     let user_client_id = turn

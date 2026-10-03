@@ -80,7 +80,9 @@ impl Liveness {
                     let stalled = age > s.stall_after;
                     let detail = match (&s.last_error, stalled) {
                         (Some(e), true) => format!("stalled; last error: {e}"),
-                        (None, true) => format!("stalled: no successful tick for {}s", age.as_secs()),
+                        (None, true) => {
+                            format!("stalled: no successful tick for {}s", age.as_secs())
+                        }
                         (Some(e), false) => format!("running; last tick failed: {e}"),
                         (None, false) => "running".to_owned(),
                     };

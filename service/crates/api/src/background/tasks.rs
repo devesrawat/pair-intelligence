@@ -89,7 +89,9 @@ pub fn orphan_reconciler(store: JobStore, interval: Duration) -> TaskSpec {
         work: work(move || {
             let store = store.clone();
             async move {
-                let sweep = store.reconcile_orphaned_intents(&UndecidedReconciler).await?;
+                let sweep = store
+                    .reconcile_orphaned_intents(&UndecidedReconciler)
+                    .await?;
                 if sweep.undecided > 0 {
                     tracing::warn!(
                         undecided = sweep.undecided,

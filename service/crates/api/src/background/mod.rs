@@ -85,10 +85,16 @@ impl Background {
         let tx = self.triggers.get(name).ok_or_else(unknown)?;
         let (ack_tx, ack_rx) = oneshot::channel();
         tx.send(ack_tx).await.map_err(|_| {
-            PairError::new(ErrorCode::Conflict, format!("background task {name} stopped"))
+            PairError::new(
+                ErrorCode::Conflict,
+                format!("background task {name} stopped"),
+            )
         })?;
         ack_rx.await.map_err(|_| {
-            PairError::new(ErrorCode::Conflict, format!("background task {name} stopped"))
+            PairError::new(
+                ErrorCode::Conflict,
+                format!("background task {name} stopped"),
+            )
         })
     }
 
@@ -113,7 +119,10 @@ impl Background {
                 Ok(_) => report.drained.push(name),
                 Err(_) => {
                     handle.abort();
-                    tracing::warn!(task = name, "background task did not stop within the drain grace; aborted");
+                    tracing::warn!(
+                        task = name,
+                        "background task did not stop within the drain grace; aborted"
+                    );
                     report.aborted.push(name);
                 }
             }

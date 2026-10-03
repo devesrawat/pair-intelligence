@@ -12,9 +12,7 @@ use pair_api::turn::recording::{TracedBudget, TracedProvider, TurnTrace};
 use pair_api::turn::request::ValidTurn;
 use pair_core::error::ErrorCode;
 use pair_core::ids::TaskId;
-use pair_core::types::{
-    DataClass, ModelMessage, ModelRequest, TaskKind, TrustClass,
-};
+use pair_core::types::{DataClass, ModelMessage, ModelRequest, TaskKind, TrustClass};
 use pair_workflows::calls::ModelCaller;
 use pair_workflows::limits::RunLimits;
 use serde_json::json;
@@ -69,7 +67,10 @@ async fn attempt_cap_is_persisted_across_step_retries() {
     };
 
     // Step run 1: the router offers three models; each fails and each took an attempt.
-    let first = caller.generate(request(task)).await.expect_err("provider is down");
+    let first = caller
+        .generate(request(task))
+        .await
+        .expect_err("provider is down");
     assert_eq!(first.code, ErrorCode::ProviderUnavailable);
     assert_eq!(stack.provider.hits(), 3);
     assert_eq!(svc.attempts.used(task).await.expect("used"), MAX_ATTEMPTS);
@@ -78,7 +79,11 @@ async fn attempt_cap_is_persisted_across_step_retries() {
     for retry in 2..=3 {
         let err = caller.generate(request(task)).await.expect_err("cap spent");
         assert_eq!(err.code, ErrorCode::BudgetExceeded, "retry {retry}: {err}");
-        assert_eq!(stack.provider.hits(), 3, "retry {retry} must not reach the provider");
+        assert_eq!(
+            stack.provider.hits(),
+            3,
+            "retry {retry} must not reach the provider"
+        );
     }
     stack.finish().await;
 }
@@ -125,11 +130,20 @@ async fn fourth_attempt_for_same_task_refused_even_after_restart() {
     let reopened = stack.db.reopen_pool().await;
     let after_restart = AttemptStore::new(reopened.clone(), MAX_ATTEMPTS);
     assert_eq!(after_restart.used(task).await.expect("used"), MAX_ATTEMPTS);
-    let err = after_restart.consume(task).await.expect_err("fourth attempt");
+    let err = after_restart
+        .consume(task)
+        .await
+        .expect_err("fourth attempt");
     assert_eq!(err.code, ErrorCode::BudgetExceeded);
 
     // A different task is unaffected.
-    assert_eq!(after_restart.consume(TaskId::new()).await.expect("fresh task"), 1);
+    assert_eq!(
+        after_restart
+            .consume(TaskId::new())
+            .await
+            .expect("fresh task"),
+        1
+    );
     reopened.close().await;
     stack.finish().await;
 }
@@ -142,7 +156,9 @@ async fn concurrent_consumers_cannot_exceed_the_attempt_cap() {
     let mut joins = Vec::new();
     for _ in 0..8 {
         let store = store.clone();
-        joins.push(tokio::spawn(async move { store.consume(task).await.is_ok() }));
+        joins.push(tokio::spawn(
+            async move { store.consume(task).await.is_ok() },
+        ));
     }
     let mut granted = 0;
     for j in joins {

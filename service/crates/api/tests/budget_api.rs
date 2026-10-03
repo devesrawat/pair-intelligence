@@ -30,9 +30,16 @@ async fn reservation(stack: &Stack, id: &str) -> (String, i64) {
 #[tokio::test]
 async fn adapter_reserve_then_reconcile_roundtrip() {
     let stack = Stack::start(StackOpts::default()).await;
-    let (resp, body) = send(&stack.app, post_json("/v1/budget/reserve", &reserve_body("coding", 50_000))).await;
+    let (resp, body) = send(
+        &stack.app,
+        post_json("/v1/budget/reserve", &reserve_body("coding", 50_000)),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
-    let id = body["data"]["reservation_id"].as_str().expect("reservation id").to_owned();
+    let id = body["data"]["reservation_id"]
+        .as_str()
+        .expect("reservation id")
+        .to_owned();
     assert_eq!(body["data"]["task_id"], TASK);
     assert_eq!(reservation(&stack, &id).await, ("held".to_owned(), 50_000));
 
@@ -48,7 +55,10 @@ async fn adapter_reserve_then_reconcile_roundtrip() {
     assert_eq!(body["data"]["settled"], true);
     assert_eq!(body["data"]["state"], "settled");
     assert_eq!(body["data"]["amount_micros"], 1_234);
-    assert_eq!(reservation(&stack, &id).await, ("settled".to_owned(), 1_234));
+    assert_eq!(
+        reservation(&stack, &id).await,
+        ("settled".to_owned(), 1_234)
+    );
 
     // A replay of the same report returns the same ledger entry.
     let (_, again) = send(&stack.app, post_json("/v1/budget/reconcile", &settle)).await;
@@ -60,7 +70,11 @@ async fn adapter_reserve_then_reconcile_roundtrip() {
 async fn reserve_over_cap_returns_budget_exceeded_and_reserves_nothing() {
     let stack = Stack::start(StackOpts::default()).await;
     // The default task cap is $0.10.
-    let (resp, body) = send(&stack.app, post_json("/v1/budget/reserve", &reserve_body("default", 150_000))).await;
+    let (resp, body) = send(
+        &stack.app,
+        post_json("/v1/budget/reserve", &reserve_body("default", 150_000)),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED, "{body}");
     assert_eq!(body["error"]["code"], "budget_exceeded");
     let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM budget_reservations")
@@ -92,16 +106,31 @@ async fn reserve_requires_explicit_kind_and_category() {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{missing}: {body}");
         assert_eq!(body["error"]["code"], "invalid_input", "{missing}");
     }
-    let (resp, _) = send(&stack.app, post_json("/v1/budget/reserve", &reserve_body("default", 0))).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "zero cost is not a reservation");
+    let (resp, _) = send(
+        &stack.app,
+        post_json("/v1/budget/reserve", &reserve_body("default", 0)),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "zero cost is not a reservation"
+    );
     stack.finish().await;
 }
 
 #[tokio::test]
 async fn reconcile_unknown_cost_is_unresolved() {
     let stack = Stack::start(StackOpts::default()).await;
-    let (_, body) = send(&stack.app, post_json("/v1/budget/reserve", &reserve_body("default", 40_000))).await;
-    let id = body["data"]["reservation_id"].as_str().expect("reservation id").to_owned();
+    let (_, body) = send(
+        &stack.app,
+        post_json("/v1/budget/reserve", &reserve_body("default", 40_000)),
+    )
+    .await;
+    let id = body["data"]["reservation_id"]
+        .as_str()
+        .expect("reservation id")
+        .to_owned();
     let settle = json!({
         "reservation_id": id,
         "input_tokens": 0,
@@ -113,7 +142,11 @@ async fn reconcile_unknown_cost_is_unresolved() {
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(body["data"]["settled"], false);
     assert_eq!(body["data"]["state"], "unresolved");
-    assert_eq!(reservation(&stack, &id).await, ("unresolved".to_owned(), 40_000), "never assumed zero");
+    assert_eq!(
+        reservation(&stack, &id).await,
+        ("unresolved".to_owned(), 40_000),
+        "never assumed zero"
+    );
     stack.finish().await;
 }
 

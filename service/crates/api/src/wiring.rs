@@ -70,8 +70,8 @@ fn known_price_versions(registry: &ProviderRegistry, routing: &RoutingConfig) ->
 pub fn build_services(i: ServiceInputs) -> Result<Services> {
     check_candidates(&i.routing, &i.registry)?;
     let prices = PriceBook::new(None, known_price_versions(&i.registry, &i.routing));
-    let max_attempts = u32::try_from(i.routing.max_model_attempts.min(MAX_MODEL_ATTEMPTS))
-        .unwrap_or(u32::MAX);
+    let max_attempts =
+        u32::try_from(i.routing.max_model_attempts.min(MAX_MODEL_ATTEMPTS)).unwrap_or(u32::MAX);
     let pipeline = RoutingPipeline::new(ConfigRouter::new(i.routing), i.classifier, i.questions);
     Ok(Services {
         budget: Arc::new(PgBudget::new(i.pool.clone(), i.budget, prices)),

@@ -56,7 +56,8 @@ async fn shutdown_drains_background_tasks() {
     let finished = Arc::new(AtomicBool::new(false));
     let slow_finished = finished.clone();
     let slow: Work = Arc::new(move || {
-        let (entered, release, finished) = (entered.clone(), release.clone(), slow_finished.clone());
+        let (entered, release, finished) =
+            (entered.clone(), release.clone(), slow_finished.clone());
         Box::pin(async move {
             if let Some(tx) = entered.lock().await.take() {
                 let _ = tx.send(());
@@ -79,10 +80,15 @@ async fn shutdown_drains_background_tasks() {
     entered_rx.await.expect("slow task started its iteration");
     bg.signal_stop();
     release_tx.send(()).expect("release the slow iteration");
-    tick.await.expect("join").expect("the in-flight iteration completed");
+    tick.await
+        .expect("join")
+        .expect("the in-flight iteration completed");
     let bg = Arc::try_unwrap(bg).unwrap_or_else(|_| panic!("no other handles remain"));
     let report = bg.drain(Duration::from_secs(10)).await;
-    assert!(finished.load(Ordering::SeqCst), "drain must not cut off an in-flight iteration");
+    assert!(
+        finished.load(Ordering::SeqCst),
+        "drain must not cut off an in-flight iteration"
+    );
     assert_eq!(report.aborted, Vec::<&str>::new());
     assert_eq!(report.drained.len(), 2, "{report:?}");
 }
@@ -121,7 +127,8 @@ async fn drain_is_bounded_and_aborts_a_stuck_task() {
 async fn sweeper_requeues_expired_lease_in_running_service() {
     let db = TestDb::create_migrated().await;
     let store = JobStore::new(db.pool.clone(), JobConfig::default());
-    let handlers: Vec<(String, Arc<dyn StepHandler>)> = vec![(KIND.to_owned(), Arc::new(FinishAtOnce))];
+    let handlers: Vec<(String, Arc<dyn StepHandler>)> =
+        vec![(KIND.to_owned(), Arc::new(FinishAtOnce))];
     let mut specs = vec![
         sweeper(store.clone(), HUGE_INTERVAL),
         orphan_reconciler(store.clone(), HUGE_INTERVAL),
@@ -141,23 +148,41 @@ async fn sweeper_requeues_expired_lease_in_running_service() {
         .await
         .expect("start");
     // A worker that crashed: it claimed the run, and its lease lapsed.
-    let claimed = store.claim("crashed-worker").await.expect("claim").expect("a queued run");
-    assert_eq!(claimed.id, run);
-    sqlx::query("UPDATE workflow_runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1")
-        .bind(run.0)
-        .execute(&db.pool)
+    let claimed = store
+        .claim("crashed-worker")
         .await
-        .expect("expire the lease");
+        .expect("claim")
+        .expect("a queued run");
+    assert_eq!(claimed.id, run);
+    sqlx::query(
+        "UPDATE workflow_runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(run.0)
+    .execute(&db.pool)
+    .await
+    .expect("expire the lease");
     assert_eq!(store.state(run).await.expect("state"), RunState::Running);
 
     bg.tick_now(SWEEPER_TASK).await.expect("sweeper tick");
-    assert_eq!(store.state(run).await.expect("state"), RunState::Queued, "the sweeper requeues it");
+    assert_eq!(
+        store.state(run).await.expect("state"),
+        RunState::Queued,
+        "the sweeper requeues it"
+    );
 
     bg.tick_now(WORKER_TASK).await.expect("worker tick");
-    assert_eq!(store.state(run).await.expect("state"), RunState::Succeeded, "and the worker finishes it");
+    assert_eq!(
+        store.state(run).await.expect("state"),
+        RunState::Succeeded,
+        "and the worker finishes it"
+    );
 
     bg.tick_now(ORPHANS_TASK).await.expect("orphan tick");
-    assert!(liveness.statuses().iter().all(|t| !t.stalled), "{:?}", liveness.statuses());
+    assert!(
+        liveness.statuses().iter().all(|t| !t.stalled),
+        "{:?}",
+        liveness.statuses()
+    );
     let report = bg.drain(Duration::from_secs(5)).await;
     assert_eq!(report.drained.len(), 3, "{report:?}");
     db.drop_db().await;
@@ -205,7 +230,9 @@ async fn readyz_reports_background_liveness_and_warns_on_a_stalled_task() {
     let (resp, body) = send(&app, authed("/readyz")).await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(check(&body)["level"], "warn");
-    assert!(check(&body)["detail"].as_str().is_some_and(|d| d.contains(SWEEPER_TASK)));
+    assert!(check(&body)["detail"]
+        .as_str()
+        .is_some_and(|d| d.contains(SWEEPER_TASK)));
     stack.finish().await;
 }
 
@@ -218,8 +245,8 @@ async fn readyz_is_not_ready_when_services_are_required_but_missing() {
     let app = pair_api::router(state);
     let (resp, body) = send(&app, authed("/readyz")).await;
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert!(body["checks"]
-        .as_array()
-        .is_some_and(|c| c.iter().any(|c| c["name"] == "services" && c["level"] == "critical")));
+    assert!(body["checks"].as_array().is_some_and(|c| c
+        .iter()
+        .any(|c| c["name"] == "services" && c["level"] == "critical")));
     db.drop_db().await;
 }

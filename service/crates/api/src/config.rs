@@ -89,7 +89,10 @@ impl Config {
         let policy_config = get("PAIR_POLICY_CONFIG");
         let context_config = get("PAIR_CONTEXT_CONFIG");
         let approver_token = non_empty(get("PAIR_APPROVER_TOKEN"));
-        if approver_token.as_deref().is_some_and(|t| t.len() < MIN_TOKEN_LEN) {
+        if approver_token
+            .as_deref()
+            .is_some_and(|t| t.len() < MIN_TOKEN_LEN)
+        {
             return Err(PairError::new(
                 ErrorCode::InvalidInput,
                 format!("PAIR_APPROVER_TOKEN must be at least {MIN_TOKEN_LEN} characters"),
@@ -105,7 +108,10 @@ impl Config {
             let value = match non_empty(get(name)) {
                 None => default,
                 Some(raw) => raw.trim().parse::<u64>().map_err(|_| {
-                    PairError::new(ErrorCode::InvalidInput, format!("{name} must be an integer"))
+                    PairError::new(
+                        ErrorCode::InvalidInput,
+                        format!("{name} must be an integer"),
+                    )
                 })?,
             };
             if value < min {
@@ -179,9 +185,21 @@ impl Config {
             ));
         }
         for (name, explicit, path) in [
-            ("PAIR_BUDGET_CONFIG", self.budget_config_explicit, &self.budget_config),
-            ("PAIR_POLICY_CONFIG", self.policy_config_explicit, &self.policy_config),
-            ("PAIR_CONTEXT_CONFIG", self.context_config_explicit, &self.context_config),
+            (
+                "PAIR_BUDGET_CONFIG",
+                self.budget_config_explicit,
+                &self.budget_config,
+            ),
+            (
+                "PAIR_POLICY_CONFIG",
+                self.policy_config_explicit,
+                &self.policy_config,
+            ),
+            (
+                "PAIR_CONTEXT_CONFIG",
+                self.context_config_explicit,
+                &self.context_config,
+            ),
         ] {
             if explicit && !path.is_file() {
                 return Err(PairError::new(
@@ -308,7 +326,11 @@ mod tests {
         })
         .expect("valid");
         let shown = format!("{cfg:?}");
-        for secret in ["sk-ant-secret-value", "ts-secret-value", "approver-0123456789abc"] {
+        for secret in [
+            "sk-ant-secret-value",
+            "ts-secret-value",
+            "approver-0123456789abc",
+        ] {
             assert!(!shown.contains(secret), "{shown}");
         }
     }
@@ -325,13 +347,20 @@ mod tests {
             ("PAIR_SWEEP_INTERVAL_SECS", "soon"),
             ("PAIR_TURN_BUDGET_SECS", "300"),
         ] {
-            assert!(Config::from_lookup(with(name, bad)).is_err(), "{name}={bad}");
+            assert!(
+                Config::from_lookup(with(name, bad)).is_err(),
+                "{name}={bad}"
+            );
         }
     }
 
     #[test]
     fn startup_fails_when_configured_budget_policy_or_context_config_missing() {
-        for name in ["PAIR_BUDGET_CONFIG", "PAIR_POLICY_CONFIG", "PAIR_CONTEXT_CONFIG"] {
+        for name in [
+            "PAIR_BUDGET_CONFIG",
+            "PAIR_POLICY_CONFIG",
+            "PAIR_CONTEXT_CONFIG",
+        ] {
             let cfg = Config::from_lookup(with(name, "/nonexistent/file.yaml")).expect("valid");
             assert!(cfg.validate_paths().is_err(), "{name}");
         }
@@ -348,7 +377,10 @@ mod tests {
         let seen = seen.into_inner();
         assert!(seen.len() > 15, "the lookup recorder saw {}", seen.len());
         for key in seen.iter().map(String::as_str).chain(["RUST_LOG"]) {
-            assert!(doc.contains(key), "{key} is not documented in config/api.yaml");
+            assert!(
+                doc.contains(key),
+                "{key} is not documented in config/api.yaml"
+            );
         }
     }
 

@@ -69,20 +69,36 @@ async fn deny_returns_deny_and_nothing_is_executed() {
 #[tokio::test]
 async fn needs_approval_returns_payload_hash() {
     let stack = Stack::start(StackOpts::default()).await;
-    let (resp, body) = send(&stack.app, post_json("/v1/policy/authorize", &action("message.send"))).await;
+    let (resp, body) = send(
+        &stack.app,
+        post_json("/v1/policy/authorize", &action("message.send")),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
-    assert_eq!(body["data"]["decision"]["decision"], "needs_approval", "{body}");
-    let hash = body["data"]["decision"]["payload_hash"].as_str().expect("hash").to_owned();
+    assert_eq!(
+        body["data"]["decision"]["decision"], "needs_approval",
+        "{body}"
+    );
+    let hash = body["data"]["decision"]["payload_hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
     assert_eq!(hash.len(), 64, "sha256 hex");
 
     // The approver (a separate credential) approves exactly that hash.
     let (resp, body) = send(
         &stack.app,
-        approval_request(&json!({"payload_hash": hash, "expires_in_secs": 3600}), Some(APPROVER_TOKEN)),
+        approval_request(
+            &json!({"payload_hash": hash, "expires_in_secs": 3600}),
+            Some(APPROVER_TOKEN),
+        ),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
-    let approval_id = body["data"]["approval_id"].as_str().expect("approval id").to_owned();
+    let approval_id = body["data"]["approval_id"]
+        .as_str()
+        .expect("approval id")
+        .to_owned();
 
     // Presenting the approval to authorize does not consume it: only a Gate path consumes.
     let mut again = action("message.send");
@@ -90,10 +106,11 @@ async fn needs_approval_returns_payload_hash() {
     let (_, body) = send(&stack.app, post_json("/v1/policy/authorize", &again)).await;
     assert_eq!(body["data"]["decision"]["decision"], "needs_approval");
     assert_eq!(body["data"]["decision"]["payload_hash"], hash.as_str());
-    let consumed: i64 = sqlx::query_scalar("SELECT count(*) FROM approvals WHERE consumed_at IS NOT NULL")
-        .fetch_one(&stack.db.pool)
-        .await
-        .expect("count");
+    let consumed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM approvals WHERE consumed_at IS NOT NULL")
+            .fetch_one(&stack.db.pool)
+            .await
+            .expect("count");
     assert_eq!(consumed, 0);
     stack.finish().await;
 }
@@ -107,10 +124,15 @@ async fn stale_policy_version_denied() {
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(body["data"]["decision"]["decision"], "deny", "{body}");
     assert!(
-        body["data"]["decision"]["reason"].as_str().is_some_and(|r| r.contains("version")),
+        body["data"]["decision"]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("version")),
         "{body}"
     );
-    assert_eq!(body["data"]["policy_version"], stack.services.policy.version());
+    assert_eq!(
+        body["data"]["policy_version"],
+        stack.services.policy.version()
+    );
     stack.finish().await;
 }
 
@@ -142,10 +164,18 @@ async fn approvals_need_the_separate_approver_credential() {
     assert_eq!(rows, 0, "the service token alone must not mint approvals");
 
     let too_long = json!({"payload_hash": hash, "expires_in_secs": 25 * 3600});
-    let (resp, out) = send(&stack.app, approval_request(&too_long, Some(APPROVER_TOKEN))).await;
+    let (resp, out) = send(
+        &stack.app,
+        approval_request(&too_long, Some(APPROVER_TOKEN)),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{out}");
     let bad_hash = json!({"payload_hash": "not-a-hash", "expires_in_secs": 60});
-    let (resp, _) = send(&stack.app, approval_request(&bad_hash, Some(APPROVER_TOKEN))).await;
+    let (resp, _) = send(
+        &stack.app,
+        approval_request(&bad_hash, Some(APPROVER_TOKEN)),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     stack.finish().await;
 }

@@ -516,7 +516,11 @@ mod tests {
             .expect("route");
         assert_eq!(budget.reserved.lock().expect("lock").len(), 1);
         let reconciled = budget.reconciled.lock().expect("lock");
-        assert_eq!(reconciled.len(), 1, "the failed call is recorded, not dropped");
+        assert_eq!(
+            reconciled.len(),
+            1,
+            "the failed call is recorded, not dropped"
+        );
         assert_eq!(reconciled[0].actual_cost, None, "never assume zero cost");
     }
 

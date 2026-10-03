@@ -66,7 +66,8 @@ fn sse(event: &str, data: &Value) -> String {
 
 fn stream_body(model: &str, text: &str, input: u64, output: u64) -> String {
     let start = json!({"type":"message_start","message":{"id":"msg_mock","model":format!("{model}-resolved"),"usage":{"input_tokens":input,"output_tokens":1}}});
-    let delta = json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}});
+    let delta =
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}});
     let end = json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":output}});
     format!(
         "{}{}{}{}",
@@ -154,7 +155,12 @@ fn dist(labels: &[&str], chosen: &str, top: f64) -> Value {
     let rest = (1.0 - top) / (labels.len() as f64 - 1.0);
     let m: serde_json::Map<String, Value> = labels
         .iter()
-        .map(|l| ((*l).to_owned(), json!(if *l == chosen { top } else { rest })))
+        .map(|l| {
+            (
+                (*l).to_owned(),
+                json!(if *l == chosen { top } else { rest }),
+            )
+        })
         .collect();
     Value::Object(m)
 }

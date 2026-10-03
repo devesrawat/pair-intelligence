@@ -29,9 +29,14 @@ pub fn router() -> Router<AppState> {
 pub(crate) fn ok<T: Serialize>(data: T) -> Result<Json<Value>, ApiError> {
     let data = serde_json::to_value(data).map_err(|e| {
         tracing::error!(error = %e, "response serialization failed");
-        ApiError(PairError::new(ErrorCode::Internal, "response could not be built"))
+        ApiError(PairError::new(
+            ErrorCode::Internal,
+            "response could not be built",
+        ))
     })?;
-    Ok(Json(json!({ "success": true, "data": data, "error": null })))
+    Ok(Json(
+        json!({ "success": true, "data": data, "error": null }),
+    ))
 }
 
 /// The request's trace id as a typed id (the trace layer only ever stores canonical UUIDs).

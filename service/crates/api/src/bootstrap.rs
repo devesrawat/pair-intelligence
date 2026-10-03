@@ -11,7 +11,9 @@ use pair_core::traits::Classifier;
 use pair_models::classification::config::{ClassifierMode, RoutingConfig};
 use pair_models::classification::jev::{ApiKey, JevClassifier, JevSettings};
 use pair_models::classification::questions::QuestionSet;
-use pair_models::provider::{AnthropicProvider, CloudProvider, OllamaCloudProvider, ProviderRegistry};
+use pair_models::provider::{
+    AnthropicProvider, CloudProvider, OllamaCloudProvider, ProviderRegistry,
+};
 use pair_policy::PolicyEngine;
 use sqlx::PgPool;
 
@@ -24,7 +26,8 @@ fn invalid(what: &str, e: impl std::fmt::Display) -> PairError {
 }
 
 fn read(path: &Path, what: &str) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| invalid(&format!("read {what} {}", path.display()), e))
+    std::fs::read_to_string(path)
+        .map_err(|e| invalid(&format!("read {what} {}", path.display()), e))
 }
 
 /// `questions_path` in models.yaml is written relative to the repository (or image) root, which is
@@ -67,12 +70,17 @@ fn provider(cfg: &Config, registry: &Arc<ProviderRegistry>) -> Result<CloudProvi
     let anthropic = cfg
         .anthropic_api_key
         .clone()
-        .map(|k| AnthropicProvider::new(k, registry.clone()).map(|p| p.with_allow_unverified_ids(allow)))
+        .map(|k| {
+            AnthropicProvider::new(k, registry.clone()).map(|p| p.with_allow_unverified_ids(allow))
+        })
         .transpose()?;
     let ollama = cfg
         .ollama_api_key
         .clone()
-        .map(|k| OllamaCloudProvider::new(k, registry.clone()).map(|p| p.with_allow_unverified_ids(allow)))
+        .map(|k| {
+            OllamaCloudProvider::new(k, registry.clone())
+                .map(|p| p.with_allow_unverified_ids(allow))
+        })
         .transpose()?;
     if anthropic.is_none() && ollama.is_none() {
         tracing::warn!("no provider API key configured: every model call will fail closed");
@@ -90,7 +98,9 @@ pub fn load_services(
     registry: Option<Arc<ProviderRegistry>>,
 ) -> Result<Option<Services>> {
     let Some(registry) = registry else {
-        tracing::warn!("provider registry not loaded: budget, policy and routing services unavailable");
+        tracing::warn!(
+            "provider registry not loaded: budget, policy and routing services unavailable"
+        );
         return Ok(None);
     };
     for (name, path) in [
@@ -103,17 +113,19 @@ pub fn load_services(
             return Ok(None);
         }
     }
-    let home = cfg
-        .home
-        .clone()
-        .ok_or_else(|| PairError::new(ErrorCode::InvalidInput, "HOME must be set for the policy engine"))?;
+    let home = cfg.home.clone().ok_or_else(|| {
+        PairError::new(
+            ErrorCode::InvalidInput,
+            "HOME must be set for the policy engine",
+        )
+    })?;
     let routing = RoutingConfig::from_path(&cfg.models_config)?;
     let questions = QuestionSet::from_path(&questions_file(
         &cfg.models_config,
         &routing.classifier.questions_path,
     ))?;
-    let context = ContextConfig::parse(&read(&cfg.context_config, "context config")?)?
-        .default_budgets()?;
+    let context =
+        ContextConfig::parse(&read(&cfg.context_config, "context config")?)?.default_budgets()?;
     let policy = PolicyEngine::from_config_file(&cfg.policy_config, &home)
         .map_err(|e| invalid("policy config", e))?;
     let mut services = build_services(ServiceInputs {

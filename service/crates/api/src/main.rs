@@ -75,7 +75,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!("budget, policy, routing and conversation services hosted");
             state = state.with_services(services);
         }
-        None => tracing::warn!("services not configured: /v1 endpoints answer 503, /readyz not ready"),
+        None => {
+            tracing::warn!("services not configured: /v1 endpoints answer 503, /readyz not ready")
+        }
     }
 
     let liveness = Arc::new(Liveness::default());

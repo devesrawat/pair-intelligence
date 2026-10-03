@@ -12,7 +12,9 @@ use pair_api::state::AppState;
 use pair_api::wiring::{build_services, ServiceInputs};
 use pair_budget::BudgetConfig;
 use pair_context::ContextConfig;
+use pair_core::money::{Micros, Price};
 use pair_core::traits::Classifier;
+use pair_core::types::DataClass;
 use pair_models::classification::config::RoutingConfig;
 use pair_models::classification::jev::{ApiKey, JevClassifier, JevSettings};
 use pair_models::classification::questions::QuestionSet;
@@ -20,8 +22,6 @@ use pair_models::provider::{
     AnthropicProvider, CloudProvider, Endpoint, Health, ModelEntry, ProviderKind, ProviderRegistry,
 };
 use pair_policy::PolicyEngine;
-use pair_core::money::{Micros, Price};
-use pair_core::types::DataClass;
 use pair_telemetry::health::{DiskStats, BYTES_PER_GIB};
 use pair_telemetry::Secret;
 
@@ -156,7 +156,13 @@ impl Stack {
             ProviderRegistry::from_entries(vec![
                 entry(CHEAP, &provider.base, 1_000_000, 5_000_000, verified(CHEAP)),
                 entry(MID, &provider.base, 2_000_000, 10_000_000, verified(MID)),
-                entry(PREMIUM, &provider.base, 4_000_000, 20_000_000, verified(PREMIUM)),
+                entry(
+                    PREMIUM,
+                    &provider.base,
+                    4_000_000,
+                    20_000_000,
+                    verified(PREMIUM),
+                ),
             ])
             .expect("registry"),
         );
@@ -182,7 +188,8 @@ impl Stack {
         .expect("context config")
         .default_budgets()
         .expect("budgets");
-        let scratch = std::env::temp_dir().join(format!("pair_api_ws_{}", uuid::Uuid::new_v4().simple()));
+        let scratch =
+            std::env::temp_dir().join(format!("pair_api_ws_{}", uuid::Uuid::new_v4().simple()));
         let workspace = scratch.join("workspace");
         let home = scratch.join("home");
         std::fs::create_dir_all(&workspace).expect("workspace");

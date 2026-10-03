@@ -8,7 +8,7 @@ Honest, tracked snapshot of what exists, what is tested, and what is not. Writte
 
 | Area | What exists | Where it is tested |
 |---|---|---|
-| `pair-api` HTTP surface | `/healthz` (open), `/readyz`, `/v1/whoami`; bearer service token + `X-Actor` (`[A-Za-z0-9._:@-]{1,64}`); single `X-Trace-Id` header requiring a canonical UUID (otherwise regenerated); request timeout (30 s) and in-flight cap (64) returning 504 / 503; SIGTERM and Ctrl-C graceful shutdown; config secrets wrapped so `Debug` never prints them | `crates/api/tests/{http,hardening,limits}.rs`, unit tests in `crates/api/src/{auth,config,shutdown}.rs`, `scripts/check smoke` (boots the real binary against a scratch database) |
+| `pair-api` HTTP surface | `/healthz` (open), `/readyz`, `/v1/whoami`, plus the hosted `/v1` endpoints of section 2; bearer service token + `X-Actor` (`[A-Za-z0-9._:@-]{1,64}`); single `X-Trace-Id` header requiring a canonical UUID (otherwise regenerated); request timeout (30 s) and in-flight cap (64) returning 504 / 503; SIGTERM and Ctrl-C graceful shutdown; config secrets wrapped so `Debug` never prints them | `crates/api/tests/{http,hardening,limits}.rs`, unit tests in `crates/api/src/{auth,config,shutdown}.rs`, `scripts/check smoke` (boots the real binary against a scratch database) |
 | Readiness strictness | Explicitly configured `PAIR_MODELS_CONFIG` / `PAIR_MIGRATIONS_DIR` that do not exist fail startup; zero migrations on disk or applied is critical in the service binary; empty provider registry is a warning; error details carry no paths or OS errors | `startup_fails_when_configured_models_config_missing`, `readyz_fails_when_no_migrations_applied`, `readyz_warns_on_stub_providers`, `readyz_error_details_do_not_leak_paths_or_os_errors` |
 | Telemetry | Trace-id codec (`x-trace-id`, UUID only), structured tracing setup, secret redaction, disk and backlog health evaluation | `crates/telemetry` unit tests |
 | Container image | `deploy/api/Dockerfile` bakes migrations and `config/models.yaml`, pinned base tags, `.dockerignore`. Built and booted once by hand on the dev machine (read-only root filesystem, all capabilities dropped, `docker stop` took 1 s via SIGTERM). Not built in CI | manual, 2026-10-03 |
@@ -19,19 +19,35 @@ Honest, tracked snapshot of what exists, what is tested, and what is not. Writte
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, the workspace tests, the smoke check, every `scripts/tests/*.sh`, and a seeded restore drill, against the dev compose database. GitHub Actions are pinned to commit SHAs.
 
-## 2. Library-only: not wired into the running `pair-api`
+## 2. What the running `pair-api` hosts, and what it does not
 
-`pair-api` depends on `pair-core`, `pair-telemetry` and `pair-models` (for provider readiness) only. These crates compile and have tests but nothing in the running service or the OpenClaw adapter calls them:
+`pair-api` now hosts the budget, policy, routing, context, conversation and (partly) jobs crates. Each row names the test that proves it against real Postgres, a real `PgBudget`, the real `config/policy.yaml` and a loopback mock provider (`crates/api/tests/`).
 
-- `budget` (reservations, ledger, caps)
-- `jobs` (durable runs, leases, approvals, effect intents)
-- `workflows` (coding, research, daily)
-- the router in `models` (provider calls exist as a library; `pair-api` only reads the registry for `/readyz`)
-- `memory` (store, inbox, retrieval, export)
-- `context` (compiler)
-- `policy` (the gate); the OpenClaw spike plugin has its own small allow-list, which is not the section 9 policy
+| Endpoint / task | What is enforced | Proven by |
+|---|---|---|
+| `POST /v1/turn` | Employer, sensitive and unknown data classes refused before any I/O; Jev classification in shadow mode (failure or timeout falls back to the baseline, never an error); router plan within the task kind's own cap; reserve with explicit kind and price version; context compile; provider call through `ModelCaller`; reconcile (unknown cost stays unresolved); message and `model_calls` rows with a cost state; unverified model ids refused up front without escalation | `turn.rs`: `budget_denied_request_makes_zero_provider_hits`, `turn_persists_and_survives_pool_reopen_with_reconciled_cost`, `employer_data_refused_before_any_network_call`, `jev_failure_falls_back_to_baseline_and_still_answers`, `unverified_model_id_stops_the_call_and_does_not_escalate`, `provider_failure_leaves_reservation_unresolved`, `turn_requires_service_token` |
+| Persisted model-attempt cap (spec 6: 3 per task) | Migration 080 counter consumed atomically before every metered reservation of a turn; step retries, HTTP retries and restarts draw from the same counter | `attempts.rs`: `attempt_cap_is_persisted_across_step_retries`, `fourth_attempt_for_same_task_refused_even_after_restart`, `concurrent_consumers_cannot_exceed_the_attempt_cap` |
+| `POST /v1/policy/authorize` | Decides only (allow, deny, needs approval with payload hash); never executes, never consumes an approval; workspace root comes from server config; stale policy version denied | `policy_api.rs`: `deny_returns_deny_and_nothing_is_executed`, `needs_approval_returns_payload_hash`, `stale_policy_version_denied` |
+| `POST /v1/approvals` | Hash-bound, at most 24 h, created through `PgApprovals` and only with a second credential (`PAIR_APPROVER_TOKEN`), so the holder of the service token cannot mint its own approvals | `policy_api.rs`: `approvals_need_the_separate_approver_credential` |
+| `POST /v1/budget/reserve`, `/reconcile` | Explicit task kind, category and price version; unknown price is `budget_unknown_price`; over-cap reserves nothing; unknown cost is unresolved | `budget_api.rs`: `adapter_reserve_then_reconcile_roundtrip`, `reserve_over_cap_returns_budget_exceeded_and_reserves_nothing`, `reconcile_unknown_cost_is_unresolved` |
+| Background tasks | Lease sweeper (marks expired leases interrupted and requeues them) and orphaned-intent reconciler run inside the binary, stop on SIGTERM/Ctrl-C with a bounded drain, and `/readyz` reports their liveness (`background`: a stalled task is a warning) | `background.rs`: `shutdown_drains_background_tasks`, `drain_is_bounded_and_aborts_a_stuck_task`, `sweeper_requeues_expired_lease_in_running_service`, `readyz_reports_background_liveness_and_warns_on_a_stalled_task` |
+| Kill switch levels 1 and 3 | Zeroing every cap refuses new turns and reserves; rotating the service token locks out the old one | `kill_switch.rs` (level 2 has no mechanism and stays NOT EFFECTIVE) |
 
-Consequences: no budget cap, job interruption or policy gate is enforced by the deployed service. The kill-switch runbook marks those levels NOT EFFECTIVE; the only effective spend control is the provider console. `/readyz` queue depth reads `workflow_runs`, which nothing in the service populates.
+### Still NOT wired
+
+- **The OpenClaw adapter calls none of these endpoints.** Model calls and tool calls made by OpenClaw itself are still not metered, capped or gated by PAIR; the spike plugin's allow-list is not the section 9 policy. Task 3 ("no alternate tool path bypasses policy"), Task 4 ("denied tasks never reach the provider") and Task 5 hold for what goes through `pair-api` and are **not** established for the OpenClaw path until the adapter is wired.
+- `workflows` (coding, research, daily): nothing starts them. No step handler is registered, so no jobs worker loop runs (a handler-less worker would claim and fail every queued run, because `JobStore::claim` is not filtered by kind). `Gate::execute` has no caller in the service: there is no tool-execution path in `pair-api` for the gate to guard, and the approval that `/v1/approvals` creates is consumed only by a Gate path that does not exist here yet.
+- `memory` (store, inbox, retrieval, export): turns compile context with no retrieved memories; no memory endpoint exists.
+- Orphaned effect intents: the reconciler returns an explicit "undecided" error for every intent (it never guesses), so they stay unresolved and are logged on every sweep until a real reconciler exists.
+- The classifier is shadow mode only and runs when `TYPESAFE_API_KEY` is set. No real provider call has been made (section 3), so none of this has run against a live provider.
+
+### Deviations and limits to know
+
+- Order: the spec lists reserve before context compile; the reservation is derived from the compiled request, so a turn compiles first and then reserves. A refused turn still never reaches the provider.
+- A failed provider attempt keeps its full worst-case reservation unresolved and counted, so it can use up the task cap and stop a fallback (the response then reports the provider failure, not the budget). Attempts are taken before the reservation because the ledger has no release.
+- The attempt counter covers the turn pipeline (and any `ModelCaller` given the counting budget). Adapter reserve calls are not counted: an agent loop makes many legitimate calls per run.
+- The classifier reserves under its own derived task id: `ReserveRequest::classifier` registers its task as `default`, which would make a later `coding` or `research` reservation of the same task a conflict.
+- `/readyz`: `services` is critical when the budget, policy and routing configuration did not load; a stalled background task is a warning. `/readyz` queue depth reads `workflow_runs`, which nothing in the service populates yet.
 
 ## 3. Owner-gated (cannot be done by the repo alone)
 
@@ -56,11 +72,11 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 | Provenance (100% accepted memories have a source) | no | No audit query run over real accepted memories; memory is not wired into the service |
 | Recall (>= 90% on 50 held-out queries) | no | Held-out memory query set not authored; no answer generation wired |
 | Unsupported recall (<= 5%) | no | Same set and rubric |
-| Policy (zero unauthorized mutations; 30 policy/injection cases) | no | 0 of 30 injection cases exist; policy not wired into the service |
-| Budget (zero overspend in concurrency tests) | no | Concurrency tests exist and reviewer A's findings are fixed, but the budget is not on the live call path (see section 2) |
+| Policy (zero unauthorized mutations; 30 policy/injection cases) | no | 0 of 30 injection cases exist; `/v1/policy/authorize` is hosted, but nothing in `pair-api` executes tools and the OpenClaw adapter does not call it (section 2) |
+| Budget (zero overspend in concurrency tests) | no | Concurrency tests exist and reviewer A's findings are fixed; the budget is now on the `pair-api` turn and adapter-reserve path, but not on OpenClaw's own provider calls (section 2) |
 | Coding (>= 8 of 10 benchmark tasks) | no | No benchmark tasks run. The runner now defaults to a container sandbox, but that path has only been tested with a recording executor, never against a docker daemon and the worker image |
-| Recovery (10 crash/retry scenarios) | no | Scenario set incomplete; jobs not wired into the service. Lease and effect fencing (reviewer A C1) is fixed and tested with a live first worker |
-| Traceability (every call, route, tool run, approval) | no | Approvals and tool runs carry no correlation id; no trace-completeness audit |
+| Recovery (10 crash/retry scenarios) | no | Scenario set incomplete; the lease sweeper and orphan reconciler now run in the service, but no workflow handler does. Lease and effect fencing (reviewer A C1) is fixed and tested with a live first worker |
+| Traceability (every call, route, tool run, approval) | no | Turns carry one trace id through messages, model calls and audit events; approvals and tool runs still carry none; OpenClaw's own calls never reach these tables; no trace-completeness audit |
 | Daily usefulness (5 days/week for 2 weeks) | no | Owner-gated |
 | Personal value (>= 3 h/week saved) | no | Owner-gated |
 
@@ -85,8 +101,8 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 | Immutable image tags and rollback procedure | PARTIAL | Policy and runbook exist; CI does not build or push an image; base images pinned by tag, digests to be pinned at release |
 | Database private, authenticated ingress only | PARTIAL | Compose binds loopback; no reverse proxy is defined |
 | Isolated workers | PARTIAL | The coding runner defaults to `ContainerSandbox` (no network, read-only root, one worktree mount, `.git` of the original repo never mounted) and refuses host execution unless `PAIR_ALLOW_HOST_EXEC=1`. Tested with a recording executor only; no docker daemon was exercised, and approved pushes cannot run through it (no network or credentials in the container) |
-| Kill switch | DOCUMENTED, mostly NOT EFFECTIVE | See [kill-switch](runbooks/kill-switch.md) |
-| Library-only components (section 2 above) | NOT WIRED | |
+| Kill switch | PARTIAL | Levels 1 (zero caps) and 3 (rotate token) are proven for `pair-api` calls only; level 2 (interrupt jobs) is NOT EFFECTIVE; nothing reaches OpenClaw's direct provider calls. See [kill-switch](runbooks/kill-switch.md) |
+| Components still not hosted (section 2 above) | NOT WIRED | workflows, memory, OpenClaw adapter calls |
 
 ## 6. Deferred
 
@@ -112,7 +128,7 @@ All findings graded Critical or High were fixed test-first except where noted; M
 - Budget M3: the classifier eval tool calls the classifier without reserving budget (do not point it at the real Jev). `overrun` is exposed through `reconcile_detailed`, not on `LedgerEntry`. Plain `Budget::reserve` uses the task's registered kind or Default.
 - Policy: path checks are time-of-check (a symlink swapped before execution is not caught; the read-only single-volume worker is the second layer). `sed`, `git` and other tools are validated by rule, not proven safe. Standing approvals are not implemented.
 - Memory: a manual accept of a preference or permission now needs verified owner evidence, so callers must supply source text. Stored normalized/dedupe keys use a new format and will not match rows written by earlier builds. Unassigned LOWs: untrusted text labelled `kind: fact` still passes `check_accept` (prompt-level only), `list_inbox` is N+1, export is unbounded.
-- Jobs: `sweep_expired`, `resume` and the orphan sweeper have no production caller. Step retries (4) times router attempts (3) could exceed the section 6 limit of 3 once both are wired.
+- Jobs: the sweeper and orphan reconciler now run in `pair-api`; `resume` has no caller. Step retries (4) times router attempts (3) can no longer exceed the section 6 limit where the persisted counter is used (the turn pipeline); the workflows' own `ModelCaller` is not given it because the workflows are not hosted.
 - `SourceFetcher` and the research `SupportJudge` have no real implementation; the lexical support check is disclosed as lexical in every report.
 
 ### Spec section 7 tables that do not exist
@@ -128,4 +144,4 @@ All findings graded Critical or High were fixed test-first except where noted; M
 
 ### Declined by the reviewers (recorded, not planned)
 
-IST day-boundary burst policy; `sweep_expired`/`resume` have no production callers yet; jsonb payload round trip; step retries (4) times router attempts (3) could exceed the section 6 limit of 3 attempts once wired; extractor topic quality; external id retention on deleted evidence; bitemporal `as_of`; `SourceFetcher` redirects (not implemented); integrations data-class tagging.
+IST day-boundary burst policy; `resume` has no production caller; jsonb payload round trip; extractor topic quality; external id retention on deleted evidence; bitemporal `as_of`; `SourceFetcher` redirects (not implemented); integrations data-class tagging.

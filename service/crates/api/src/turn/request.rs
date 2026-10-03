@@ -140,9 +140,10 @@ impl ValidTurn {
     /// Stable per logical turn when the caller supplies `client_message_id`; random otherwise.
     pub fn task_id(&self) -> TaskId {
         match (&self.conversation, &self.client_message_id) {
-            (Some(c), Some(m)) => {
-                TaskId(derived_uuid(TASK_ID_DOMAIN, &[&c.0.to_string(), m.as_str()]))
-            }
+            (Some(c), Some(m)) => TaskId(derived_uuid(
+                TASK_ID_DOMAIN,
+                &[&c.0.to_string(), m.as_str()],
+            )),
             _ => TaskId::new(),
         }
     }

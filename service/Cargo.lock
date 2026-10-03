@@ -1224,6 +1224,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "chrono-tz",
+ "pair-budget",
  "pair-context",
  "pair-core",
  "pair-jobs",

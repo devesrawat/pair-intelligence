@@ -143,8 +143,9 @@ impl RoutingConfig {
 
 #[cfg(test)]
 pub(crate) fn test_config() -> RoutingConfig {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml");
-    RoutingConfig::from_path(&path).expect("config/models.yaml loads")
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/classification/fixtures/routing_test.yaml");
+    RoutingConfig::from_path(&path).expect("routing test fixture loads")
 }
 
 #[cfg(test)]

@@ -167,7 +167,14 @@ impl BudgetEx for FakeBudget {
         self.reservations.lock().unwrap().push(req);
         Ok(ReservationId::new())
     }
+
+    fn task_cap(&self, _kind: TaskKind) -> Micros {
+        FAKE_TASK_CAP
+    }
 }
+
+/// Large enough that fakes never trip the router's budget pre-filter.
+const FAKE_TASK_CAP: Micros = Micros(1_000_000_000);
 
 /// Registry stand-in: every model id has the same price and accepts every data class.
 pub struct FixedPrices(pub Option<Price>);
@@ -302,7 +309,7 @@ impl FixedPlanner {
 }
 
 impl ModelPlanner for FixedPlanner {
-    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>> {
+    fn attempt_order(&self, profile: &TaskProfile, _remaining: Micros) -> Result<Vec<String>> {
         self.profiles.lock().unwrap().push(profile.clone());
         Ok(self.order.clone())
     }

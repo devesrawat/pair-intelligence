@@ -23,6 +23,11 @@ pub trait Budget: Send + Sync {
 #[async_trait]
 pub trait BudgetEx: Budget {
     async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId>;
+
+    /// The per-task spending cap for a kind of task. The budget is the single authority on caps;
+    /// callers use this to pre-filter models the router could never afford. It is an upper bound
+    /// for planning only: `reserve_with` still enforces the exact remaining budget.
+    fn task_cap(&self, kind: TaskKind) -> Micros;
 }
 #[async_trait]
 pub trait Memory: Send + Sync {

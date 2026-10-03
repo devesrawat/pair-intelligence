@@ -235,6 +235,10 @@ mod tests {
             self.reserved.lock().expect("lock").push(req);
             Ok(ReservationId::new())
         }
+
+        fn task_cap(&self, _kind: TaskKind) -> Micros {
+            Micros(1_000_000_000)
+        }
     }
 
     fn pipeline(url: &str, deadline_ms: u64, mode: ClassifierMode) -> RoutingPipeline {

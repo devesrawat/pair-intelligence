@@ -95,8 +95,10 @@ routing:
     personal: [ollama_cloud, anthropic]
     # sensitive and employer are deliberately absent: those classes reach NO provider until the
     # owner authorizes a specific provider for them (spec). Do not add rows without that decision.
+  # Routing candidates MUST be priced entries of the provider registry above (same id, same prices):
+  # an unpriced model cannot be reserved against, so the workflows refuse it. Ollama Cloud models are
+  # omitted until their per-model prices and server-use terms are verified (docs/provider-billing.md).
   candidates:
-    - {id: "gemma4:31b", provider: ollama_cloud, tier: routine, capabilities: [text], context_tokens: 128000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}
-    - {id: placeholder-strong-a, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 3000000, output_price_micros_per_mtok: 15000000}
-    - {id: placeholder-strong-b, provider: ollama_cloud, tier: strong, capabilities: [text, tools], context_tokens: 128000, available: true, input_price_micros_per_mtok: 800000, output_price_micros_per_mtok: 2400000}
-    - {id: placeholder-deep-a, provider: anthropic, tier: deep, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 15000000, output_price_micros_per_mtok: 75000000}
+    - {id: claude-haiku-4-5, provider: anthropic, tier: routine, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 1000000, output_price_micros_per_mtok: 5000000}
+    - {id: claude-sonnet-5-5, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 2000000, output_price_micros_per_mtok: 10000000}
+    - {id: claude-opus-5-5, provider: anthropic, tier: deep, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 4000000, output_price_micros_per_mtok: 20000000}

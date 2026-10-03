@@ -16,7 +16,7 @@ use pair_core::{
 };
 use pair_models::{
     provider::ProviderRegistry,
-    router::{AttemptLimiter, ConfigRouter},
+    router::{AttemptLimiter, ConfigRouter, RouteConstraints},
 };
 
 /// Content from anyone but the owner (page text, model output, diffs, tool output) reaches a
@@ -37,14 +37,18 @@ const PROFILE_DIFFICULTY: &str = "substantial";
 /// The router's ordered model choices for a task profile. Hard constraints (provider, data
 /// class, capability, budget) are the router's job; this crate never picks a model itself.
 pub trait ModelPlanner: Send + Sync {
-    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>>;
+    /// `remaining` is the most this task may still spend; models whose worst case exceeds it are
+    /// excluded. Pass the task kind's cap from the budget, never the router's default.
+    fn attempt_order(&self, profile: &TaskProfile, remaining: Micros) -> Result<Vec<String>>;
 }
 
 impl ModelPlanner for ConfigRouter {
-    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>> {
-        Ok(self
-            .plan(profile, None, &self.default_constraints())?
-            .attempt_order())
+    fn attempt_order(&self, profile: &TaskProfile, remaining: Micros) -> Result<Vec<String>> {
+        let constraints = RouteConstraints {
+            remaining_budget: remaining,
+            ..self.default_constraints()
+        };
+        Ok(self.plan(profile, None, &constraints)?.attempt_order())
     }
 }
 
@@ -74,7 +78,8 @@ impl ModelCaller<'_> {
         };
         let mut attempts = AttemptLimiter::new(MAX_MODEL_ATTEMPTS);
         let mut last = PairError::new(ErrorCode::ProviderUnavailable, "router offered no model");
-        for model_id in self.planner.attempt_order(&profile)? {
+        let remaining = self.budget.task_cap(self.kind);
+        for model_id in self.planner.attempt_order(&profile, remaining)? {
             attempts = attempts.begin_attempt()?;
             let left = self.limits.remaining()?;
             let mut attempt = req.clone();

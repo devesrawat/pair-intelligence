@@ -76,4 +76,8 @@ impl BudgetEx for PgBudget {
     async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
         PgBudget::reserve_with(self, req).await
     }
+
+    fn task_cap(&self, kind: pair_core::types::TaskKind) -> pair_core::money::Micros {
+        self.config().task_cap(kind)
+    }
 }

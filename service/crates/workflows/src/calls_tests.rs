@@ -100,6 +100,23 @@ fn profile(intent: &str, class: DataClass, tokens: u64) -> pair_core::types::Tas
     }
 }
 
+/// The per-task cap the budget would give this kind of work, from the shipped `config/budget.yaml`
+/// (the single source of truth for caps): coding $1.00, research $0.50.
+fn cap_for(intent: &str) -> pair_core::money::Micros {
+    use pair_budget::BudgetConfig;
+    use pair_core::types::TaskKind;
+    let cfg = BudgetConfig::load(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../config/budget.yaml"
+    )))
+    .unwrap();
+    cfg.task_cap(match intent {
+        "coding" => TaskKind::Coding,
+        "research" => TaskKind::Research,
+        _ => TaskKind::Default,
+    })
+}
+
 fn real_router() -> pair_models::router::ConfigRouter {
     use pair_models::{classification::config::RoutingConfig, router::ConfigRouter};
     ConfigRouter::new(RoutingConfig::from_path(std::path::Path::new(MODELS_YAML)).unwrap())
@@ -116,7 +133,7 @@ fn real_router_serves_both_workflows_at_a_realistic_context() {
         ("research", DataClass::Public),
     ] {
         let order = router
-            .attempt_order(&profile(intent, class, 100_000))
+            .attempt_order(&profile(intent, class, 100_000), cap_for(intent))
             .unwrap_or_else(|e| panic!("{intent}: {e}"));
         assert!(!order.is_empty() && order.len() <= crate::calls::MAX_MODEL_ATTEMPTS);
     }
@@ -125,9 +142,7 @@ fn real_router_serves_both_workflows_at_a_realistic_context() {
 /// KNOWN CONFIG GAP (owner: config/models): the routing candidates in `config/models.yaml`
 /// (`placeholder-strong-a`, ...) are not in the provider registry and the only registry-known
 /// candidate (`gemma4:31b`) has no price, so `budgeted_generate` refuses every routed model.
-/// Run with `--ignored` to see the current state; it passes once the ids and prices line up.
 #[test]
-#[ignore = "config/models.yaml routing candidates are not priced registry models"]
 fn registry_prices_every_model_the_router_can_return() {
     use crate::calls::{ModelPlanner, PriceSource};
     use pair_models::provider::ProviderRegistry;
@@ -138,7 +153,7 @@ fn registry_prices_every_model_the_router_can_return() {
         ("research", DataClass::Public),
     ] {
         for id in router
-            .attempt_order(&profile(intent, class, 2_000))
+            .attempt_order(&profile(intent, class, 2_000), cap_for(intent))
             .unwrap()
         {
             let terms = registry

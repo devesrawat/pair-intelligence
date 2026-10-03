@@ -1,3 +1,6 @@
+head a3663fd8db6b711e256e694f096f9ce615dac39a
+node v24.12.0
+PASS  plugin source tree is clean (evidence matches HEAD)
 PASS  every migration applied to the scratch database (24 of 24)
 PASS  plain turn exits 0
 PASS  plain turn reached the mock with the routed model (reserve then override)
@@ -16,6 +19,9 @@ PASS  service denial: secret file content never reached the model or the output
 PASS  service denial: python3 denied by the real engine
 PASS  service denial: python3 reason names the executable
 PASS  service denial: nothing executed (canary file absent)
+PASS  git push: sent to pair-api as tool git.push (not shell.exec)
+PASS  git push: not allowed (denied by egress or held for approval, which the adapter cannot grant)
+PASS  git push: the model saw a block reason
 PASS  pair-api down mid-run: reservation had succeeded before the stop
 PASS  pair-api down mid-run: tool call blocked (deny-on-error, service unreachable)
 PASS  pair-api down mid-run: tool did not execute (no canary content in output)
@@ -31,13 +37,14 @@ PASS  zero caps: mock model server saw ZERO requests (no model call happened)
 PASS  zero caps: reserve refused with budget_exceeded
 PASS  zero caps: no override was applied and the run was blocked at before_agent_run
 PASS  zero caps: no reservation row was created
-PASS  WARN visible at start for before_model_resolve
-PASS  WARN visible at start for before_agent_run
-PASS  WARN visible at start for llm_output
-PASS  no opt-in: the model call HAPPENS (budget gate is gone)
+PASS  loud ERROR at start from the adapter (model gate cannot run)
+PASS  no model hooks were registered, so OpenClaw has nothing to WARN about
+PASS  no opt-in: the model call HAPPENS (the adapter cannot gate it; the ERROR above is the signal)
 PASS  no opt-in: model override not applied (default model used)
 PASS  no opt-in: no reservation was created
-PASS  no opt-in: tool gate still blocks via the real policy engine
+PASS  no opt-in: the tool gate is deny-all (even a read the policy would allow)
+PASS  no opt-in: the tool did not execute
 PASS  non-loopback PAIR_API_URL refused at startup (logged, deny-all installed)
 PASS  misconfigured adapter: mock model server saw ZERO requests
 PASS  no token appears in the evidence
+PASS  no host path appears in the evidence (HOME, temp dir, repo)

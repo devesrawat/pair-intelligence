@@ -1,37 +1,104 @@
 {
-  "runId": "93c0f92d-591e-4a67-9f96-acbb48eaa132",
-  "status": "error",
-  "summary": "failed",
+  "runId": "8a24cb26-aa71-4146-a2cf-6d7321f56e7c",
+  "status": "ok",
+  "summary": "completed",
   "result": {
     "payloads": [
       {
-        "text": "Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)",
-        "isError": true,
+        "text": "MOCK-DONE tool-result: pair policy: egress to origin is not on the allowlist",
         "mediaUrl": null
       }
     ],
     "meta": {
-      "durationMs": 1592,
+      "durationMs": 153,
       "agentMeta": {
-        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
-        "sessionFile": "agent:main:w-misconf",
+        "sessionId": "35cc35dc-2da0-4344-b296-62364c00b2ba",
+        "sessionFile": "agent:main:w-push",
         "provider": "mock",
-        "model": "mock-small",
+        "model": "mock-routed",
+        "contextTokens": 32000,
+        "contextTokensSource": "resolved",
+        "agentHarnessId": "openclaw",
         "credentialSource": {
           "kind": "direct",
           "evidence": "provider-config",
           "authorization": "declared"
         },
-        "contextTokens": 32000,
-        "contextTokensSource": "resolved"
+        "usage": {
+          "input": 22,
+          "output": 14,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 36,
+          "cost": {
+            "total": 0
+          }
+        },
+        "lastCallUsage": {
+          "input": 11,
+          "output": 7,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "cost": {
+            "total": 0
+          },
+          "total": 18
+        },
+        "promptTokens": 11,
+        "contextBudgetStatus": {
+          "schemaVersion": 1,
+          "source": "pre-prompt-estimate",
+          "updatedAt": 1791033430335,
+          "provider": "mock",
+          "model": "mock-routed",
+          "route": "fits",
+          "shouldCompact": false,
+          "estimatedPromptTokens": 16614,
+          "contextTokenBudget": 32000,
+          "promptBudgetBeforeReserve": 24000,
+          "reserveTokens": 8000,
+          "effectiveReserveTokens": 8000,
+          "remainingPromptBudgetTokens": 7386,
+          "overflowTokens": 0,
+          "toolResultReducibleChars": 0,
+          "messageCount": 0,
+          "unwindowedMessageCount": 0,
+          "sessionId": "35cc35dc-2da0-4344-b296-62364c00b2ba"
+        },
+        "codeModeEngaged": false,
+        "assistantTurns": 2,
+        "bridgeCalls": {
+          "search": 0,
+          "describe": 0,
+          "call": 0
+        },
+        "costUsd": 0,
+        "terminalReceipt": {
+          "runId": "8a24cb26-aa71-4146-a2cf-6d7321f56e7c",
+          "sessionId": "35cc35dc-2da0-4344-b296-62364c00b2ba",
+          "turnId": "8a24cb26-aa71-4146-a2cf-6d7321f56e7c",
+          "requested": {
+            "provider": "mock",
+            "model": "mock-small"
+          },
+          "effective": {
+            "provider": "mock",
+            "model": "mock-routed",
+            "responseModel": "mock-routed"
+          },
+          "successfulToolNames": [],
+          "rerouted": true,
+          "terminalDisposition": "visible"
+        }
       },
+      "aborted": false,
       "systemPromptReport": {
         "source": "run",
-        "generatedAt": 1791033536037,
-        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
-        "sessionKey": "agent:main:w-misconf",
+        "generatedAt": 1791033430294,
+        "sessionId": "35cc35dc-2da0-4344-b296-62364c00b2ba",
+        "sessionKey": "agent:main:w-push",
         "provider": "mock",
-        "model": "mock-small",
+        "model": "mock-routed",
         "workspaceDir": "<SPIKE_DIR>/workspace",
         "bootstrapMaxChars": 20000,
         "bootstrapTotalMaxChars": 60000,
@@ -47,10 +114,10 @@
           "sandboxed": false
         },
         "systemPrompt": {
-          "chars": 42239,
-          "hash": "ea51c591fb7be151a34793c09c763c92e0788bb7ca60372d23360eecbf3f6056",
+          "chars": 42238,
+          "hash": "47acd90368af96a3c04b4aa5906dc5bc4141f99734cdc2d76948a9b6da660bfc",
           "projectContextChars": 19337,
-          "nonProjectContextChars": 22902
+          "nonProjectContextChars": 22901
         },
         "injectedWorkspaceFiles": [
           {
@@ -315,26 +382,54 @@
           ]
         },
         "currentTurn": {
-          "promptChars": 21,
+          "promptChars": 22,
           "runtimeContextChars": 52,
           "modelOnlyPromptChars": 0
         }
       },
-      "finalAssistantVisibleText": "Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)",
-      "finalAssistantRawText": "Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)",
+      "finalPromptText": "do it SCENARIO:gitpush",
+      "finalAssistantVisibleText": "MOCK-DONE tool-result: pair policy: egress to origin is not on the allowlist",
+      "finalAssistantRawText": "MOCK-DONE tool-result: pair policy: egress to origin is not on the allowlist",
       "replayInvalid": false,
-      "livenessState": "blocked",
-      "error": {
-        "kind": "hook_block",
-        "message": "Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)"
-      },
+      "livenessState": "working",
+      "stopReason": "stop",
       "executionTrace": {
-        "fallbackUsed": false
+        "winnerProvider": "mock",
+        "winnerModel": "mock-routed",
+        "attempts": [
+          {
+            "provider": "mock",
+            "model": "mock-routed",
+            "result": "success",
+            "stage": "assistant"
+          }
+        ],
+        "fallbackUsed": false,
+        "runner": "embedded"
+      },
+      "requestShaping": {
+        "thinking": "off"
+      },
+      "completion": {
+        "stopReason": "stop",
+        "finishReason": "stop"
+      },
+      "toolSummary": {
+        "calls": 1,
+        "tools": [
+          "exec"
+        ],
+        "failures": 1,
+        "unresolvedError": {
+          "toolName": "exec"
+        }
       },
       "terminalReply": {
         "disposition": "visible",
-        "text": "Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)"
+        "text": "MOCK-DONE tool-result: pair policy: egress to origin is not on the allowlist",
+        "modelRouteChange": "Model route changed: mock/mock-small → mock/mock-routed."
       }
-    }
+    },
+    "sourceReplyDeliveryState": "missing"
   }
 }

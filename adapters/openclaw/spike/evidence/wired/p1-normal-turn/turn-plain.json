@@ -1,5 +1,5 @@
 {
-  "runId": "328b9cec-80a9-4efe-9fba-66d6c0862727",
+  "runId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
   "status": "ok",
   "summary": "completed",
   "result": {
@@ -10,9 +10,9 @@
       }
     ],
     "meta": {
-      "durationMs": 1424,
+      "durationMs": 1690,
       "agentMeta": {
-        "sessionId": "0a6363d7-ba2a-413e-a19f-11aea4a4fbbf",
+        "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
         "sessionFile": "agent:main:w-plain",
         "provider": "mock",
         "model": "mock-routed",
@@ -48,22 +48,22 @@
         "contextBudgetStatus": {
           "schemaVersion": 1,
           "source": "pre-prompt-estimate",
-          "updatedAt": 1791031398684,
+          "updatedAt": 1791033422652,
           "provider": "mock",
           "model": "mock-routed",
           "route": "fits",
           "shouldCompact": false,
-          "estimatedPromptTokens": 16511,
+          "estimatedPromptTokens": 16614,
           "contextTokenBudget": 32000,
           "promptBudgetBeforeReserve": 24000,
           "reserveTokens": 8000,
           "effectiveReserveTokens": 8000,
-          "remainingPromptBudgetTokens": 7489,
+          "remainingPromptBudgetTokens": 7386,
           "overflowTokens": 0,
           "toolResultReducibleChars": 0,
           "messageCount": 0,
           "unwindowedMessageCount": 0,
-          "sessionId": "0a6363d7-ba2a-413e-a19f-11aea4a4fbbf"
+          "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a"
         },
         "codeModeEngaged": false,
         "assistantTurns": 1,
@@ -74,9 +74,9 @@
         },
         "costUsd": 0,
         "terminalReceipt": {
-          "runId": "328b9cec-80a9-4efe-9fba-66d6c0862727",
-          "sessionId": "0a6363d7-ba2a-413e-a19f-11aea4a4fbbf",
-          "turnId": "328b9cec-80a9-4efe-9fba-66d6c0862727",
+          "runId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
+          "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
+          "turnId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
           "requested": {
             "provider": "mock",
             "model": "mock-small"
@@ -94,12 +94,12 @@
       "aborted": false,
       "systemPromptReport": {
         "source": "run",
-        "generatedAt": 1791031398046,
-        "sessionId": "0a6363d7-ba2a-413e-a19f-11aea4a4fbbf",
+        "generatedAt": 1791033421877,
+        "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
         "sessionKey": "agent:main:w-plain",
         "provider": "mock",
         "model": "mock-routed",
-        "workspaceDir": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace",
+        "workspaceDir": "<SPIKE_DIR>/workspace",
         "bootstrapMaxChars": 20000,
         "bootstrapTotalMaxChars": 60000,
         "bootstrapTruncation": {
@@ -114,15 +114,15 @@
           "sandboxed": false
         },
         "systemPrompt": {
-          "chars": 41896,
-          "hash": "daf56dc9bc7a7a92433a5466de4035e469c3ebe6320608f0b5254ebf27aa9a1e",
-          "projectContextChars": 19297,
-          "nonProjectContextChars": 22599
+          "chars": 42239,
+          "hash": "97eb0fff5afdcc8cd8e5f0961ec93e6474281b0f85fbb0f2141aebb3ed4efe70",
+          "projectContextChars": 19337,
+          "nonProjectContextChars": 22902
         },
         "injectedWorkspaceFiles": [
           {
             "name": "AGENTS.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/AGENTS.md",
+            "path": "<SPIKE_DIR>/workspace/AGENTS.md",
             "missing": false,
             "rawChars": 6449,
             "injectedChars": 6449,
@@ -130,7 +130,7 @@
           },
           {
             "name": "SOUL.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/SOUL.md",
+            "path": "<SPIKE_DIR>/workspace/SOUL.md",
             "missing": false,
             "rawChars": 1526,
             "injectedChars": 1526,
@@ -138,7 +138,7 @@
           },
           {
             "name": "IDENTITY.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/IDENTITY.md",
+            "path": "<SPIKE_DIR>/workspace/IDENTITY.md",
             "missing": false,
             "rawChars": 1398,
             "injectedChars": 1398,
@@ -146,7 +146,7 @@
           },
           {
             "name": "USER.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/USER.md",
+            "path": "<SPIKE_DIR>/workspace/USER.md",
             "missing": false,
             "rawChars": 1136,
             "injectedChars": 1136,
@@ -154,7 +154,7 @@
           },
           {
             "name": "BOOTSTRAP.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/BOOTSTRAP.md",
+            "path": "<SPIKE_DIR>/workspace/BOOTSTRAP.md",
             "missing": false,
             "rawChars": 7475,
             "injectedChars": 7475,
@@ -162,12 +162,12 @@
           }
         ],
         "skills": {
-          "promptChars": 7344,
-          "hash": "fd0d6abf3e8cc59c6ba91aa66061b98caf90b99ca01ccf929d65a62c220defa2",
+          "promptChars": 7623,
+          "hash": "aa84084f9e16e8a931d45e23fe6a3186234356dbfd4601f47179915916eac211",
           "entries": [
             {
               "name": "acp-router",
-              "blockChars": 270
+              "blockChars": 282
             },
             {
               "name": "add-model-provider",
@@ -183,11 +183,11 @@
             },
             {
               "name": "browser-automation",
-              "blockChars": 289
+              "blockChars": 298
             },
             {
               "name": "canvas",
-              "blockChars": 264
+              "blockChars": 274
             },
             {
               "name": "clawhub",
@@ -228,6 +228,10 @@
             {
               "name": "healthcheck",
               "blockChars": 251
+            },
+            {
+              "name": "mcporter",
+              "blockChars": 245
             },
             {
               "name": "meme-maker",

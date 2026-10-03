@@ -99,6 +99,17 @@ env:
   TYPESAFE_API_KEY:
     secret: true
     doc: Enables the Jev classifier (only used when routing.classifier.mode is shadow or active).
+  PAIR_CLAUDE_CODE:
+    default: unset
+    doc: >
+      `1` serves the `claude_code` registry models through the `claude` CLI on this host, using the
+      owner's subscription login (`claude setup-token`); no API key, zero marginal cost, bounded by
+      the limits the CLI itself reports (usage windows, paid overage). Permitted by Anthropic's published terms only
+      for ONE owner on their own host through the unmodified CLI (docs/provider-billing.md, verified 2026-10-03);
+      never enable it for a service that serves other people. The child gets an env allowlist; no API key reaches it.
+  PAIR_CLAUDE_BIN:
+    default: claude
+    doc: Path of the `claude` CLI used when PAIR_CLAUDE_CODE=1. Read by pair-models, not Config.
   PAIR_ALLOW_UNVERIFIED_MODEL_IDS:
     default: unset
     doc: >

@@ -12,7 +12,7 @@ use pair_models::classification::config::{ClassifierMode, RoutingConfig};
 use pair_models::classification::jev::{ApiKey, JevClassifier, JevSettings};
 use pair_models::classification::questions::QuestionSet;
 use pair_models::provider::{
-    AnthropicProvider, CloudProvider, OllamaCloudProvider, ProviderRegistry,
+    AnthropicProvider, ClaudeCodeProvider, CloudProvider, OllamaCloudProvider, ProviderRegistry,
 };
 use pair_policy::PolicyEngine;
 use sqlx::PgPool;
@@ -82,10 +82,17 @@ fn provider(cfg: &Config, registry: &Arc<ProviderRegistry>) -> Result<CloudProvi
                 .map(|p| p.with_allow_unverified_ids(allow))
         })
         .transpose()?;
-    if anthropic.is_none() && ollama.is_none() {
-        tracing::warn!("no provider API key configured: every model call will fail closed");
+    if anthropic.is_none() && ollama.is_none() && !cfg.claude_code_enabled {
+        tracing::warn!(
+            "no provider API key or PAIR_CLAUDE_CODE configured: every model call will fail closed"
+        );
     }
-    Ok(CloudProvider::new(registry.clone(), anthropic, ollama))
+    let cloud = CloudProvider::new(registry.clone(), anthropic, ollama);
+    Ok(if cfg.claude_code_enabled {
+        cloud.with_claude_code(ClaudeCodeProvider::from_env(registry.clone()))
+    } else {
+        cloud
+    })
 }
 
 /// `Ok(None)`: a default config path does not exist, so the services are left unconfigured

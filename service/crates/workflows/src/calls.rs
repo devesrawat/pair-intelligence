@@ -152,10 +152,16 @@ fn routing_input_tokens(req: &ModelRequest) -> u64 {
     input_bytes(req).div_ceil(ROUTER_BYTES_PER_TOKEN)
 }
 
-/// Reservation = registry price x (estimated input + max output tokens), rounded up.
+/// Smallest reservation. The ledger rejects non-positive amounts, and a subscription model
+/// (zero price) must still hold a reservation so the attempt is counted, traced and recorded.
+pub const MIN_RESERVATION: Micros = Micros(1);
+
+/// Reservation = registry price x (estimated input + max output tokens), rounded up, at least
+/// [`MIN_RESERVATION`].
 pub fn reservation_cost(price: &Price, req: &ModelRequest) -> Result<Micros> {
     price
         .max_cost(estimate_input_tokens(req), u64::from(req.max_output_tokens))
+        .map(|cost| cost.max(MIN_RESERVATION))
         .ok_or_else(|| PairError::new(ErrorCode::BudgetUnknownPrice, "reservation overflows"))
 }
 

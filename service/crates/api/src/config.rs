@@ -60,6 +60,8 @@ pub struct Config {
     pub ollama_api_key: Option<Secret>,
     pub typesafe_api_key: Option<Secret>,
     pub allow_unverified_model_ids: bool,
+    /// Serve `claude_code` models through the `claude` CLI logged in with the owner subscription.
+    pub claude_code_enabled: bool,
     /// Home directory the policy engine expands `~` against (credential-path denial).
     pub home: Option<PathBuf>,
     pub sweep_interval: Duration,
@@ -250,6 +252,7 @@ impl Config {
             typesafe_api_key: secret(&get, "TYPESAFE_API_KEY"),
             allow_unverified_model_ids: get("PAIR_ALLOW_UNVERIFIED_MODEL_IDS")
                 .is_some_and(|v| v == ENABLED_FLAG),
+            claude_code_enabled: get("PAIR_CLAUDE_CODE").is_some_and(|v| v == ENABLED_FLAG),
             home: non_empty(get("HOME")).map(PathBuf::from),
             sweep_interval: timing.sweep,
             orphan_interval: timing.orphan,
@@ -331,6 +334,16 @@ mod tests {
                 .find(|(n, _)| *n == k)
                 .map(|(_, v)| (*v).to_owned())
         }
+    }
+
+    #[test]
+    fn test_from_lookup_claude_code_flag_defaults_off_and_enables_on_one() {
+        let off = Config::from_lookup(lookup(&[])).expect("config");
+        assert!(!off.claude_code_enabled);
+        let on = Config::from_lookup(lookup(&[("PAIR_CLAUDE_CODE", "1")])).expect("config");
+        assert!(on.claude_code_enabled);
+        let junk = Config::from_lookup(lookup(&[("PAIR_CLAUDE_CODE", "yes")])).expect("config");
+        assert!(!junk.claude_code_enabled);
     }
 
     #[test]

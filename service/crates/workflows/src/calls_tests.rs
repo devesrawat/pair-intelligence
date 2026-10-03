@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use crate::calls::budgeted_generate;
+use crate::calls::{budgeted_generate, MIN_RESERVATION};
 use crate::coding::testkit::{FakeBudget, FixedPrices, FnProvider, TEST_PRICE_VERSION};
 use pair_core::{
     error::{ErrorCode, PairError},
     ids::{TaskId, TraceId},
-    money::Micros,
+    money::{Micros, Price},
     types::{DataClass, ModelMessage, ModelRequest, TaskKind, TrustClass},
 };
 use std::sync::atomic::Ordering;
@@ -68,6 +68,35 @@ async fn reservation_derived_from_price_and_max_output() {
         reservations[0].price_version.as_deref(),
         Some(TEST_PRICE_VERSION)
     );
+}
+
+#[tokio::test]
+async fn test_budgeted_generate_zero_priced_subscription_model_reserves_the_floor() {
+    let budget = FakeBudget::default();
+    let provider = FnProvider::scripted(vec!["ok".into()]);
+    let free = Price {
+        version: "subscription".into(),
+        input_per_mtok: Micros(0),
+        output_per_mtok: Micros(0),
+    };
+    let resp = budgeted_generate(
+        &provider,
+        &budget,
+        &FixedPrices(Some(free)),
+        TaskKind::Coding,
+        request("hi", 10, DataClass::Public),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resp.text, "ok");
+    assert_eq!(provider.call_count(), 1);
+    let reservations = budget.reservations.lock().unwrap();
+    assert_eq!(
+        reservations.len(),
+        1,
+        "the call must stay on the ledger and attempt trace"
+    );
+    assert_eq!(reservations[0].max_cost, MIN_RESERVATION);
 }
 
 #[tokio::test]

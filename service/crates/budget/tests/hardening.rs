@@ -228,3 +228,20 @@ fn config_rejects_unknown_keys() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/budget.yaml");
     BudgetConfig::load(path).unwrap();
 }
+
+#[tokio::test]
+async fn test_subscription_floor_reservation_settles_at_zero() {
+    let db = TestDb::create().await;
+    let budget = db.budget(&yaml(2000, 1000, 100, 10));
+    let id = budget
+        .reserve_with(metered(TaskId::new(), 1, TaskKind::Default))
+        .await
+        .unwrap();
+    let r = budget
+        .reconcile_detailed(id, usage(Some(0), PRICE))
+        .await
+        .unwrap();
+    assert!(r.entry.settled && !r.overrun);
+    assert_eq!(r.entry.amount, Micros(0));
+    assert_eq!(counted(&db).await, 0, "a zero-cost settle counts nothing");
+}

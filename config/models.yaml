@@ -49,6 +49,49 @@ models:
     # Verify with: cargo test -p pair-models --test live_smoke -- --ignored (GET /v1/models), then remove this flag.
     id_verified: false
 
+  # Claude through the `claude` CLI on the PAIR host, authenticated by the owner subscription
+  # (PAIR_CLAUDE_CODE=1). `billing: subscription` means zero marginal cost and no price. The limit
+  # comes from the provider: the CLI reports usage windows and overage on every call, and the adapter
+  # stops at 95% of any window or on paid overage until the reported reset. An optional
+  # quota_requests_per_minute adds a local burst cap. `upstream_id` is the CLI alias;
+  # the resolved model id is recorded on every call. Terms verified 2026-10-03
+  # (docs/provider-billing.md): allowed for one owner on their own host via the unmodified CLI only.
+  - id: claude-code/haiku
+    provider: claude_code
+    upstream_id: haiku
+    billing: subscription
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 8192
+    data_policy: consumer_terms_single_owner_verified_2026-10-03
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+  - id: claude-code/sonnet
+    provider: claude_code
+    upstream_id: sonnet
+    billing: subscription
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 16000
+    data_policy: consumer_terms_single_owner_verified_2026-10-03
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+  - id: claude-code/opus
+    provider: claude_code
+    upstream_id: opus
+    billing: subscription
+    endpoint: https://api.anthropic.com
+    modalities: [text]
+    context_tokens: 200000
+    max_output_tokens: 16000
+    data_policy: consumer_terms_single_owner_verified_2026-10-03
+    allowed_data_classes: [public, personal]
+    health: healthy
+
   # Ollama Cloud: per-model token prices and ToS for server automation are UNVERIFIED,
   # so price is omitted and paid execution stays disabled until the owner configures it.
   - id: gemma4:31b
@@ -91,14 +134,22 @@ routing:
   thresholds:
     - {model_version: jev-1.13.0, question_version: "2026-10-03.1", intent: 0.90, difficulty: 0.90}
   data_class_providers:
-    public: [ollama_cloud, anthropic, openai]
-    personal: [ollama_cloud, anthropic]
+    public: [ollama_cloud, anthropic, claude_code, openai]
+    personal: [ollama_cloud, anthropic, claude_code]
     # sensitive and employer are deliberately absent: those classes reach NO provider until the
     # owner authorizes a specific provider for them (spec). Do not add rows without that decision.
   # Routing candidates MUST be priced entries of the provider registry above (same id, same prices):
   # an unpriced model cannot be reserved against, so the workflows refuse it. Ollama Cloud models are
   # omitted until their per-model prices and server-use terms are verified (docs/provider-billing.md).
+  # Within a tier the router orders candidates by file order: primary first, the rest are fallbacks.
+  # The metered API model leads so the fixed baseline stays a priced counterfactual (the evaluation
+  # reports modeled cost). Without ANTHROPIC_API_KEY the API candidate answers ProviderUnavailable
+  # and the call falls through to the subscription model. To prefer the subscription, move the
+  # claude-code line above its API sibling.
   candidates:
     - {id: claude-haiku-4-5, provider: anthropic, tier: routine, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 1000000, output_price_micros_per_mtok: 5000000}
+    - {id: claude-code/haiku, provider: claude_code, tier: routine, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 0, output_price_micros_per_mtok: 0}
     - {id: claude-sonnet-5-5, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 2000000, output_price_micros_per_mtok: 10000000}
+    - {id: claude-code/sonnet, provider: claude_code, tier: strong, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 0, output_price_micros_per_mtok: 0}
     - {id: claude-opus-5-5, provider: anthropic, tier: deep, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 4000000, output_price_micros_per_mtok: 20000000}
+    - {id: claude-code/opus, provider: claude_code, tier: deep, capabilities: [text], context_tokens: 200000, available: true, input_price_micros_per_mtok: 0, output_price_micros_per_mtok: 0}

@@ -420,7 +420,19 @@ async fn resolved_model_recorded() {
     assert_eq!(got.trace, req.trace);
     assert_eq!(got.route_reason, "baseline:routine");
 
+    // model_calls.reservation_id is a foreign key (migration 101): the reservation must exist.
     let reservation = pair_core::ids::ReservationId::new();
+    sqlx::query(
+        "INSERT INTO budget_reservations (id, task_id, category, task_kind, price_version, period_day, \
+         period_month, reserved_micros, counted_micros, state, created_at) \
+         VALUES ($1, $2, 'metered', 'default', 'pv-test', current_date, \
+         date_trunc('month', current_date)::date, 1000, 1000, 'held', now())",
+    )
+    .bind(reservation.0)
+    .bind(uuid::Uuid::new_v4())
+    .execute(&db.pool().await)
+    .await
+    .expect("seed reservation");
     store
         .mark_reconciled(rec.id, reservation)
         .await

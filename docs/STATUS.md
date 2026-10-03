@@ -61,6 +61,8 @@ CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, the workspace te
 | Item | Why it blocks |
 |---|---|
 | Anthropic API key and a spend-capped workspace | No real provider call has been made; prices and model ids in `config/models.yaml` are unverified against a live catalog |
+| Verify `claude-sonnet-5-5` / `claude-haiku-4-5` ids (or set `PAIR_ALLOW_UNVERIFIED_MODEL_IDS=1`) | **As shipped, `/v1/turn` answers nothing.** The baseline tier is `strong` (Sonnet) and `memory_recall`/`transformation` route to Haiku; both are `id_verified: false`, so every turn is refused (`ProviderDisallowed`) until the ids are verified (run the ignored `live_anthropic_model_ids_exist` test) or the override is set. This was derived from the shipped config and the tested refusal behaviour; the shipped config has not been exercised end to end because no test uses it with a live provider |
+| Adapter reserve floor vs task cap | The server's reserve floor for a real registry model is registry price x (up to 20,000 input tokens + the model's max output): about $0.20 for Sonnet, which is above the $0.10 cap of the `default` task kind. With the adapter's `taskKind: default`, every adapter run on a real Sonnet would be refused until the adapter is configured with `coding` or `research`, or the default cap is raised deliberately (the live harness passes only because its mock model is priced near zero) |
 | Ollama Cloud plan and terms-of-service review | Data policy for that provider is an assumption (`retention_30d_no_training_unverified`) |
 | TypeSafe API key | Jev classifier path cannot run live |
 | A real coding repository and issue | The coding workflow and the 8-of-10 benchmark need real tasks |

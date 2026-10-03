@@ -1,7 +1,7 @@
 # PAIR tool policy (spec section 9). Parsed by pair_policy::PolicyConfig; any parse or
 # validation error means no policy engine exists, so every action is refused (fail closed).
 # Unknown keys are rejected. Bump `version` whenever this file changes.
-version: "2026-10-03.5"
+version: "2026-10-03.6"
 
 # Risk class per registered tool. A tool that is not listed here is denied.
 # read | local_edit | local_commit run unprompted inside the workspace;
@@ -64,6 +64,7 @@ denied_names:
   - ".env.production"
   - ".env.test"
   - ".env.*"                  # any other variant: .env.prod, .env.dev, .env.backup, .env.bak, ...
+  - "*.env"                   # production.env, secrets.env, ... (templates are `.env.example`, see allowed_names)
   - ".git-credentials"
   - id_rsa
   - id_ed25519

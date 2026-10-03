@@ -347,3 +347,98 @@ fn model_supplied_safe_label_is_ignored() {
         Decision::Deny { .. }
     ));
 }
+
+/// Reasons go back to the caller: they may name the category but never a resolved absolute path,
+/// a symlink target or an OS error (that would let a caller probe the filesystem).
+#[cfg(unix)]
+#[test]
+fn deny_reasons_do_not_echo_resolved_paths_or_os_errors() {
+    let f = fixture();
+    let root = f.workspace.parent().expect("parent").to_path_buf();
+    std::os::unix::fs::symlink(root.join("nowhere"), f.workspace.join("dangling")).expect("link");
+    std::os::unix::fs::symlink(f.home.join(".ssh"), f.workspace.join("sneaky")).expect("link");
+    let abs_outside = root
+        .join("outside/secret.txt")
+        .to_string_lossy()
+        .into_owned();
+    let cases = [
+        "dangling/x",
+        "sneaky/id_rsa",
+        "../outside/secret.txt",
+        abs_outside.as_str(),
+        "/etc/hostname",
+        "~/not-a-credential.txt",
+    ];
+    let forbidden = [
+        root.to_string_lossy().into_owned(),
+        "No such file".to_owned(),
+        "Permission denied".to_owned(),
+        "os error".to_owned(),
+        "/etc/hostname".to_owned(),
+    ];
+    for path in cases {
+        let mut r = request("fs.read");
+        r.paths = vec![path.into()];
+        let out = f.engine.authorize(&r, &f.ctx);
+        let why = reason(&out.decision).to_owned();
+        assert!(matches!(out.decision, Decision::Deny { .. }), "{path}");
+        for needle in &forbidden {
+            assert!(
+                !why.contains(needle),
+                "{path}: reason leaks {needle:?}: {why}"
+            );
+        }
+    }
+    let mut unusable = f.ctx.clone();
+    unusable.workspace_root = root.join("no-such-root").to_string_lossy().into_owned();
+    let out = f.engine.authorize(&request("fs.read"), &unusable);
+    let why = reason(&out.decision);
+    assert!(
+        !why.contains("no-such-root") && !why.contains("os error"),
+        "{why}"
+    );
+}
+
+/// An absolute path outside the workspace is refused on its text alone: the filesystem is not
+/// consulted, so an unreadable directory cannot make the reason differ (no existence probing).
+#[cfg(unix)]
+#[test]
+fn absolute_path_outside_workspace_denied_before_touching_the_filesystem() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    let root = f.workspace.parent().expect("parent").to_path_buf();
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).expect("mkdir");
+    std::fs::write(locked.join("x"), "x").expect("write");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+    let probe = |path: String| {
+        let mut r = request("fs.read");
+        r.paths = vec![path];
+        reason(&f.engine.authorize(&r, &f.ctx).decision).to_owned()
+    };
+    let unreadable = probe(locked.join("x").to_string_lossy().into_owned());
+    let missing = probe(root.join("absent/x").to_string_lossy().into_owned());
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).expect("restore");
+
+    assert_eq!(
+        unreadable, missing,
+        "existence and permissions must not be observable"
+    );
+    assert!(unreadable.contains("outside the workspace"), "{unreadable}");
+}
+
+/// An absolute path spelled through a non-canonical alias of the workspace (macOS `/var` vs
+/// `/private/var`) is still inside it.
+#[cfg(unix)]
+#[test]
+fn absolute_path_through_a_workspace_alias_is_allowed() {
+    let f = fixture();
+    let alias_parent = f.workspace.parent().expect("parent").join("alias");
+    std::os::unix::fs::symlink(&f.workspace, &alias_parent).expect("alias");
+    let mut ctx = f.ctx.clone();
+    ctx.workspace_root = alias_parent.to_string_lossy().into_owned();
+    let mut r = request("fs.write");
+    r.paths = vec![alias_parent.join("new.txt").to_string_lossy().into_owned()];
+    assert_eq!(f.engine.authorize(&r, &ctx).decision, Decision::Allow);
+}

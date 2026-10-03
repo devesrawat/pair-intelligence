@@ -1,12 +1,10 @@
 //! Inbox review flows: reject, edit (replacement candidate) and correct (supersede accepted).
 use crate::{
-    accept::accept_in_tx,
+    accept::{accept_in_tx, record_conflict},
     audit,
+    contradiction::find_links,
     error::{db_err, invalid, not_found},
-    inbox::{
-        find_candidate_contradictions, find_memory_contradictions, insert_candidate, prepare,
-        NewCandidateRow,
-    },
+    inbox::{insert_candidate, prepare, NewCandidateRow},
     model::{CandidateDraft, MemoryRecord, VerifiedSpans},
     policy,
     store::{AcceptMode, PgMemory},
@@ -37,6 +35,9 @@ pub struct EditPatch {
 pub struct CorrectionPatch {
     pub content: String,
     pub extra_evidence: Vec<EvidenceRef>,
+    /// Keep the original accepted beside the correction (recorded as a conflict) instead of
+    /// superseding it.
+    pub keep_both: bool,
 }
 
 struct OriginalCandidate {
@@ -76,6 +77,13 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
     .fetch_all(&mut *conn)
     .await
     .map_err(db_err)?;
+    ensure_evidence_alive(
+        &mut *conn,
+        "candidate_id",
+        "memory_candidate_evidence",
+        id.0,
+    )
+    .await?;
     let (evidence, verified) = split_evidence(&evidence)?;
     Ok(OriginalCandidate {
         kind: row.try_get("kind").map_err(db_err)?,
@@ -88,6 +96,31 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
         evidence,
         verified,
     })
+}
+
+/// The record had evidence and none of it is on an active source: its text derives only from
+/// deleted sources and must not be carried forward (an edit would resurrect it).
+async fn ensure_evidence_alive(
+    conn: &mut PgConnection,
+    fk_column: &str,
+    table: &str,
+    id: Uuid,
+) -> Result<()> {
+    let (total, active): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT count(*), count(*) FILTER (WHERE s.deletion_state = 'active') FROM {table} e \
+         JOIN sources s ON s.id = e.source_id WHERE e.{fk_column} = $1"
+    ))
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    if total > 0 && active == 0 {
+        return Err(PairError::new(
+            ErrorCode::SourceDeleted,
+            format!("{id} was derived only from deleted sources"),
+        ));
+    }
+    Ok(())
 }
 
 /// Evidence refs plus the set of (source, span) pairs flagged `span_verified`.
@@ -175,37 +208,26 @@ impl PgMemory {
         draft.extraction_version = original.extraction_version;
         draft.carried_verified = original.verified;
 
-        let prepared = prepare(&mut tx, draft, None).await?;
+        let prepared = prepare(&mut tx, draft, Some(&format!("edit:{id}"))).await?;
         let c = &prepared.draft.candidate;
-        let (mem_links, cand_links) = match &prepared.topic {
-            Some(topic) => (
-                find_memory_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    (self.clock)(),
-                )
-                .await?,
-                find_candidate_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    Some(id.0),
-                )
-                .await?,
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
+        let links = find_links(
+            &mut tx,
+            &c.kind,
+            c.project.as_deref(),
+            prepared.topic.as_deref(),
+            &prepared.normalized,
+            (self.clock)(),
+            Some(id.0),
+        )
+        .await?;
+        let (mem_links, cand_links) = (links.memories, links.candidates);
         let mut assessment = policy::assess(
             &c.kind,
             c.inferred,
             &c.content,
             &prepared.facts,
             !mem_links.is_empty() || !cand_links.is_empty(),
+            prepared.topic.is_some(),
         );
         // A human edit is never auto-accepted, even if the edited text would otherwise qualify.
         assessment
@@ -264,6 +286,7 @@ impl PgMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
+        ensure_evidence_alive(&mut tx, "memory_id", "memory_evidence", id.0).await?;
         let (mut evidence, verified) = split_evidence(&evidence_rows)?;
         evidence.extend(patch.extra_evidence);
         if patch.content.trim().is_empty() {
@@ -301,11 +324,14 @@ impl PgMemory {
             candidate,
             actor,
             AcceptMode {
-                supersedes: Some(id),
-                keep_both: false,
+                supersedes: (!patch.keep_both).then_some(id),
+                keep_both: patch.keep_both,
             },
         )
         .await?;
+        if patch.keep_both {
+            record_conflict(&mut tx, id.0, new_id.0, actor).await?;
+        }
         audit::record(
             &mut tx,
             actor,

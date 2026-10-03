@@ -2,10 +2,10 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 use chrono::{DateTime, Duration, Utc};
 use pair_core::{
-    ids::SourceId,
+    ids::{CandidateId, SourceId},
     types::{EvidenceRef, MemoryCandidate, TrustClass},
 };
-use pair_memory::{NewSource, PgMemory, SourceRecord};
+use pair_memory::{CandidateDraft, NewSource, PgMemory, SourceRecord};
 use sqlx::{postgres::PgPoolOptions, Connection, PgConnection, PgPool};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -109,6 +109,27 @@ pub fn candidate(
             span: Some(span.to_string()),
         }],
     }
+}
+
+/// A draft whose evidence spans are quoted from the (simulated) source text, so they verify.
+pub fn verified(c: MemoryCandidate) -> CandidateDraft {
+    let texts: Vec<(SourceId, String)> = c
+        .evidence
+        .iter()
+        .filter_map(|e| e.span.clone().map(|s| (e.source, s)))
+        .collect();
+    let mut draft = CandidateDraft::new(c);
+    for (src, text) in texts {
+        draft = draft.with_source_text(src, text);
+    }
+    draft
+}
+
+pub async fn propose_verified(
+    mem: &PgMemory,
+    c: MemoryCandidate,
+) -> pair_core::error::Result<CandidateId> {
+    Ok(mem.propose_with_outcome(verified(c)).await?.id)
 }
 
 pub fn days_ago(n: i64) -> DateTime<Utc> {

@@ -214,3 +214,86 @@ async fn deletion_leaves_no_content_in_chunks_or_audit() {
     .unwrap();
     assert_eq!(audit, 0);
 }
+
+const ERASURE_TABLES: [&str; 6] = [
+    "memories",
+    "memory_candidates",
+    "memory_evidence",
+    "memory_candidate_evidence",
+    "memory_chunks",
+    "memory_audit_events",
+];
+
+#[tokio::test]
+async fn deleted_source_text_is_erased_from_tables() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let gone = source(&mem, "vault-note", TrustClass::Owner).await;
+    let live = source(&mem, "other-note", TrustClass::Owner).await;
+
+    // Memory derived only from the deleted source, with a derivable topic and two spans on it.
+    let mut c = candidate(
+        "fact",
+        "Project Bluebird is the vault codename",
+        None,
+        gone.id,
+        "codename Bluebird",
+    );
+    c.evidence.push(EvidenceRef {
+        source: gone.id,
+        span: Some("Bluebird again".into()),
+    });
+    let sole = mem
+        .accept(mem.propose(c).await.unwrap(), "owner")
+        .await
+        .unwrap();
+
+    // Pending candidate derived only from it, with a reviewer-facing reason.
+    let mut d = CandidateDraft::new(candidate(
+        "fact",
+        "Bluebird launch is on Tuesday",
+        None,
+        gone.id,
+        "Bluebird Tuesday",
+    ));
+    d.reason = Some("mentions Bluebird".into());
+    mem.propose_draft(d).await.unwrap();
+
+    // Memory with another live source keeps its text but loses the deleted source's span.
+    let mut mixed = candidate(
+        "fact",
+        "The launch checklist is complete",
+        None,
+        gone.id,
+        "Bluebird checklist",
+    );
+    mixed.evidence.push(EvidenceRef {
+        source: live.id,
+        span: Some("checklist done".into()),
+    });
+    let mixed_id = mem
+        .accept(mem.propose(mixed).await.unwrap(), "owner")
+        .await
+        .unwrap();
+
+    mem.delete_source(gone.id, "owner").await.unwrap();
+
+    for table in ERASURE_TABLES {
+        let leaked: i64 = sqlx::query_scalar(&format!(
+            "SELECT count(*) FROM {table} t WHERE t::text ILIKE '%bluebird%'"
+        ))
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(leaked, 0, "{table} still holds deleted-source text");
+    }
+    // Tombstones carry no topic either.
+    let tomb = mem.memory_chain(sole).await.unwrap();
+    assert!(tomb[0].topic_key.is_none());
+    assert!(tomb[0].redacted);
+    // The mixed memory is still readable.
+    assert_eq!(
+        mem.get_memory(mixed_id).await.unwrap().content,
+        "The launch checklist is complete"
+    );
+}

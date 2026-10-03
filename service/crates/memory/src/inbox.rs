@@ -1,6 +1,7 @@
 //! Memory inbox: proposal pipeline (normalise, dedupe, contradiction links, policy) and the
 //! reviewer-facing views. Review actions (reject/edit/correct) live in `review`.
 use crate::{
+    contradiction::find_links,
     error::{db_err, invalid, not_found},
     model::{parse_data_class, parse_trust, validate_kind, CandidateDraft, VerifiedSpans},
     normalize::{normalize_content, topic_of},
@@ -99,6 +100,12 @@ pub(crate) async fn prepare(
     key_salt: Option<&str>,
 ) -> Result<Prepared> {
     validate_kind(&draft.candidate.kind)?;
+    if draft.candidate.evidence.is_empty() {
+        return Err(PairError::new(
+            ErrorCode::MemoryNoEvidence,
+            "a candidate requires at least one evidence reference",
+        ));
+    }
     draft.candidate.content = draft.candidate.content.trim().to_string();
     let content = &draft.candidate.content;
     if content.is_empty() || content.chars().count() > MAX_CONTENT_CHARS {
@@ -129,8 +136,9 @@ pub(crate) async fn prepare(
     if rows.len() != distinct.len() {
         return Err(invalid("candidate references an unknown source"));
     }
+    let verified = verify_spans(&draft)?;
     let mut identities = std::collections::BTreeSet::new();
-    let mut facts = Vec::with_capacity(rows.len());
+    let mut by_source = std::collections::HashMap::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? != "active" {
             return Err(PairError::new(
@@ -143,15 +151,36 @@ pub(crate) async fn prepare(
             row.try_get::<String, _>("kind").map_err(db_err)?,
             row.try_get::<String, _>("external_id").map_err(db_err)?
         ));
-        facts.push(SourceFacts {
-            trust: parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?,
-            data_class: parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
-        });
+        by_source.insert(
+            row.try_get::<Uuid, _>("id").map_err(db_err)?,
+            (
+                parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?,
+                parse_data_class(&row.try_get::<String, _>("data_class").map_err(db_err)?)?,
+            ),
+        );
     }
-    let verified = verify_spans(&draft)?;
+    // One fact per evidence item: trust is only as good as the item's span verification.
+    let facts = draft
+        .candidate
+        .evidence
+        .iter()
+        .filter_map(|ev| {
+            by_source
+                .get(&ev.source.0)
+                .map(|(trust, data_class)| SourceFacts {
+                    trust: *trust,
+                    data_class: *data_class,
+                    span_verified: verified.contains(&(ev.source, ev.span.clone())),
+                })
+        })
+        .collect::<Vec<_>>();
+    // Identity of a claim: what is said, its kind, scope and certainty, and where it came from.
     let material = format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}\n{}",
         key_salt.unwrap_or(""),
+        draft.candidate.kind,
+        draft.candidate.project.as_deref().unwrap_or(""),
+        draft.candidate.inferred,
         normalized,
         identities.into_iter().collect::<Vec<_>>().join(",")
     );
@@ -197,54 +226,6 @@ fn verify_spans(draft: &CandidateDraft) -> Result<VerifiedSpans> {
         verified.insert(key);
     }
     Ok(verified)
-}
-
-/// Accepted, currently valid memories on the same topic with different content.
-pub(crate) async fn find_memory_contradictions(
-    conn: &mut PgConnection,
-    kind: &str,
-    project: Option<&str>,
-    topic: &str,
-    normalized: &str,
-    as_of: DateTime<Utc>,
-) -> Result<Vec<MemoryId>> {
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM memories WHERE status = 'accepted' AND invalidated_reason IS NULL AND kind = $1 \
-         AND project IS NOT DISTINCT FROM $2 AND topic_key = $3 AND normalized_content <> $4 \
-         AND (valid_to IS NULL OR valid_to > $5) ORDER BY id",
-    )
-    .bind(kind)
-    .bind(project)
-    .bind(topic)
-    .bind(normalized)
-    .bind(as_of)
-    .fetch_all(conn)
-    .await
-    .map_err(db_err)?;
-    Ok(ids.into_iter().map(MemoryId).collect())
-}
-
-pub(crate) async fn find_candidate_contradictions(
-    conn: &mut PgConnection,
-    kind: &str,
-    project: Option<&str>,
-    topic: &str,
-    normalized: &str,
-    exclude: Option<Uuid>,
-) -> Result<Vec<CandidateId>> {
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM memory_candidates WHERE state = 'pending' AND kind = $1 AND project IS NOT DISTINCT FROM $2 \
-         AND topic_key = $3 AND normalized_content <> $4 AND id IS DISTINCT FROM $5 ORDER BY id",
-    )
-    .bind(kind)
-    .bind(project)
-    .bind(topic)
-    .bind(normalized)
-    .bind(exclude)
-    .fetch_all(conn)
-    .await
-    .map_err(db_err)?;
-    Ok(ids.into_iter().map(CandidateId).collect())
 }
 
 pub(crate) struct NewCandidateRow<'a> {
@@ -316,13 +297,7 @@ impl PgMemory {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-        let existing: Option<Uuid> = sqlx::query_scalar(
-            "UPDATE memory_candidates SET seen_count = seen_count + 1 WHERE dedupe_key = $1 RETURNING id",
-        )
-        .bind(&prepared.dedupe_key)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        let existing = collapse_target(&mut tx, &prepared.dedupe_key).await?;
         if let Some(id) = existing {
             let proposal = proposal_from_row(&mut tx, CandidateId(id), true).await?;
             tx.commit().await.map_err(db_err)?;
@@ -331,29 +306,17 @@ impl PgMemory {
         }
 
         let c = &prepared.draft.candidate;
-        let (mem_links, cand_links) = match &prepared.topic {
-            Some(topic) => (
-                find_memory_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    (self.clock)(),
-                )
-                .await?,
-                find_candidate_contradictions(
-                    &mut tx,
-                    &c.kind,
-                    c.project.as_deref(),
-                    topic,
-                    &prepared.normalized,
-                    None,
-                )
-                .await?,
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
+        let links = find_links(
+            &mut tx,
+            &c.kind,
+            c.project.as_deref(),
+            prepared.topic.as_deref(),
+            &prepared.normalized,
+            (self.clock)(),
+            None,
+        )
+        .await?;
+        let (mem_links, cand_links) = (links.memories, links.candidates);
         let contradiction = !mem_links.is_empty() || !cand_links.is_empty();
         let assessment = policy::assess(
             &c.kind,
@@ -361,6 +324,7 @@ impl PgMemory {
             &c.content,
             &prepared.facts,
             contradiction,
+            prepared.topic.is_some(),
         );
         let id = insert_candidate(
             &mut tx,
@@ -528,6 +492,37 @@ impl PgMemory {
             created_at: row.try_get("created_at").map_err(db_err)?,
         })
     }
+}
+
+/// An existing candidate with this dedupe key that a restatement may collapse onto (its seen count
+/// is bumped). A candidate accepted into a memory that is no longer accepted (superseded, expired
+/// or invalidated) is history, not a duplicate: its key is retired so the restatement is new.
+async fn collapse_target(conn: &mut PgConnection, dedupe_key: &str) -> Result<Option<Uuid>> {
+    let found: Option<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT c.id, m.status FROM memory_candidates c LEFT JOIN memories m ON m.id = c.accepted_memory_id \
+         WHERE c.dedupe_key = $1 FOR UPDATE OF c",
+    )
+    .bind(dedupe_key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    let Some((id, memory_status)) = found else {
+        return Ok(None);
+    };
+    if memory_status.is_some_and(|status| status != "accepted") {
+        sqlx::query("UPDATE memory_candidates SET dedupe_key = dedupe_key || ':retired:' || id::text WHERE id = $1")
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .map_err(db_err)?;
+        return Ok(None);
+    }
+    sqlx::query("UPDATE memory_candidates SET seen_count = seen_count + 1 WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    Ok(Some(id))
 }
 
 async fn proposal_from_row(

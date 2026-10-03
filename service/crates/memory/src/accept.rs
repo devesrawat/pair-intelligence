@@ -2,17 +2,17 @@
 //! resolution, provenance rows, chunks and audit, all inside the caller's transaction.
 use crate::{
     audit,
+    contradiction::find_memory_links,
     error::{db_err, not_found},
-    inbox::find_memory_contradictions,
     model::parse_trust,
-    policy,
+    policy::{self, EvidenceTrust},
     store::{insert_evidence_and_chunks, AcceptMode},
 };
 use chrono::{DateTime, Utc};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{CandidateId, MemoryId, SourceId},
-    types::{EvidenceRef, TrustClass},
+    types::EvidenceRef,
 };
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
@@ -82,20 +82,15 @@ pub(crate) async fn accept_in_tx(
     policy::check_accept(&cand.kind, &cand.content, &trusts)?;
 
     let now = clock();
-    let contradicted = match &cand.topic {
-        Some(topic) => {
-            find_memory_contradictions(
-                conn,
-                &cand.kind,
-                cand.project.as_deref(),
-                topic,
-                &cand.normalized,
-                now,
-            )
-            .await?
-        }
-        None => Vec::new(),
-    };
+    let contradicted = find_memory_links(
+        conn,
+        &cand.kind,
+        cand.project.as_deref(),
+        cand.topic.as_deref(),
+        &cand.normalized,
+        now,
+    )
+    .await?;
     let unresolved: Vec<Uuid> = contradicted
         .iter()
         .map(|m| m.0)
@@ -115,7 +110,15 @@ pub(crate) async fn accept_in_tx(
     let valid_from = cand.valid_from.unwrap_or(observed_at);
     let memory_id = MemoryId::new();
     if let Some(old) = mode.supersedes {
-        close_superseded(conn, old, valid_from, actor).await?;
+        close_superseded(
+            conn,
+            old,
+            valid_from,
+            actor,
+            &cand.kind,
+            cand.project.as_deref(),
+        )
+        .await?;
     }
     sqlx::query(
         "INSERT INTO memories (id, kind, status, content, normalized_content, topic_key, project, valid_from, valid_to, \
@@ -178,15 +181,17 @@ pub(crate) async fn accept_in_tx(
     Ok(memory_id)
 }
 
-/// Evidence on active sources plus the trust classes of those sources. Errors when the
+/// Evidence on active sources plus the trust classes of those sources. The source rows are locked
+/// FOR SHARE until commit, so a concurrent `delete_source` cannot mark them deleted between this
+/// check and the memory insert (it waits, and then invalidates the memory we just created). Errors when the
 /// candidate has no evidence at all, or only evidence from deleted sources.
 async fn live_evidence(
     conn: &mut PgConnection,
     id: CandidateId,
-) -> Result<(Vec<(EvidenceRef, bool)>, Vec<TrustClass>)> {
+) -> Result<(Vec<(EvidenceRef, bool)>, Vec<EvidenceTrust>)> {
     let rows = sqlx::query(
         "SELECT e.source_id, e.span, e.span_verified, s.deletion_state, s.trust FROM memory_candidate_evidence e \
-         JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id",
+         JOIN sources s ON s.id = e.source_id WHERE e.candidate_id = $1 ORDER BY e.id FOR SHARE OF s",
     )
     .bind(id.0)
     .fetch_all(&mut *conn)
@@ -202,16 +207,18 @@ async fn live_evidence(
     let mut trusts = Vec::with_capacity(rows.len());
     for row in &rows {
         if row.try_get::<String, _>("deletion_state").map_err(db_err)? == "active" {
+            let span_verified: bool = row.try_get("span_verified").map_err(db_err)?;
             live.push((
                 EvidenceRef {
                     source: SourceId(row.try_get("source_id").map_err(db_err)?),
                     span: row.try_get("span").map_err(db_err)?,
                 },
-                row.try_get("span_verified").map_err(db_err)?,
+                span_verified,
             ));
-            trusts.push(parse_trust(
-                &row.try_get::<String, _>("trust").map_err(db_err)?,
-            )?);
+            trusts.push(EvidenceTrust {
+                trust: parse_trust(&row.try_get::<String, _>("trust").map_err(db_err)?)?,
+                span_verified,
+            });
         }
     }
     if live.is_empty() {
@@ -223,15 +230,25 @@ async fn live_evidence(
     Ok((live, trusts))
 }
 
-async fn record_conflict(conn: &mut PgConnection, a: Uuid, b: Uuid, actor: &str) -> Result<()> {
+/// Record that two memories are deliberately kept side by side. Idempotent.
+pub(crate) async fn record_conflict(
+    conn: &mut PgConnection,
+    a: Uuid,
+    b: Uuid,
+    actor: &str,
+) -> Result<()> {
     let (low, high) = if a < b { (a, b) } else { (b, a) };
-    sqlx::query("INSERT INTO memory_conflicts (memory_a, memory_b, resolved_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+    let inserted = sqlx::query("INSERT INTO memory_conflicts (memory_a, memory_b, resolved_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
         .bind(low)
         .bind(high)
         .bind(actor)
         .execute(&mut *conn)
         .await
-        .map_err(db_err)?;
+        .map_err(db_err)?
+        .rows_affected();
+    if inserted == 0 {
+        return Ok(());
+    }
     audit::record(
         conn,
         actor,
@@ -248,15 +265,20 @@ async fn close_superseded(
     old: MemoryId,
     new_valid_from: DateTime<Utc>,
     actor: &str,
+    kind: &str,
+    project: Option<&str>,
 ) -> Result<()> {
     let updated = sqlx::query(
         "UPDATE memories SET status = 'superseded', \
                 valid_to = GREATEST(valid_from, LEAST(COALESCE(valid_to, $2), $2)) \
          WHERE id = $1 AND status = 'accepted' AND invalidated_reason IS NULL \
+           AND kind = $3 AND project IS NOT DISTINCT FROM $4 \
            AND NOT EXISTS (SELECT 1 FROM memories n WHERE n.supersedes_id = $1)",
     )
     .bind(old.0)
     .bind(new_valid_from)
+    .bind(kind)
+    .bind(project)
     .execute(&mut *conn)
     .await
     .map_err(db_err)?
@@ -264,7 +286,7 @@ async fn close_superseded(
     if updated == 0 {
         return Err(PairError::new(
             ErrorCode::Conflict,
-            format!("memory {old} cannot be superseded (not an active accepted memory)"),
+            format!("memory {old} cannot be superseded (not an active accepted memory of the same kind and project)"),
         ));
     }
     audit::record(

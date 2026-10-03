@@ -2,6 +2,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 pub mod accept;
 pub mod audit;
+pub(crate) mod contradiction;
 pub mod embedding;
 pub mod error;
 pub mod export;

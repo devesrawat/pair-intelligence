@@ -14,6 +14,7 @@ use pair_core::{
     types::{EvidenceRef, MemoryCandidate},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub const MAX_BATCH: usize = 50;
@@ -135,14 +136,49 @@ impl ExtractedCandidate {
 }
 
 impl PgMemory {
-    /// Propose every candidate in an extraction batch, in order.
-    pub async fn propose_batch(&self, batch: ExtractionBatch) -> Result<Vec<Proposal>> {
+    /// Propose every candidate in an extraction batch, in order. Evidence may only cite sources in
+    /// `allowed` (the inputs the extractor was actually given): extractor output is untrusted, so
+    /// a prompt-injected batch cannot cite an owner source it never saw. The whole batch is
+    /// rejected, before anything is stored, if any candidate cites a source outside the set.
+    /// Spans are left unverified; use `propose_batch_with_texts` to supply source text.
+    pub async fn propose_batch(
+        &self,
+        batch: ExtractionBatch,
+        allowed: &[SourceId],
+    ) -> Result<Vec<Proposal>> {
+        self.propose_batch_with_texts(batch, allowed, &HashMap::new())
+            .await
+    }
+
+    /// As `propose_batch`, verifying spans against `texts` (source id to the text the extractor saw).
+    pub async fn propose_batch_with_texts(
+        &self,
+        batch: ExtractionBatch,
+        allowed: &[SourceId],
+        texts: &HashMap<SourceId, String>,
+    ) -> Result<Vec<Proposal>> {
+        let allowed: HashSet<SourceId> = allowed.iter().copied().collect();
+        for candidate in &batch.candidates {
+            if let Some(outside) = candidate
+                .evidence
+                .iter()
+                .find(|e| !allowed.contains(&SourceId(e.source)))
+            {
+                return Err(invalid(format!(
+                    "candidate cites source {} outside the extraction input set",
+                    outside.source
+                )));
+            }
+        }
         let mut out = Vec::with_capacity(batch.candidates.len());
         for candidate in batch.candidates {
-            out.push(
-                self.propose_with_outcome(candidate.into_draft(&batch.extraction_version))
-                    .await?,
-            );
+            let mut draft = candidate.into_draft(&batch.extraction_version);
+            for ev in &draft.candidate.evidence {
+                if let Some(text) = texts.get(&ev.source) {
+                    draft.source_texts.insert(ev.source, text.clone());
+                }
+            }
+            out.push(self.propose_with_outcome(draft).await?);
         }
         Ok(out)
     }

@@ -1,7 +1,7 @@
 //! Retrieval (spec section 7): hard filters first (project, source visibility, validity,
 //! deletion), then full-text and structured signals merged with reciprocal rank fusion.
 //! Superseded decisions are returned beside their replacement, which is marked current.
-use crate::{error::db_err, normalize::normalize_content, store::PgMemory};
+use crate::{error::db_err, normalize::normalize_search_text, store::PgMemory};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pair_core::{
@@ -93,7 +93,7 @@ fn row0(r: &sqlx::postgres::PgRow, rank: f64, matched: i64) -> Result<Row0> {
 
 pub(crate) fn query_terms(text: &str) -> Vec<String> {
     let mut seen = HashSet::new();
-    normalize_content(text)
+    normalize_search_text(text)
         .split(' ')
         .filter(|t| !t.is_empty() && seen.insert(t.to_string()))
         .take(MAX_QUERY_TERMS)
@@ -151,7 +151,7 @@ impl PgMemory {
             limit,
         )
         .await?;
-        decorate(&mut conn, emitted, q.as_of).await
+        decorate(&mut conn, emitted, q.as_of, q.project.as_deref()).await
     }
 }
 
@@ -173,31 +173,34 @@ async fn fulltext_hits(
     let min_matched = ((required_terms as f64) * MIN_TERM_COVERAGE)
         .ceil()
         .max(1.0) as i64;
+    // The term-coverage gate runs in SQL, before the candidate limit: otherwise strongly ranked
+    // single-term matches could fill the window and push out the memories that do cover the query.
     let sql = format!(
-        "SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
-                (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
-                    SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
-                      AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
-         FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
-         WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
-         GROUP BY m.id ORDER BY rank DESC, m.id LIMIT {MAX_CANDIDATES}",
+        "SELECT * FROM ( \
+             SELECT {MEMORY_COLUMNS}, max(ts_rank_cd(c.search_vector, to_tsquery('english', $2)))::float8 AS rank, \
+                    (SELECT count(*) FROM unnest($1::text[]) t WHERE EXISTS ( \
+                        SELECT 1 FROM memory_chunks c2 WHERE c2.memory_id = m.id \
+                          AND c2.search_vector @@ plainto_tsquery('english', t))) AS matched \
+             FROM memory_chunks c JOIN memories m ON m.id = c.memory_id \
+             WHERE c.search_vector @@ to_tsquery('english', $2) AND {filter} \
+             GROUP BY m.id) covered \
+         WHERE covered.matched >= $4 ORDER BY covered.rank DESC, covered.id LIMIT {MAX_CANDIDATES}",
         filter = VISIBLE_FILTER.replace("$PROJECT", "$3"),
     );
     let rows = sqlx::query(&sql)
         .bind(terms)
         .bind(terms.join(" | "))
         .bind(project)
+        .bind(min_matched)
         .fetch_all(&mut *conn)
         .await
         .map_err(db_err)?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let matched: i64 = r.try_get("matched").map_err(db_err)?;
-        if matched >= min_matched {
-            out.push(row0(r, r.try_get("rank").map_err(db_err)?, matched)?);
-        }
-    }
-    Ok(out)
+    rows.iter()
+        .map(|r| {
+            let matched: i64 = r.try_get("matched").map_err(db_err)?;
+            row0(r, r.try_get("rank").map_err(db_err)?, matched)
+        })
+        .collect()
 }
 
 /// Follow `supersedes_id` forward until a memory valid at `as_of` that is still visible.
@@ -370,6 +373,7 @@ async fn decorate(
     conn: &mut PgConnection,
     emitted: Vec<Emitted>,
     as_of: DateTime<Utc>,
+    project: Option<&str>,
 ) -> Result<Vec<RetrievedMemory>> {
     let ids: Vec<Uuid> = emitted.iter().map(|e| e.row.id).collect();
     let ev_rows = sqlx::query(
@@ -402,10 +406,20 @@ async fn decorate(
         );
     }
     let conflicts = conflict_partners(conn, &ids).await?;
-    let current_ids: HashSet<Uuid> = emitted
-        .iter()
-        .filter(|e| e.row.valid_at(as_of))
-        .map(|e| e.row.id)
+    // Conflict labels come from every valid, visible partner, not only the ones that survived the
+    // output limit: a partner cut by the limit is still a competing current memory.
+    let partner_ids: Vec<Uuid> = conflicts
+        .values()
+        .flatten()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let valid_partners: HashSet<Uuid> = load_visible(conn, &partner_ids, project)
+        .await?
+        .into_iter()
+        .filter(|p| p.valid_at(as_of))
+        .map(|p| p.id)
         .collect();
 
     Ok(emitted
@@ -416,7 +430,7 @@ async fn decorate(
                 .get(&id)
                 .into_iter()
                 .flatten()
-                .filter(|p| current_ids.contains(p))
+                .filter(|p| valid_partners.contains(p))
                 .map(|p| MemoryId(*p))
                 .collect();
             partners.sort_by_key(|p| p.0);

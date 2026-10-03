@@ -2,7 +2,7 @@
 mod common;
 
 use chrono::{Duration, Utc};
-use common::{candidate, days_ago, source, TestDb};
+use common::{candidate, days_ago, propose_verified, source, TestDb};
 use pair_core::{
     ids::MemoryId,
     traits::Memory,
@@ -28,8 +28,7 @@ async fn accept_fact(
     span: &str,
 ) -> (MemoryId, pair_core::ids::SourceId) {
     let src = source(mem, ext, TrustClass::Owner).await;
-    let cid = mem
-        .propose(candidate(kind, content, project, src.id, span))
+    let cid = propose_verified(mem, candidate(kind, content, project, src.id, span))
         .await
         .unwrap();
     (mem.accept(cid, "owner").await.unwrap(), src.id)
@@ -177,27 +176,31 @@ async fn conflicting_decisions_flagged() {
     let mem = db.memory();
     let s1 = source(&mem, "adr-1", TrustClass::Owner).await;
     let s2 = source(&mem, "adr-2", TrustClass::Owner).await;
-    let c1 = mem
-        .propose(candidate(
+    let c1 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: Redis streams",
             Some("pair"),
             s1.id,
             "use Redis streams",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let old = mem.accept(c1, "owner").await.unwrap();
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: SQS with DLQ",
             Some("pair"),
             s2.id,
             "use SQS",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
 
     let hits = mem
@@ -243,27 +246,31 @@ async fn conflicting_decisions_flagged() {
     // Competing decisions deliberately kept side by side are flagged as conflicting.
     let s3 = source(&mem, "adr-3", TrustClass::Owner).await;
     let s4 = source(&mem, "adr-4", TrustClass::Owner).await;
-    let j = mem
-        .propose(candidate(
+    let j = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: JWT bearer tokens",
             Some("pair"),
             s3.id,
             "jwt",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let jwt = mem.accept(j, "owner").await.unwrap();
-    let s = mem
-        .propose(candidate(
+    let s = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: server sessions",
             Some("pair"),
             s4.id,
             "sessions",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let sess = mem
         .accept_with(
             s,
@@ -466,16 +473,18 @@ async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
     )
     .await;
     let s2 = source(&mem, "q2", TrustClass::Owner).await;
-    let c2 = mem
-        .propose(candidate(
+    let c2 = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Queue technology: SQS with DLQ",
             Some("pair"),
             s2.id,
             "use SQS",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let new = mem.accept_superseding(c2, "owner", old).await.unwrap();
 
     let items = mem
@@ -505,16 +514,18 @@ async fn retrieve_content_has_no_label_prefixes_and_fields_are_set() {
     )
     .await;
     let s4 = source(&mem, "a2", TrustClass::Owner).await;
-    let sc = mem
-        .propose(candidate(
+    let sc = propose_verified(
+        &mem,
+        candidate(
             "decision",
             "Auth mode: server sessions",
             Some("pair"),
             s4.id,
             "sessions",
-        ))
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .unwrap();
     let sess = mem
         .accept_with(
             sc,
@@ -592,4 +603,108 @@ async fn coverage_counts_across_chunks() {
         .await
         .unwrap();
     assert!(weak.is_empty());
+}
+
+#[tokio::test]
+async fn conflict_partner_beyond_limit_still_labels_conflicting() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let s1 = source(&mem, "adr-3", TrustClass::Owner).await;
+    let s2 = source(&mem, "adr-4", TrustClass::Owner).await;
+    let first = propose_verified(
+        &mem,
+        candidate(
+            "decision",
+            "Auth mode: JWT bearer",
+            Some("pair"),
+            s1.id,
+            "jwt",
+        ),
+    )
+    .await
+    .unwrap();
+    let jwt = mem.accept(first, "owner").await.unwrap();
+    let second = propose_verified(
+        &mem,
+        candidate(
+            "decision",
+            "Auth mode: server sessions",
+            Some("pair"),
+            s2.id,
+            "sessions",
+        ),
+    )
+    .await
+    .unwrap();
+    let sess = mem
+        .accept_with(
+            second,
+            "owner",
+            AcceptMode {
+                keep_both: true,
+                ..AcceptMode::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Only one slot: the partner is cut by the limit but is still a valid, visible conflict.
+    let mut q = query("auth mode", Some("pair"));
+    q.limit = 1;
+    let hits = mem.retrieve_detailed(q).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    let other = if hits[0].item.memory == jwt {
+        sess
+    } else {
+        jwt
+    };
+    assert_eq!(hits[0].item.status, EvidenceStatus::Conflicting);
+    assert_eq!(hits[0].item.conflicts_with, vec![other]);
+}
+
+/// More single-term matches than the candidate pre-limit, all outranking the real answer.
+const NOISE_MEMORIES: i32 = 230;
+
+#[tokio::test]
+async fn coverage_filter_applies_before_the_candidate_limit() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let noise_src = source(&mem, "noise", TrustClass::Owner).await;
+    let noise_text = "zebra zebra zebra zebra zebra zebra zebra zebra";
+    // Each noise memory matches one of the four query terms, many times over, so by text rank
+    // alone they fill the candidate window; they fail the term-coverage gate.
+    sqlx::query(
+        "WITH m AS ( \
+             INSERT INTO memories (id, kind, status, content, normalized_content, valid_from, observed_at, confidence, accepted_by) \
+             SELECT gen_random_uuid(), 'fact', 'accepted', $2, $2, now() - interval '1 hour', now() - interval '1 hour', 'observed', 'bulk' \
+             FROM generate_series(1, $3) RETURNING id), \
+         e AS (INSERT INTO memory_evidence (memory_id, source_id, extraction_version) SELECT id, $1, 'v1' FROM m) \
+         INSERT INTO memory_chunks (id, memory_id, text) SELECT gen_random_uuid(), id, $2 FROM m",
+    )
+    .bind(noise_src.id.0)
+    .bind(noise_text)
+    .bind(NOISE_MEMORIES)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (target, _) = accept_fact(
+        &mem,
+        "fact",
+        "Zebra enclosure holds quartz",
+        None,
+        "target",
+        "quartz",
+    )
+    .await;
+    let hits = mem
+        .retrieve_detailed(query("zebra quartz marimba volcano", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "the covering memory was cut by the pre-limit"
+    );
+    assert_eq!(hits[0].item.memory, target);
 }

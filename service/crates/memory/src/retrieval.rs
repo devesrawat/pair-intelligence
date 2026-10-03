@@ -1,7 +1,7 @@
 //! Retrieval (spec section 7): hard filters first (project, source visibility, validity,
 //! deletion), then full-text and structured signals merged with reciprocal rank fusion.
 //! Superseded decisions are returned beside their replacement, which is marked current.
-use crate::{error::db_err, normalize::normalize_content, store::PgMemory};
+use crate::{error::db_err, normalize::normalize_search_text, store::PgMemory};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pair_core::{
@@ -93,7 +93,7 @@ fn row0(r: &sqlx::postgres::PgRow, rank: f64, matched: i64) -> Result<Row0> {
 
 pub(crate) fn query_terms(text: &str) -> Vec<String> {
     let mut seen = HashSet::new();
-    normalize_content(text)
+    normalize_search_text(text)
         .split(' ')
         .filter(|t| !t.is_empty() && seen.insert(t.to_string()))
         .take(MAX_QUERY_TERMS)

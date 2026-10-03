@@ -20,7 +20,17 @@ fn status_for(code: ErrorCode) -> StatusCode {
         ErrorCode::PolicyDenied | ErrorCode::ProviderDisallowed => StatusCode::FORBIDDEN,
         ErrorCode::NotFound => StatusCode::NOT_FOUND,
         ErrorCode::InvalidInput => StatusCode::BAD_REQUEST,
-        ErrorCode::Conflict | ErrorCode::ApprovalPayloadChanged => StatusCode::CONFLICT,
+        ErrorCode::Conflict
+        | ErrorCode::ApprovalPayloadChanged
+        | ErrorCode::ReservationUnresolved => StatusCode::CONFLICT,
+        ErrorCode::BudgetExceeded => StatusCode::PAYMENT_REQUIRED,
+        ErrorCode::BudgetUnknownPrice
+        | ErrorCode::ContextOverflow
+        | ErrorCode::CapabilityMismatch => StatusCode::UNPROCESSABLE_ENTITY,
+        ErrorCode::ApprovalRequired => StatusCode::FORBIDDEN,
+        ErrorCode::ApprovalExpired => StatusCode::GONE,
+        ErrorCode::LimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+        ErrorCode::ClassifierInvalid => StatusCode::BAD_GATEWAY,
         ErrorCode::ProviderUnavailable | ErrorCode::ProviderTimeout => {
             StatusCode::SERVICE_UNAVAILABLE
         }

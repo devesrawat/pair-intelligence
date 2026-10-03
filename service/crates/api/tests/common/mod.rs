@@ -1,4 +1,8 @@
 //! Test helpers: per-test scratch database and request plumbing.
+#![allow(dead_code)]
+
+pub mod mock;
+pub mod stack;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -36,12 +40,37 @@ impl TestDb {
             .await
             .expect("create scratch db");
         let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .acquire_timeout(Duration::from_secs(3))
+            .max_connections(8)
+            .acquire_timeout(Duration::from_secs(5))
             .connect_with(opts.database(&name))
             .await
             .expect("scratch connect");
         Self { pool, name }
+    }
+
+    /// Scratch database with the full migration chain applied. The chain is read from disk at
+    /// run time: `pair_budget::MIGRATOR` is embedded at compile time and would miss a new file.
+    pub async fn create_migrated() -> Self {
+        let db = Self::create().await;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../migrations");
+        sqlx::migrate::Migrator::new(dir)
+            .await
+            .expect("load migrations")
+            .run(&db.pool)
+            .await
+            .expect("apply migrations");
+        db
+    }
+
+    /// A second pool on the same database, as a restarted service would open.
+    pub async fn reopen_pool(&self) -> PgPool {
+        let opts: PgConnectOptions = base_url().parse().expect("DATABASE_URL parses");
+        PgPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(3))
+            .connect_with(opts.database(&self.name))
+            .await
+            .expect("reopen connect")
     }
 
     pub async fn drop_db(self) {
@@ -84,6 +113,17 @@ pub fn authed(uri: &str) -> Request<Body> {
         .header("authorization", format!("Bearer {TOKEN}"))
         .header("x-actor", "tester")
         .body(Body::empty())
+        .expect("request builds")
+}
+
+pub fn post_json(uri: &str, body: &serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-actor", "tester")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
         .expect("request builds")
 }
 

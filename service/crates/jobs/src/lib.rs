@@ -11,6 +11,7 @@ pub mod hash;
 mod lease;
 pub mod orphans;
 pub mod records;
+mod requeue;
 pub mod step;
 pub mod store;
 pub mod worker;

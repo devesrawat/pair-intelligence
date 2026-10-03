@@ -74,6 +74,13 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
     .fetch_all(&mut *conn)
     .await
     .map_err(db_err)?;
+    ensure_evidence_alive(
+        &mut *conn,
+        "candidate_id",
+        "memory_candidate_evidence",
+        id.0,
+    )
+    .await?;
     let (evidence, verified) = split_evidence(&evidence)?;
     Ok(OriginalCandidate {
         kind: row.try_get("kind").map_err(db_err)?,
@@ -86,6 +93,31 @@ async fn load_original(conn: &mut PgConnection, id: CandidateId) -> Result<Origi
         evidence,
         verified,
     })
+}
+
+/// The record had evidence and none of it is on an active source: its text derives only from
+/// deleted sources and must not be carried forward (an edit would resurrect it).
+async fn ensure_evidence_alive(
+    conn: &mut PgConnection,
+    fk_column: &str,
+    table: &str,
+    id: Uuid,
+) -> Result<()> {
+    let (total, active): (i64, i64) = sqlx::query_as(&format!(
+        "SELECT count(*), count(*) FILTER (WHERE s.deletion_state = 'active') FROM {table} e \
+         JOIN sources s ON s.id = e.source_id WHERE e.{fk_column} = $1"
+    ))
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    if total > 0 && active == 0 {
+        return Err(PairError::new(
+            ErrorCode::SourceDeleted,
+            format!("{id} was derived only from deleted sources"),
+        ));
+    }
+    Ok(())
 }
 
 /// Evidence refs plus the set of (source, span) pairs flagged `span_verified`.
@@ -173,7 +205,7 @@ impl PgMemory {
         draft.extraction_version = original.extraction_version;
         draft.carried_verified = original.verified;
 
-        let prepared = prepare(&mut tx, draft, None).await?;
+        let prepared = prepare(&mut tx, draft, Some(&format!("edit:{id}"))).await?;
         let c = &prepared.draft.candidate;
         let links = find_links(
             &mut tx,
@@ -251,6 +283,7 @@ impl PgMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(db_err)?;
+        ensure_evidence_alive(&mut tx, "memory_id", "memory_evidence", id.0).await?;
         let (mut evidence, verified) = split_evidence(&evidence_rows)?;
         evidence.extend(patch.extra_evidence);
         if patch.content.trim().is_empty() {

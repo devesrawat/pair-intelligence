@@ -100,6 +100,12 @@ pub(crate) async fn prepare(
     key_salt: Option<&str>,
 ) -> Result<Prepared> {
     validate_kind(&draft.candidate.kind)?;
+    if draft.candidate.evidence.is_empty() {
+        return Err(PairError::new(
+            ErrorCode::MemoryNoEvidence,
+            "a candidate requires at least one evidence reference",
+        ));
+    }
     draft.candidate.content = draft.candidate.content.trim().to_string();
     let content = &draft.candidate.content;
     if content.is_empty() || content.chars().count() > MAX_CONTENT_CHARS {
@@ -168,9 +174,13 @@ pub(crate) async fn prepare(
                 })
         })
         .collect::<Vec<_>>();
+    // Identity of a claim: what is said, its kind, scope and certainty, and where it came from.
     let material = format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}\n{}",
         key_salt.unwrap_or(""),
+        draft.candidate.kind,
+        draft.candidate.project.as_deref().unwrap_or(""),
+        draft.candidate.inferred,
         normalized,
         identities.into_iter().collect::<Vec<_>>().join(",")
     );
@@ -287,13 +297,7 @@ impl PgMemory {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-        let existing: Option<Uuid> = sqlx::query_scalar(
-            "UPDATE memory_candidates SET seen_count = seen_count + 1 WHERE dedupe_key = $1 RETURNING id",
-        )
-        .bind(&prepared.dedupe_key)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        let existing = collapse_target(&mut tx, &prepared.dedupe_key).await?;
         if let Some(id) = existing {
             let proposal = proposal_from_row(&mut tx, CandidateId(id), true).await?;
             tx.commit().await.map_err(db_err)?;
@@ -488,6 +492,37 @@ impl PgMemory {
             created_at: row.try_get("created_at").map_err(db_err)?,
         })
     }
+}
+
+/// An existing candidate with this dedupe key that a restatement may collapse onto (its seen count
+/// is bumped). A candidate accepted into a memory that is no longer accepted (superseded, expired
+/// or invalidated) is history, not a duplicate: its key is retired so the restatement is new.
+async fn collapse_target(conn: &mut PgConnection, dedupe_key: &str) -> Result<Option<Uuid>> {
+    let found: Option<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT c.id, m.status FROM memory_candidates c LEFT JOIN memories m ON m.id = c.accepted_memory_id \
+         WHERE c.dedupe_key = $1 FOR UPDATE OF c",
+    )
+    .bind(dedupe_key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    let Some((id, memory_status)) = found else {
+        return Ok(None);
+    };
+    if memory_status.is_some_and(|status| status != "accepted") {
+        sqlx::query("UPDATE memory_candidates SET dedupe_key = dedupe_key || ':retired:' || id::text WHERE id = $1")
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .map_err(db_err)?;
+        return Ok(None);
+    }
+    sqlx::query("UPDATE memory_candidates SET seen_count = seen_count + 1 WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    Ok(Some(id))
 }
 
 async fn proposal_from_row(

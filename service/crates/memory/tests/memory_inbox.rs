@@ -95,7 +95,7 @@ async fn duplicate_candidate_is_not_duplicated() {
         .propose(candidate(
             "fact",
             "The CI runner is called Hangar-2",
-            None,
+            Some("pair"),
             src.id,
             "y",
         ))

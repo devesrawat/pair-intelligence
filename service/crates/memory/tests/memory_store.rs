@@ -22,8 +22,7 @@ async fn accepted_memory_requires_evidence() {
         inferred: false,
         evidence: vec![],
     };
-    let cid = mem.propose(bare).await.unwrap();
-    let err = mem.accept(cid, "owner").await.unwrap_err();
+    let err = mem.propose(bare).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::MemoryNoEvidence);
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM memories")
         .fetch_one(&db.pool)

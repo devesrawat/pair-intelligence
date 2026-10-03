@@ -38,6 +38,13 @@ services:
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       PAIR_APPROVER_TOKEN: ${PAIR_APPROVER_TOKEN:-}
+      # /v1/policy/authorize resolves every path against THIS root on the container's own
+      # filesystem. Empty (the default) means authorize denies everything, which is safe but makes
+      # the OpenClaw adapter unusable. To enable it, set the variable to the absolute path of the
+      # agent workspace AND bind-mount that same host path read-only at the same path, e.g. in an
+      # override file:  volumes: ["/home/me/work:/home/me/work:ro"].  Without the matching mount the
+      # path checks run against a directory that does not exist in the container.
+      PAIR_WORKSPACE_ROOT: ${PAIR_WORKSPACE_ROOT:-}
       RUST_LOG: info
     ports: ["127.0.0.1:8080:8080"]
     volumes:

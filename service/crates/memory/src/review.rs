@@ -192,6 +192,7 @@ impl PgMemory {
             &c.content,
             &prepared.facts,
             !mem_links.is_empty() || !cand_links.is_empty(),
+            prepared.topic.is_some(),
         );
         // A human edit is never auto-accepted, even if the edited text would otherwise qualify.
         assessment

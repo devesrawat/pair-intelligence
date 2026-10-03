@@ -129,3 +129,97 @@ async fn webpage_plus_owner_source_cannot_pass_check_accept() {
     let err = mem.accept(proposal.id, "owner").await.unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
 }
+
+#[tokio::test]
+async fn i_prefer_dark_then_light_mode_requires_review() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let s1 = source(&mem, "chat-1", TrustClass::Owner).await;
+    let s2 = source(&mem, "chat-2", TrustClass::Owner).await;
+    let s3 = source(&mem, "chat-3", TrustClass::Owner).await;
+
+    // No derivable topic: a preference is never auto-accepted.
+    let dark = mem
+        .propose_with_outcome(verified_draft(
+            "preference",
+            "I prefer dark mode",
+            s1.id,
+            "dark mode please",
+        ))
+        .await
+        .unwrap();
+    assert!(dark.auto_accepted.is_none());
+    assert!(dark.review_reasons.iter().any(|r| r == "no_topic"));
+
+    // The opposite statement is linked to the pending candidate it contradicts.
+    let light = mem
+        .propose_with_outcome(verified_draft(
+            "preference",
+            "I prefer light mode",
+            s2.id,
+            "light mode please",
+        ))
+        .await
+        .unwrap();
+    assert!(light.auto_accepted.is_none());
+    assert_eq!(light.contradicts_candidates, vec![dark.id]);
+    assert!(light.review_reasons.iter().any(|r| r == "contradiction"));
+
+    // An unrelated preference is not flagged.
+    let vim = mem
+        .propose_with_outcome(verified_draft(
+            "preference",
+            "I prefer vim bindings",
+            s3.id,
+            "vim bindings please",
+        ))
+        .await
+        .unwrap();
+    assert!(vim.contradicts_candidates.is_empty());
+
+    // Once one is accepted, accepting the other needs an explicit resolution.
+    let dark_mem = mem.accept(dark.id, "owner").await.unwrap();
+    assert_eq!(
+        mem.accept(light.id, "owner").await.unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    let again = mem
+        .propose_with_outcome(verified_draft(
+            "preference",
+            "I prefer solarized mode",
+            s3.id,
+            "solarized mode please",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(again.contradicts_memories, vec![dark_mem]);
+}
+
+#[tokio::test]
+async fn extractor_topic_cannot_hide_a_similar_contradiction() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let s1 = source(&mem, "chat-1", TrustClass::Owner).await;
+    let s2 = source(&mem, "chat-2", TrustClass::Owner).await;
+
+    let mut a = verified_draft(
+        "preference",
+        "I prefer dark mode",
+        s1.id,
+        "dark mode please",
+    );
+    a.topic = Some("ui-a".into());
+    let first = mem.propose_with_outcome(a).await.unwrap();
+    assert!(first.auto_accepted.is_some(), "topic present and verified");
+
+    let mut b = verified_draft(
+        "preference",
+        "I prefer light mode",
+        s2.id,
+        "light mode please",
+    );
+    b.topic = Some("ui-b".into());
+    let second = mem.propose_with_outcome(b).await.unwrap();
+    assert!(second.auto_accepted.is_none());
+    assert_eq!(second.contradicts_memories.len(), 1);
+}

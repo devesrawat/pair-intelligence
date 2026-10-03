@@ -45,6 +45,7 @@ pub fn assess(
     content: &str,
     sources: &[SourceFacts],
     contradiction: bool,
+    has_topic: bool,
 ) -> Assessment {
     let mut reasons: Vec<&str> = Vec::new();
     if sources.is_empty() {
@@ -72,6 +73,10 @@ pub fn assess(
     }
     if kind == "decision" {
         reasons.push("decision");
+    }
+    // Without a topic, contradiction detection can only rely on wording similarity.
+    if kind == "preference" && !has_topic {
+        reasons.push("no_topic");
     }
     if kind != "preference" {
         reasons.push("not_a_preference");
@@ -128,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_assess_explicit_owner_preference_auto_accepts() {
-        assert!(assess("preference", false, "Theme: dark", &[OWNER], false).auto_accept);
+        assert!(assess("preference", false, "Theme: dark", &[OWNER], false, true).auto_accept);
     }
 
     #[test]
@@ -137,7 +142,14 @@ mod tests {
             span_verified: false,
             ..OWNER
         };
-        let a = assess("preference", false, "Theme: dark", &[unverified], false);
+        let a = assess(
+            "preference",
+            false,
+            "Theme: dark",
+            &[unverified],
+            false,
+            true,
+        );
         assert!(!a.auto_accept);
         assert!(a
             .review_reasons
@@ -145,8 +157,22 @@ mod tests {
     }
 
     #[test]
+    fn test_assess_preference_without_topic_needs_review() {
+        let a = assess(
+            "preference",
+            false,
+            "I prefer dark mode",
+            &[OWNER],
+            false,
+            false,
+        );
+        assert!(!a.auto_accept);
+        assert!(a.review_reasons.contains(&"no_topic".to_string()));
+    }
+
+    #[test]
     fn test_assess_inferred_preference_needs_review() {
-        let a = assess("preference", true, "Theme: dark", &[OWNER], false);
+        let a = assess("preference", true, "Theme: dark", &[OWNER], false, true);
         assert!(!a.auto_accept);
         assert!(a.review_reasons.contains(&"inferred".to_string()));
     }

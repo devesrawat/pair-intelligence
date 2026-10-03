@@ -320,6 +320,7 @@ impl PgMemory {
             &c.content,
             &prepared.facts,
             contradiction,
+            prepared.topic.is_some(),
         );
         let id = insert_candidate(
             &mut tx,

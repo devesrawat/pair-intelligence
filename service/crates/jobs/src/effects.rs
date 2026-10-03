@@ -192,8 +192,8 @@ impl StepCtx {
             authorize_effect(&mut tx, a.id, &a.hash, run, key).await?;
         }
         let inserted = sqlx::query(
-            "INSERT INTO effect_intents (id, run_id, effect_key, status, payload, approval_id) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (run_id, effect_key) DO NOTHING",
+            "INSERT INTO effect_intents (id, run_id, effect_key, status, payload, approval_id, trace_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (run_id, effect_key) DO NOTHING",
         )
         .bind(Uuid::now_v7())
         .bind(run.0)
@@ -201,6 +201,7 @@ impl StepCtx {
         .bind(INTENDED)
         .bind(payload)
         .bind(approval.map(|a| a.id.0))
+        .bind(self.trace().map(|t| t.0))
         .execute(&mut *tx)
         .await
         .map_err(db_err)?

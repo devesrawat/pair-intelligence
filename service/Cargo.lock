@@ -1128,6 +1128,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "pair-core",
+ "pair-policy",
  "serde",
  "serde_json",
  "sha2",

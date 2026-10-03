@@ -3,7 +3,9 @@ use crate::lease::Lease;
 use crate::records::{RunRecord, StepRecord};
 use crate::store::JobStore;
 use async_trait::async_trait;
+use pair_core::ids::TraceId;
 use std::future::Future;
+use std::sync::OnceLock;
 
 /// What a step wants the worker to do next.
 #[derive(Debug, Clone)]
@@ -40,6 +42,7 @@ pub struct StepCtx {
     pub completed: Vec<StepRecord>,
     pub(crate) store: JobStore,
     pub(crate) lease: Lease,
+    trace: OnceLock<TraceId>,
 }
 
 impl StepCtx {
@@ -56,7 +59,18 @@ impl StepCtx {
             completed,
             store,
             lease,
+            trace: OnceLock::new(),
         }
+    }
+
+    /// Correlate this step's effect intents with the request that caused them. Bind once; later
+    /// calls are ignored so a step cannot re-attribute its own audit trail.
+    pub fn bind_trace(&self, trace: TraceId) {
+        let _ = self.trace.set(trace);
+    }
+
+    pub(crate) fn trace(&self) -> Option<TraceId> {
+        self.trace.get().copied()
     }
 
     /// Run a tool call under the run's persisted tool-call cap (20 by default). The counter is

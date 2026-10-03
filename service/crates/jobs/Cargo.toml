@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 pair-core = { path = "../core" }
+pair-policy = { path = "../policy" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

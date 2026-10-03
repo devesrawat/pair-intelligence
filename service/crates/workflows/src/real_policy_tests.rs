@@ -2,7 +2,7 @@
 //! policy), so a tool name, policy version or egress mismatch fails here instead of in
 //! production where every action would be denied.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use crate::coding::Runner;
+use crate::coding::{Runner, RunnerSetup};
 use crate::research::{
     capture::{capture_sources, Network},
     Candidate, FetchOutcome, ResearchScope, SourceFetcher,
@@ -13,7 +13,7 @@ use pair_core::{
     error::{ErrorCode, Result},
     ids::{ApprovalId, TaskId, TraceId},
     traits::Approvals,
-    types::PolicyContext,
+    types::{DataClass, PolicyContext},
 };
 use pair_jobs::PgApprovals;
 use pair_policy::{Gate, PolicyEngine};
@@ -98,12 +98,15 @@ impl World {
     fn runner<'a>(&self, gate: &'a Gate, task: TaskId, approvals: Vec<ApprovalId>) -> Runner<'a> {
         Runner::new(
             gate,
-            task,
-            TraceId::new(),
-            self.ctx(approvals),
-            self.root.join("home"),
-            TIMEOUT,
-            Vec::new(),
+            RunnerSetup {
+                task,
+                trace: TraceId::new(),
+                ctx: self.ctx(approvals),
+                home: self.root.join("home"),
+                timeout: TIMEOUT,
+                passthrough: Vec::new(),
+                data_class: DataClass::Personal,
+            },
         )
     }
 
@@ -229,12 +232,15 @@ async fn real_engine_denies_stale_policy_version() {
     ctx.policy_version = "coding-workflow".into();
     let runner = Runner::new(
         &gate,
-        TaskId::new(),
-        TraceId::new(),
-        ctx,
-        world.root.join("home"),
-        TIMEOUT,
-        Vec::new(),
+        RunnerSetup {
+            task: TaskId::new(),
+            trace: TraceId::new(),
+            ctx,
+            home: world.root.join("home"),
+            timeout: TIMEOUT,
+            passthrough: Vec::new(),
+            data_class: DataClass::Personal,
+        },
     );
     let err = runner
         .run(&argv(&["git", "status"]), &world.repo)
@@ -282,11 +288,13 @@ async fn research(world: &World, page: &str) -> (Vec<crate::research::Source>, S
         trace: TraceId::new(),
         ctx: world.ctx(Vec::new()),
         search_host: ALLOWED_SEARCH_HOST.into(),
+        data_class: DataClass::Public,
     };
     let scope = ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     };
     let sources = capture_sources(&net, &scope).await.unwrap();
     (sources, fetcher)
@@ -329,11 +337,13 @@ async fn real_engine_denies_search_when_service_host_not_listed() {
         trace: TraceId::new(),
         ctx: world.ctx(Vec::new()),
         search_host: "search.unlisted.example.org".into(),
+        data_class: DataClass::Public,
     };
     let scope = ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);

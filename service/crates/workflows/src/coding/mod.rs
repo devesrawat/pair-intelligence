@@ -15,7 +15,7 @@ pub use classify::{classify_failure, FailureClass};
 pub use config::RepoConfig;
 pub use edits::{apply_edits, parse_edit_set, FileEdit};
 pub use remote::{request_remote_write, RemoteAction, RemoteKind, RemoteOutcome};
-pub use runner::{CmdReport, Runner};
+pub use runner::{CmdReport, Runner, RunnerSetup};
 pub use scope::{is_secret_path, Scope};
 pub use workflow::{
     discard_workspace, run_coding_task, CodingDeps, CodingResult, CodingStatus, CodingTask, Stage,

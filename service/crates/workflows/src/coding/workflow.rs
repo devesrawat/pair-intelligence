@@ -3,7 +3,7 @@ use super::{
     classify::{classify_failure, FailureClass},
     config::RepoConfig,
     edits::{apply_edits, parse_edit_set},
-    runner::{CmdReport, Runner},
+    runner::{CmdReport, Runner, RunnerSetup},
     scope::Scope,
     worktree,
 };
@@ -99,6 +99,7 @@ struct Ctx<'a, 'd> {
     task: &'d CodingTask,
     runner: &'d Runner<'a>,
     base_head: String,
+    data_class: DataClass,
 }
 
 impl Ctx<'_, '_> {
@@ -129,7 +130,7 @@ impl Ctx<'_, '_> {
             messages,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             deadline_ms: CALL_DEADLINE_MS,
-            data_class: DataClass::Personal,
+            data_class: self.data_class,
             task: self.task.id,
             trace: self.task.trace,
         };
@@ -178,12 +179,15 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         .map_err(|e| PairError::new(ErrorCode::Internal, format!("home dir: {e}")))?;
     let runner = Runner::new(
         deps.gate,
-        task.id,
-        task.trace,
-        deps.policy.clone(),
-        home,
-        Duration::from_secs(cfg.timeout_secs),
-        cfg.env_passthrough.clone(),
+        RunnerSetup {
+            task: task.id,
+            trace: task.trace,
+            ctx: deps.policy.clone(),
+            home,
+            timeout: Duration::from_secs(cfg.timeout_secs),
+            passthrough: cfg.env_passthrough.clone(),
+            data_class: cfg.data_class,
+        },
     );
     let base_head = worktree::head(&runner, &task.repo).await?;
     let ctx = Ctx {
@@ -191,6 +195,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         task,
         runner: &runner,
         base_head: base_head.clone(),
+        data_class: cfg.data_class,
     };
     tracing::info!(task = %task.id, base = %base_head, "coding task started");
 
@@ -314,14 +319,18 @@ pub async fn discard_workspace(
     task: &CodingTask,
     result: &CodingResult,
 ) -> Result<()> {
+    let cfg = RepoConfig::load(&task.repo)?;
     let runner = Runner::new(
         gate,
-        task.id,
-        task.trace,
-        policy,
-        task.workspaces_root.join(format!(".home-{}", task.id)),
-        Duration::from_secs(DISCARD_TIMEOUT_SECS),
-        Vec::new(),
+        RunnerSetup {
+            task: task.id,
+            trace: task.trace,
+            ctx: policy,
+            home: task.workspaces_root.join(format!(".home-{}", task.id)),
+            timeout: Duration::from_secs(DISCARD_TIMEOUT_SECS),
+            passthrough: Vec::new(),
+            data_class: cfg.data_class,
+        },
     );
     worktree::remove(&runner, &task.repo, &result.worktree).await
 }

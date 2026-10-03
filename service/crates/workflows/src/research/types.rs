@@ -11,6 +11,10 @@ pub struct ResearchScope {
     #[serde(default)]
     pub queries: Vec<String>,
     pub max_sources: usize,
+    /// Declared class of the question and of anything sent out for it. Required: a missing
+    /// or unknown class, or Employer, is refused (`public`, `personal` or `sensitive`).
+    #[serde(default)]
+    pub data_class: Option<String>,
 }
 
 /// A captured source version. Its text is `TrustClass::Untrusted` data, never instructions.

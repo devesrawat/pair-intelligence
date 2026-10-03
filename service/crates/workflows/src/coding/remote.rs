@@ -27,6 +27,8 @@ pub struct RemoteAction {
     pub branch: String,
     pub head_sha: String,
     pub diff_sha256: String,
+    /// Declared class of the data being sent (from the repo config).
+    pub data_class: DataClass,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +80,7 @@ pub fn request_remote_write(
         ],
         paths: Vec::new(),
         destination: Some(action.host.clone()),
-        data_class: DataClass::Personal,
+        data_class: action.data_class,
         task,
         trace,
     };

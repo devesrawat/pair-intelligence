@@ -32,6 +32,8 @@ pub struct Network<'a> {
     /// Host of the search service. Searches are egress to this host, so it must be listed
     /// in the policy's egress rules; the query text is never used as a destination.
     pub search_host: String,
+    /// The scope's declared data class, sent with every policy request.
+    pub data_class: DataClass,
 }
 
 impl Network<'_> {
@@ -42,7 +44,7 @@ impl Network<'_> {
             args: Vec::new(),
             paths: Vec::new(),
             destination: Some(destination.to_string()),
-            data_class: DataClass::Public,
+            data_class: self.data_class,
             task: self.task,
             trace: self.trace,
         }

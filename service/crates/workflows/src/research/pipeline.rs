@@ -11,11 +11,13 @@ use super::{
     synth::synthesize,
     types::{Report, ResearchScope},
 };
+use crate::data_class::require_data_class;
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
     traits::{BudgetEx, Provider},
+    types::DataClass,
 };
 
 pub struct ResearchDeps<'a> {
@@ -40,6 +42,7 @@ pub struct ResearchRun {
     pub model_id: String,
 }
 
+#[derive(Debug)]
 pub struct ResearchOutput {
     pub report: Report,
     pub markdown: String,
@@ -47,14 +50,15 @@ pub struct ResearchOutput {
 
 pub(crate) const STATEMENT_LIMITATION: &str = "Synthesized statements were checked lexically against the spans of the claims they cite (term overlap, figures, negation parity); no semantic check covers them, so each statement still needs a manual audit.";
 
-fn validate_scope(scope: &ResearchScope) -> Result<()> {
+fn validate_scope(scope: &ResearchScope) -> Result<DataClass> {
+    let class = require_data_class(scope.data_class.as_deref(), "research scope")?;
     if scope.question.trim().is_empty() || scope.max_sources == 0 {
         return Err(PairError::new(
             ErrorCode::InvalidInput,
             "research scope needs a question and max_sources > 0",
         ));
     }
-    Ok(())
+    Ok(class)
 }
 
 pub async fn run_research(
@@ -62,9 +66,9 @@ pub async fn run_research(
     run: &ResearchRun,
     scope: &ResearchScope,
 ) -> Result<ResearchOutput> {
-    validate_scope(scope)?;
+    let class = validate_scope(scope)?;
     let run_id = deps.store.create_run(scope).await?;
-    match execute(deps, run, scope, run_id).await {
+    match execute(deps, run, scope, class, run_id).await {
         Ok(out) => {
             deps.store.finish_run(run_id, true).await?;
             Ok(out)
@@ -82,6 +86,7 @@ async fn execute(
     deps: &ResearchDeps<'_>,
     run: &ResearchRun,
     scope: &ResearchScope,
+    data_class: DataClass,
     run_id: uuid::Uuid,
 ) -> Result<ResearchOutput> {
     let net = Network {
@@ -91,6 +96,7 @@ async fn execute(
         trace: run.trace,
         ctx: deps.policy.clone(),
         search_host: deps.search_host.clone(),
+        data_class,
     };
     let llm = ResearchLlm {
         provider: deps.provider,
@@ -99,6 +105,7 @@ async fn execute(
         task: run.task,
         trace: run.trace,
         model_id: run.model_id.clone(),
+        data_class,
     };
 
     let sources = capture_sources(&net, scope).await?;

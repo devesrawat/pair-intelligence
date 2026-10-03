@@ -145,6 +145,7 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         question: fx.question,
         queries: vec![],
         max_sources: 5,
+        data_class: Some("public".into()),
     };
     let out = run_research(&deps, &run, &scope).await.unwrap();
     Harness {
@@ -189,6 +190,7 @@ fn gated_scope() -> ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     }
 }
 
@@ -210,6 +212,7 @@ async fn research_network_access_only_happens_after_gate_allow() {
         trace: TraceId::new(),
         ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
         search_host: SEARCH_HOST.into(),
+        data_class: pair_core::types::DataClass::Public,
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, pair_core::error::ErrorCode::PolicyDenied);
@@ -381,6 +384,66 @@ async fn injected_webpage_instruction_ignored() {
         .iter()
         .all(|s| !s.text.contains("bankrupt")));
     assert_eq!(h.provider.call_count(), 2);
+}
+
+#[tokio::test]
+async fn research_scope_without_usable_data_class_refused() {
+    let db = TestDb::create().await;
+    let fetcher = CountingFetcher::default();
+    let provider = FnProvider::scripted(vec![]);
+    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let budget = FakeBudget::default();
+    let store = EvidenceStore::new(db.pool.clone());
+    let deps = ResearchDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
+        fetcher: &fetcher,
+        store: &store,
+        judge: None,
+        policy: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+    };
+    let run = ResearchRun {
+        task: TaskId::new(),
+        trace: TraceId::new(),
+        model_id: "fake".into(),
+    };
+    for class in [None, Some("employer"), Some("classified")] {
+        let scope = ResearchScope {
+            data_class: class.map(String::from),
+            ..gated_scope()
+        };
+        let err = run_research(&deps, &run, &scope).await.unwrap_err();
+        assert_eq!(
+            err.code,
+            pair_core::error::ErrorCode::PolicyDenied,
+            "{class:?}"
+        );
+    }
+    assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_count(), 0);
+}
+
+#[tokio::test]
+async fn research_data_class_flows_to_requests() {
+    use pair_core::types::DataClass;
+    let h = run_fixture("conflicting_evidence.json", None).await;
+    assert!(h
+        .provider
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.data_class == DataClass::Public));
+    assert!(h
+        .policy
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|a| a.data_class == DataClass::Public));
 }
 
 #[tokio::test]

@@ -23,6 +23,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(acceptance: &str) -> Self {
+        Self::with_class(acceptance, Some("personal"))
+    }
+
+    /// `class` is written into repo.json as `data_class`; `None` omits the key.
+    fn with_class(acceptance: &str, class: Option<&str>) -> Self {
         let root =
             std::env::temp_dir().join(format!("pair_t_wf_{}", uuid::Uuid::new_v4().simple()));
         let repo = root.join("repo");
@@ -32,7 +37,8 @@ impl Fixture {
         std::fs::write(repo.join("src/lib.txt"), "old\n").unwrap();
         std::fs::write(repo.join("README.md"), "readme\n").unwrap();
         std::fs::write(repo.join(".env"), format!("{SECRET_FILE_VALUE}\n")).unwrap();
-        let cfg = format!(r#"{{"acceptance":[{acceptance}],"timeout_secs":2}}"#);
+        let class_field = class.map_or(String::new(), |c| format!(r#","data_class":"{c}""#));
+        let cfg = format!(r#"{{"acceptance":[{acceptance}],"timeout_secs":2{class_field}}}"#);
         std::fs::write(repo.join(".pair/repo.json"), cfg).unwrap();
         let fx = Self { root };
         fx.git(&["init", "-q", "-b", "main"]);
@@ -252,6 +258,60 @@ async fn hidden_credentials_not_exposed() {
 }
 
 #[tokio::test]
+async fn employer_repo_refused() {
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("employer"));
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let task = fx.task(&["src/"]);
+    let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert_eq!(provider.call_count(), 0, "no model call for refused data");
+    assert!(!fx.root.join("ws").join(task.id.to_string()).exists());
+    // unknown classes are refused the same way
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("top_secret"));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+}
+
+#[tokio::test]
+async fn missing_data_class_refused() {
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, None);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert!(err.message.contains("data_class"), "{}", err.message);
+    assert_eq!(provider.call_count(), 0);
+}
+
+#[tokio::test]
+async fn data_class_flows_to_model_request() {
+    use pair_core::types::DataClass;
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("sensitive"));
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let policy = Arc::new(FakePolicy::default());
+    run(&fx.task(&["src/"]), &provider, &policy).await.unwrap();
+    let seen = provider.seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert!(seen.iter().all(|r| r.data_class == DataClass::Sensitive));
+    let actions = policy.seen.lock().unwrap();
+    assert!(!actions.is_empty());
+    assert!(actions.iter().all(|a| a.data_class == DataClass::Sensitive));
+}
+
+#[tokio::test]
 async fn failed_acceptance_tests_reported_not_hidden() {
     let fx = Fixture::new(r#"["sh","-c","echo ASSERTION_FAILED_MARKER >&2; exit 1"]"#);
     let task = fx.task(&["src/"]);
@@ -322,12 +382,15 @@ async fn policy_denied_command_never_executes() {
 fn test_runner<'a>(gate: &'a Gate, dir: &Path) -> Runner<'a> {
     Runner::new(
         gate,
-        TaskId::new(),
-        TraceId::new(),
-        fake_ctx(dir),
-        dir.join("home"),
-        std::time::Duration::from_secs(2),
-        Vec::new(),
+        RunnerSetup {
+            task: TaskId::new(),
+            trace: TraceId::new(),
+            ctx: fake_ctx(dir),
+            home: dir.join("home"),
+            timeout: std::time::Duration::from_secs(2),
+            passthrough: Vec::new(),
+            data_class: pair_core::types::DataClass::Personal,
+        },
     )
 }
 
@@ -418,6 +481,7 @@ fn remote_write_requires_approval() {
         branch: "pair/x".into(),
         head_sha: "abc".into(),
         diff_sha256: "def".into(),
+        data_class: pair_core::types::DataClass::Personal,
     };
     let (task, trace) = (TaskId::new(), TraceId::new());
     let strict = FakePolicy::default();
@@ -471,13 +535,14 @@ fn scope_permits_only_declared_paths() {
 
 #[test]
 fn repo_config_requires_acceptance_and_rejects_secret_passthrough() {
-    assert!(RepoConfig::parse(r#"{"acceptance":[]}"#).is_err());
+    assert!(RepoConfig::parse(r#"{"acceptance":[],"data_class":"public"}"#).is_err());
     assert!(RepoConfig::parse(
-        r#"{"acceptance":[["true"]],"env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#
+        r#"{"acceptance":[["true"]],"data_class":"public","env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#
     )
     .is_err());
-    assert!(
-        RepoConfig::parse(r#"{"acceptance":[["true"]],"env_passthrough":["CARGO_HOME"]}"#).is_ok()
-    );
+    assert!(RepoConfig::parse(
+        r#"{"acceptance":[["true"]],"data_class":"public","env_passthrough":["CARGO_HOME"]}"#
+    )
+    .is_ok());
     let _ = Path::new(".");
 }

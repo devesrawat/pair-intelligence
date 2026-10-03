@@ -19,6 +19,7 @@ pub struct ResearchLlm<'a> {
     pub task: TaskId,
     pub trace: TraceId,
     pub model_id: String,
+    pub data_class: DataClass,
 }
 
 pub fn owner_msg(content: impl Into<String>) -> ModelMessage {
@@ -42,7 +43,7 @@ impl ResearchLlm<'_> {
             messages,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             deadline_ms: CALL_DEADLINE_MS,
-            data_class: DataClass::Public,
+            data_class: self.data_class,
             task: self.task,
             trace: self.trace,
         };

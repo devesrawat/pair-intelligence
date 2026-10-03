@@ -49,6 +49,23 @@ impl CmdReport {
     }
 }
 
+/// Everything a `Runner` needs besides the gate.
+pub struct RunnerSetup {
+    pub task: TaskId,
+    pub trace: TraceId,
+    /// Active policy version, the policy workspace root and the approval ids offered for
+    /// this task (normally empty).
+    pub ctx: PolicyContext,
+    /// An empty directory used as HOME so user-level credential stores (~/.aws, ~/.ssh,
+    /// ~/.config/gh) are unreachable from the command.
+    pub home: PathBuf,
+    pub timeout: Duration,
+    /// Extra environment variable names forwarded to commands.
+    pub passthrough: Vec<String>,
+    /// Declared class of the data the commands touch (from the repo config).
+    pub data_class: DataClass,
+}
+
 pub struct Runner<'a> {
     gate: &'a Gate,
     task: TaskId,
@@ -57,23 +74,21 @@ pub struct Runner<'a> {
     timeout: Duration,
     home: PathBuf,
     passthrough: Vec<String>,
+    data_class: DataClass,
     redactions: Vec<String>,
 }
 
 impl<'a> Runner<'a> {
-    /// `home` is an empty directory used as HOME so user-level credential stores
-    /// (~/.aws, ~/.ssh, ~/.config/gh) are unreachable from the command.
-    /// `ctx` carries the active policy version, the policy workspace root and the approval
-    /// ids offered for this task (normally empty).
-    pub fn new(
-        gate: &'a Gate,
-        task: TaskId,
-        trace: TraceId,
-        ctx: PolicyContext,
-        home: PathBuf,
-        timeout: Duration,
-        passthrough: Vec<String>,
-    ) -> Self {
+    pub fn new(gate: &'a Gate, setup: RunnerSetup) -> Self {
+        let RunnerSetup {
+            task,
+            trace,
+            ctx,
+            home,
+            timeout,
+            passthrough,
+            data_class,
+        } = setup;
         let redactions = std::env::vars()
             .filter(|(k, v)| looks_secret_name(k) && v.len() >= MIN_REDACTABLE_LEN)
             .map(|(_, v)| v)
@@ -86,6 +101,7 @@ impl<'a> Runner<'a> {
             timeout,
             home,
             passthrough,
+            data_class,
             redactions,
         }
     }
@@ -106,7 +122,7 @@ impl<'a> Runner<'a> {
             args: args.to_vec(),
             paths: vec![cwd.display().to_string()],
             destination: destination.map(str::to_string),
-            data_class: DataClass::Personal,
+            data_class: self.data_class,
             task: self.task,
             trace: self.trace,
         })

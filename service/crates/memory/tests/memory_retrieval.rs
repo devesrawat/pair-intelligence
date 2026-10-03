@@ -28,7 +28,7 @@ async fn accept_fact(
     span: &str,
 ) -> (MemoryId, pair_core::ids::SourceId) {
     let src = source(mem, ext, TrustClass::Owner).await;
-    let cid = propose_verified(&mem, candidate(kind, content, project, src.id, span))
+    let cid = propose_verified(mem, candidate(kind, content, project, src.id, span))
         .await
         .unwrap();
     (mem.accept(cid, "owner").await.unwrap(), src.id)

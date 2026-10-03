@@ -80,6 +80,22 @@ pub fn fast_cfg() -> JobConfig {
     }
 }
 
-pub async fn wait_lease_expiry() {
-    tokio::time::sleep(Duration::from_millis(900)).await;
+/// Long lease for tests that do not exercise lease expiry, so a CPU-starved heartbeat under
+/// parallel load cannot make the worker legitimately lose its lease mid-test.
+pub fn steady_cfg() -> JobConfig {
+    JobConfig {
+        lease_ttl: Duration::from_secs(10),
+        ..JobConfig::default()
+    }
+}
+
+/// Deterministically expire every held lease, as if the holder crashed `ttl` ago. Use this
+/// instead of sleeping so the test does not depend on how loaded the machine is.
+pub async fn expire_leases(db: &TestDb) {
+    sqlx::query(
+        "UPDATE workflow_runs SET lease_expires_at = now() - interval '1 second' WHERE state = 'running'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
 }

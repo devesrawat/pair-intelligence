@@ -2,7 +2,7 @@
 mod common;
 
 use async_trait::async_trait;
-use common::{fast_cfg, wait_lease_expiry, TestDb};
+use common::{expire_leases, steady_cfg, TestDb};
 use pair_core::ids::{IdempotencyKey, RunId};
 use pair_core::traits::Workflows;
 use pair_core::types::{RunState, WorkflowInput};
@@ -61,7 +61,7 @@ impl StepHandler for ThreeSteps {
 #[tokio::test]
 async fn restart_resumes_checkpoint() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let handler = Arc::new(ThreeSteps::default());
     handler.block_step1.store(true, SeqCst);
     let id = store
@@ -76,7 +76,7 @@ async fn restart_resumes_checkpoint() {
     let _ = task.await;
 
     assert_eq!(store.state(id).await.unwrap(), RunState::Running);
-    wait_lease_expiry().await;
+    expire_leases(&db).await;
     assert_eq!(store.sweep_expired().await.unwrap(), 1);
     assert_eq!(store.state(id).await.unwrap(), RunState::Interrupted);
     assert_eq!(store.resume(id).await.unwrap(), RunState::Queued);
@@ -101,13 +101,13 @@ async fn restart_resumes_checkpoint() {
 #[tokio::test]
 async fn resume_of_expired_running_run_requeues_directly() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let id = store
         .start(input("t"), IdempotencyKey::new())
         .await
         .unwrap();
     assert!(store.claim("ghost").await.unwrap().is_some());
-    wait_lease_expiry().await;
+    expire_leases(&db).await;
     assert_eq!(store.resume(id).await.unwrap(), RunState::Queued);
 }
 
@@ -204,7 +204,7 @@ impl StepHandler for Sender {
 
 /// Run the handler in a worker, crash it once `reached`, recover and finish with a second worker.
 async fn crash_and_recover(db: &TestDb, sender: &Arc<Sender>) -> (RunId, RunState) {
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let id = store
         .start(input("send"), IdempotencyKey::new())
         .await
@@ -214,7 +214,7 @@ async fn crash_and_recover(db: &TestDb, sender: &Arc<Sender>) -> (RunId, RunStat
     wait_until(|| sender.reached.load(SeqCst)).await;
     task.abort();
     let _ = task.await;
-    wait_lease_expiry().await;
+    expire_leases(db).await;
     store.sweep_expired().await.unwrap();
     store.resume(id).await.unwrap();
     sender.set(Mode::Normal);
@@ -273,7 +273,7 @@ async fn crash_between_effect_and_completion_is_reconciled_not_repeated() {
 }
 
 fn retry_cfg() -> JobConfig {
-    let mut cfg = fast_cfg();
+    let mut cfg = steady_cfg();
     cfg.retry.max_attempts = 2;
     cfg.retry.base = Duration::from_millis(10);
     cfg
@@ -318,7 +318,7 @@ async fn ambiguous_side_effect_not_applied_is_executed_after_reconcile() {
 #[tokio::test]
 async fn start_is_idempotent() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let key = IdempotencyKey::new();
     let (a, b) = tokio::join!(store.start(input("t"), key), store.start(input("t"), key));
     let (a, b) = (a.unwrap(), b.unwrap());
@@ -397,7 +397,7 @@ impl StepHandler for ToolHog {
 #[tokio::test]
 async fn tool_call_cap_fails_the_run_at_20() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let id = store
         .start(input("hog"), IdempotencyKey::new())
         .await
@@ -424,7 +424,7 @@ async fn deadline_fails_the_run() {
     let db = TestDb::new().await;
     let cfg = JobConfig {
         interactive_timeout: Duration::from_millis(150),
-        ..fast_cfg()
+        ..steady_cfg()
     };
     let store = db.store(cfg);
     let id = store
@@ -471,7 +471,7 @@ impl StepHandler for Flaky {
 #[tokio::test]
 async fn transient_errors_retry_with_capped_backoff_then_succeed() {
     let db = TestDb::new().await;
-    let mut cfg = fast_cfg();
+    let mut cfg = steady_cfg();
     cfg.retry.base = Duration::from_millis(5);
     let store = db.store(cfg);
     let id = store
@@ -542,15 +542,15 @@ async fn park_and_grant(
 async fn approval_wait_does_not_consume_deadline() {
     let db = TestDb::new().await;
     let store = db.store(JobConfig {
-        interactive_timeout: Duration::from_millis(700),
-        ..fast_cfg()
+        interactive_timeout: Duration::from_millis(4000),
+        ..steady_cfg()
     });
     let handler = Arc::new(ParkThenFinish {
-        active: Duration::from_millis(100),
+        active: Duration::from_millis(150),
         hash: pair_jobs::action_hash(&json!({"p": 1})).unwrap(),
     });
-    // Parked for 1s: longer than the whole 700ms deadline.
-    let (w, id) = park_and_grant(&db, &store, handler, Duration::from_millis(1000)).await;
+    // Parked for 4.5s: longer than the whole 4s deadline, but active time is only ~300ms.
+    let (w, id) = park_and_grant(&db, &store, handler, Duration::from_millis(4500)).await;
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Succeeded)));
 }
 
@@ -558,14 +558,14 @@ async fn approval_wait_does_not_consume_deadline() {
 async fn active_time_before_and_after_approval_still_counts() {
     let db = TestDb::new().await;
     let store = db.store(JobConfig {
-        interactive_timeout: Duration::from_millis(500),
-        ..fast_cfg()
+        interactive_timeout: Duration::from_millis(4000),
+        ..steady_cfg()
     });
     let handler = Arc::new(ParkThenFinish {
-        active: Duration::from_millis(300),
+        active: Duration::from_millis(2500),
         hash: pair_jobs::action_hash(&json!({"p": 2})).unwrap(),
     });
-    // 300ms active before parking + 300ms after > 500ms of active time.
+    // 2.5s active before parking + 2.5s after > 4s of active time (each phase alone is < 4s).
     let (w, id) = park_and_grant(&db, &store, handler, Duration::from_millis(50)).await;
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Failed)));
 }

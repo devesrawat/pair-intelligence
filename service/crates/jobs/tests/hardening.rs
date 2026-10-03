@@ -4,7 +4,7 @@ mod common;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use common::{fast_cfg, TestDb};
+use common::{fast_cfg, steady_cfg, TestDb};
 use pair_core::error::{ErrorCode, PairError};
 use pair_core::ids::{IdempotencyKey, RunId};
 use pair_core::traits::{Approvals, Workflows};
@@ -50,7 +50,7 @@ async fn parked_and_granted(
     store: &JobStore,
     handler: Arc<dyn StepHandler>,
     approved_payload: &Value,
-    expiry: chrono::DateTime<Utc>,
+    expiry_in: chrono::Duration,
 ) -> (Worker, RunId, pair_core::ids::ApprovalId) {
     let id = store
         .start(input("ap"), IdempotencyKey::new())
@@ -62,15 +62,19 @@ async fn parked_and_granted(
         Some((id, RunState::WaitingApproval))
     );
     let ap = PgApprovals::new(db.pool.clone())
-        .approve(&action_hash(approved_payload).unwrap(), "devesh", expiry)
+        .approve(
+            &action_hash(approved_payload).unwrap(),
+            "devesh",
+            Utc::now() + expiry_in,
+        )
         .await
         .unwrap();
     store.grant(id, ap).await.unwrap();
     (w, id, ap)
 }
 
-fn in_24h() -> chrono::DateTime<Utc> {
-    Utc::now() + chrono::Duration::hours(23)
+fn in_24h() -> chrono::Duration {
+    chrono::Duration::hours(23)
 }
 
 // ---------- H1: re-entrant consume checks expiry ----------
@@ -111,20 +115,25 @@ impl StepHandler for Reenter {
 #[tokio::test]
 async fn reentrant_consume_rejects_expired_approval() {
     let db = TestDb::new().await;
-    let mut cfg = fast_cfg();
+    let mut cfg = steady_cfg();
     cfg.retry.max_attempts = 3;
     cfg.retry.base = Duration::from_millis(10);
     let store = db.store(cfg);
     let handler = Arc::new(Reenter {
         execs: AtomicU32::new(0),
         payload: json!({"branch": "x"}),
-        approval_ms: Duration::from_millis(900),
+        approval_ms: Duration::from_millis(2800),
     });
-    // Approval lives 600ms; the first attempt's effect outlasts it and ends ambiguously, so the
-    // retry re-enters the (already consumed) approval after expiry.
-    let expiry = Utc::now() + chrono::Duration::milliseconds(600);
-    let (w, id, _) =
-        parked_and_granted(&db, &store, handler.clone(), &handler.payload, expiry).await;
+    // The approval lives 2s, counted from when it is created; the first attempt's effect outlasts
+    // it and ends ambiguously, so the retry re-enters the (already consumed) approval after expiry.
+    let (w, id, _) = parked_and_granted(
+        &db,
+        &store,
+        handler.clone(),
+        &handler.payload,
+        chrono::Duration::milliseconds(2000),
+    )
+    .await;
     assert_eq!(w.run_once().await.unwrap(), Some((id, RunState::Failed)));
     assert_eq!(handler.execs.load(SeqCst), 1);
     assert!(
@@ -239,7 +248,7 @@ async fn approval_cannot_authorize_different_payload() {
 #[tokio::test]
 async fn approval_cannot_authorize_second_effect() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let payload = json!({"to": "a@b.c"});
     // Same payload (same hash), different effect key, same approval, same step.
     let handler = TwoEffects::new(payload.clone(), payload.clone(), payload.clone(), "again");
@@ -255,7 +264,7 @@ async fn approval_cannot_authorize_second_effect() {
 #[tokio::test]
 async fn approval_does_not_carry_into_next_step() {
     let db = TestDb::new().await;
-    let store = db.store(fast_cfg());
+    let store = db.store(steady_cfg());
     let payload = json!({"to": "a@b.c"});
     let handler = TwoEffects::new(
         payload.clone(),
@@ -404,8 +413,11 @@ async fn intent_status(db: &TestDb) -> String {
 #[tokio::test]
 async fn terminal_run_with_unresolved_intent_is_reconciled_by_sweeper() {
     let db = TestDb::new().await;
+    // The deadline must outlast the step reaching `exec` even when the machine is loaded; the
+    // grace period before the sweeper acts is one lease TTL.
     let store = db.store(JobConfig {
-        interactive_timeout: Duration::from_millis(500),
+        interactive_timeout: Duration::from_millis(1500),
+        lease_ttl: Duration::from_millis(2000),
         ..fast_cfg()
     });
     let handler = Arc::new(SlowSender {
@@ -427,7 +439,7 @@ async fn terminal_run_with_unresolved_intent_is_reconciled_by_sweeper() {
         store.reconcile_orphaned_intents(&Undecided).await.unwrap(),
         OrphanSweep::default()
     );
-    tokio::time::sleep(Duration::from_millis(900)).await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     let undecided = store.reconcile_orphaned_intents(&Undecided).await.unwrap();
     assert_eq!(undecided.undecided, 1);
     assert_eq!(intent_status(&db).await, "executing");

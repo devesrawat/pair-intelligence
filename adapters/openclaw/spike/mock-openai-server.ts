@@ -1,6 +1,6 @@
 // Loopback-only OpenAI-compatible mock. Serves canned streamed chat completions.
 // Scenario is chosen by a marker in the user messages:
-//   SCENARIO:deny | approve (spike), allowcat | svcsecret | svcpython | slowtool (wired harness), else plain text.
+//   SCENARIO:deny | approve (spike), allowcat | svcsecret | svcpython | gitpush | slowtool (wired harness), else plain text.
 import { appendFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -75,6 +75,9 @@ function plan(body: ChatRequest): Plan {
   }
   if (prompt.includes("SCENARIO:svcsecret")) {
     return { toolName: "exec", args: { command: `cat ${workspace}/prod.tfvars` } };
+  }
+  if (prompt.includes("SCENARIO:gitpush")) {
+    return { toolName: "exec", args: { command: "git push origin main" } };
   }
   if (prompt.includes("SCENARIO:svcpython")) {
     return { toolName: "exec", args: { command: `python3 ${workspace}/write_canary.py` } };

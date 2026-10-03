@@ -1,0 +1,3 @@
+{"ts":"2026-10-03T12:43:49.709Z","source":"model_call_ended","runId":"d6671094-ec44-4528-a686-41e337846cad","callId":"d6671094-ec44-4528-a686-41e337846cad:model:1","provider":"mock","model":"mock-routed","outcome":"completed","durationMs":25031}
+{"ts":"2026-10-03T12:43:49.772Z","source":"model_call_ended","runId":"d6671094-ec44-4528-a686-41e337846cad","callId":"d6671094-ec44-4528-a686-41e337846cad:model:2","provider":"mock","model":"mock-routed","outcome":"completed","durationMs":11}
+{"ts":"2026-10-03T12:43:49.783Z","source":"llm_output","runId":"d6671094-ec44-4528-a686-41e337846cad","provider":"mock","model":"mock-routed","resolvedRef":"mock/mock-routed","usage":{"input":22,"output":14,"cacheRead":0,"cacheWrite":0,"total":36,"cost":{"total":0}}}

@@ -1,8 +1,10 @@
+import { paramsHash } from "./ids.ts";
 import { decideToolCall } from "./rules.ts";
 
 export type ToolCallEvent = {
   readonly toolName: string;
   readonly params: Readonly<Record<string, unknown>>;
+  readonly runId?: string;
 };
 
 export type GateResult =
@@ -13,6 +15,8 @@ export type GateResult =
         readonly description: string;
         readonly severity: "warning";
         readonly timeoutMs: number;
+        /** `allow-always` is excluded: an approval must stay bound to one call. */
+        readonly allowedDecisions: Array<"allow-once" | "deny">;
       };
     }
   | undefined;
@@ -25,6 +29,8 @@ export type GateOptions = {
   /** Test probe only: makes the gate throw so fail-closed behaviour can be observed. */
   readonly injectPolicyError?: boolean;
 };
+
+export const APPROVAL_DECISIONS = ["allow-once", "deny"] as const;
 
 export const FAIL_CLOSED_REASON = "pair-spike: policy error, failing closed";
 
@@ -40,7 +46,7 @@ export function createToolGate(options: GateOptions): (event: ToolCallEvent) => 
       // Logged before acting on the verdict: if the audit trail cannot be written, deny.
       options.log("before_tool_call", {
         toolName: event.toolName,
-        params: event.params,
+        paramsSha256: paramsHash(event.params),
         decision: decision.kind,
       });
       if (decision.kind === "deny") {
@@ -53,6 +59,7 @@ export function createToolGate(options: GateOptions): (event: ToolCallEvent) => 
             description: decision.description,
             severity: "warning",
             timeoutMs: options.approvalTimeoutMs,
+            allowedDecisions: [...APPROVAL_DECISIONS],
           },
         };
       }

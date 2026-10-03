@@ -1,0 +1,6 @@
+{"timestamp":"2026-10-03T12:43:24.597432Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a101ca-6833-76eb-b6e5-fb6199906aca","task":"0f88de83-a3f0-5841-936a-0826a9986745","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"987ebeef-3f63-4c83-a085-988819c6a783","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"987ebeef-3f63-4c83-a085-988819c6a783","name":"request"}]}
+{"timestamp":"2026-10-03T12:43:24.890435Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T12:43:24.890640Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:43:24.890682Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:43:24.890811Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:24.890872Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}

@@ -1,0 +1,19 @@
+# Kill-switch level 1 (docs/runbooks/kill-switch.md): every cap zeroed, so every reserve is refused.
+budget:
+  currency: USD
+  metered_monthly_cap: 0.00
+  metered_daily_cap: 0.00
+  classifier_monthly_subcap: 0.00
+  default_task_cap: 0.00
+  research_task_cap: 0.00
+  coding_task_cap: 0.00
+  auto_top_up: false
+execution:
+  max_model_attempts: 3
+  max_tool_calls: 20
+  interactive_timeout_minutes: 15
+  research_timeout_minutes: 30
+schedule:
+  timezone: Asia/Kolkata
+  morning: '07:30'
+  review: '22:30'

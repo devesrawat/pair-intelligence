@@ -1,0 +1,3 @@
+{"ts":"2026-10-03T12:43:20.645Z","source":"model_call_ended","runId":"ac2848f6-4d15-43c3-b4b9-617e764ff836","callId":"ac2848f6-4d15-43c3-b4b9-617e764ff836:model:1","provider":"mock","model":"mock-routed","outcome":"completed","durationMs":10}
+{"ts":"2026-10-03T12:43:21.600Z","source":"model_call_ended","runId":"ac2848f6-4d15-43c3-b4b9-617e764ff836","callId":"ac2848f6-4d15-43c3-b4b9-617e764ff836:model:2","provider":"mock","model":"mock-routed","outcome":"completed","durationMs":12}
+{"ts":"2026-10-03T12:43:21.612Z","source":"llm_output","runId":"ac2848f6-4d15-43c3-b4b9-617e764ff836","provider":"mock","model":"mock-routed","resolvedRef":"mock/mock-routed","usage":{"input":22,"output":14,"cacheRead":0,"cacheWrite":0,"total":36,"cost":{"total":0}}}

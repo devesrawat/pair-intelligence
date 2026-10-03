@@ -1,0 +1,43 @@
+PASS  every migration applied to the scratch database (24 of 24)
+PASS  plain turn exits 0
+PASS  plain turn reached the mock with the routed model (reserve then override)
+PASS  a reservation id was recorded for the turn
+PASS  llm_output reconciled the reservation as settled
+PASS  DB: reservation row is settled
+PASS  DB: one settled ledger row for the reservation
+PASS  DB: ledger amount equals the adapter's computed actual cost
+PASS  DB: reservation uses the explicit kind and price version
+PASS  allowed tool: exec reached the service and was allowed
+PASS  allowed tool: the command executed (canary content in the tool result)
+PASS  service denial: decision deny from pair-api
+PASS  service denial: reason recorded (denied name)
+PASS  service denial: the model saw the block reason
+PASS  service denial: secret file content never reached the model or the output
+PASS  service denial: python3 denied by the real engine
+PASS  service denial: python3 reason names the executable
+PASS  service denial: nothing executed (canary file absent)
+PASS  pair-api down mid-run: reservation had succeeded before the stop
+PASS  pair-api down mid-run: tool call blocked (deny-on-error, service unreachable)
+PASS  pair-api down mid-run: tool did not execute (no canary content in output)
+PASS  pair-api down mid-run: the model saw the fail-closed reason
+PASS  pair-api down at run start: mock model server saw ZERO requests
+PASS  pair-api down at run start: reserve failed as unreachable
+PASS  pair-api down at run start: run blocked (non-zero exit or block message)
+PASS  rotation mid-run: tool call blocked (service answered 401 to the old token)
+PASS  rotation mid-run: tool did not execute
+PASS  rotation at run start: mock model server saw ZERO requests
+PASS  rotation at run start: reserve refused with HTTP 401
+PASS  zero caps: mock model server saw ZERO requests (no model call happened)
+PASS  zero caps: reserve refused with budget_exceeded
+PASS  zero caps: no override was applied and the run was blocked at before_agent_run
+PASS  zero caps: no reservation row was created
+PASS  WARN visible at start for before_model_resolve
+PASS  WARN visible at start for before_agent_run
+PASS  WARN visible at start for llm_output
+PASS  no opt-in: the model call HAPPENS (budget gate is gone)
+PASS  no opt-in: model override not applied (default model used)
+PASS  no opt-in: no reservation was created
+PASS  no opt-in: tool gate still blocks via the real policy engine
+PASS  non-loopback PAIR_API_URL refused at startup (logged, deny-all installed)
+PASS  misconfigured adapter: mock model server saw ZERO requests
+PASS  no token appears in the evidence

@@ -1,0 +1,52 @@
+// Sanitized wired-harness config. Placeholders are rendered by wired.sh:
+// __SPIKE_DIR__ __PLUGIN_DIR__ __GATEWAY_TOKEN__ __GATEWAY_PORT__ __MOCK_PORT__ __CONV_ACCESS__ (true|false)
+// No PAIR secret appears here: PAIR_API_URL and PAIR_SERVICE_TOKEN reach the plugin through the environment only.
+{
+  gateway: {
+    mode: "local",
+    bind: "loopback",
+    port: __GATEWAY_PORT__,
+    auth: { mode: "token", token: "__GATEWAY_TOKEN__" },
+  },
+  plugins: {
+    // Local inference providers disabled (deny wins).
+    deny: ["ollama", "lmstudio", "vllm", "sglang", "llama-cpp"],
+    load: { paths: ["__PLUGIN_DIR__"] },
+    entries: {
+      "pair-spike": {
+        enabled: true,
+        hooks: { allowConversationAccess: __CONV_ACCESS__ },
+        config: {
+          usageLogPath: "__SPIKE_DIR__/out/usage.jsonl",
+          hookLogPath: "__SPIKE_DIR__/out/hooks.jsonl",
+          overrideProvider: "mock",
+          overrideModel: "mock-routed",
+          taskKind: "default",
+          priceVersion: "mock-2026-10-03",
+          inputPricePerMtokMicros: 200000,
+          outputPricePerMtokMicros: 600000,
+        },
+      },
+    },
+  },
+  models: {
+    mode: "merge",
+    providers: {
+      mock: {
+        baseUrl: "http://127.0.0.1:__MOCK_PORT__/v1",
+        apiKey: "mock-key-not-a-secret",
+        api: "openai-completions",
+        models: [
+          { id: "mock-small", name: "Mock Small", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 2048 },
+          { id: "mock-routed", name: "Mock Routed", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 2048 },
+        ],
+      },
+    },
+  },
+  agents: {
+    defaults: {
+      model: { primary: "mock/mock-small" },
+      workspace: "__SPIKE_DIR__/workspace",
+    },
+  },
+}

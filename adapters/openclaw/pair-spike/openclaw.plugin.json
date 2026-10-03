@@ -1,7 +1,7 @@
 {
   "id": "pair-spike",
   "name": "PAIR Spike",
-  "description": "Task 1 spike: tool gate, model override, usage capture",
+  "description": "PAIR adapter: policy-gated tools, budget-gated model calls, reconciled usage",
   "activation": { "onStartup": true },
   "configSchema": {
     "type": "object",
@@ -11,8 +11,21 @@
       "hookLogPath": { "type": "string" },
       "overrideProvider": { "type": "string" },
       "overrideModel": { "type": "string" },
+      "taskKind": { "type": "string", "enum": ["default", "research", "coding"] },
+      "priceVersion": { "type": "string" },
+      "inputPricePerMtokMicros": { "type": "integer", "minimum": 1 },
+      "outputPricePerMtokMicros": { "type": "integer", "minimum": 1 },
       "injectPolicyError": { "type": "boolean" }
     },
-    "required": ["usageLogPath", "hookLogPath", "overrideProvider", "overrideModel"]
+    "required": [
+      "usageLogPath",
+      "hookLogPath",
+      "overrideProvider",
+      "overrideModel",
+      "taskKind",
+      "priceVersion",
+      "inputPricePerMtokMicros",
+      "outputPricePerMtokMicros"
+    ]
   }
 }

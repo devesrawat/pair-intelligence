@@ -1,0 +1,74 @@
+# TEST registry for the wired OpenClaw harness (adapters/openclaw/spike/wired.sh). NOT config/models.yaml.
+#
+# Why the endpoint is not loopback: pair-api's provider guard (crates/models/src/provider/guard.rs)
+# rejects http and loopback endpoints at config load, by design (PAIR is cloud-only), and offers no
+# bypass from configuration. On the adapter path pair-api never dials a model: only OpenClaw calls
+# the loopback mock model server. So these entries carry a public-looking https endpoint that is
+# never contacted; their job is to give the budget service a verified price version to reserve
+# against. Ids are marked verified (the default) because they are mock ids, not vendor ids.
+models:
+  - id: mock-small
+    provider: anthropic
+    endpoint: https://mock-provider.example.com
+    modalities: [text]
+    context_tokens: 32000
+    max_output_tokens: 2048
+    tools: true
+    structured_output: false
+    price: { version: "mock-2026-10-03", input_per_mtok_micros: 200000, output_per_mtok_micros: 600000 }
+    data_policy: mock_no_retention
+    allowed_data_classes: [public, personal]
+    health: healthy
+  - id: mock-routed
+    provider: anthropic
+    endpoint: https://mock-provider.example.com
+    modalities: [text]
+    context_tokens: 32000
+    max_output_tokens: 2048
+    tools: true
+    structured_output: false
+    price: { version: "mock-2026-10-03", input_per_mtok_micros: 200000, output_per_mtok_micros: 600000 }
+    data_policy: mock_no_retention
+    allowed_data_classes: [public, personal]
+    health: healthy
+  - id: mock-deep
+    provider: anthropic
+    endpoint: https://mock-provider.example.com
+    modalities: [text]
+    context_tokens: 32000
+    max_output_tokens: 2048
+    tools: true
+    structured_output: false
+    price: { version: "mock-2026-10-03", input_per_mtok_micros: 200000, output_per_mtok_micros: 600000 }
+    data_policy: mock_no_retention
+    allowed_data_classes: [public, personal]
+    health: healthy
+
+routing:
+  classifier:
+    mode: disabled
+    endpoint: https://api.typesafe.ai/v1/systemone
+    model: jev-1.13.0
+    deadline_ms: 1000
+    input_price_micros_per_mtok: 42000
+    price_version: jev-2026-10-02
+    questions_path: wired/jev-questions.json
+    allowed_data_classes: [public, personal]
+    active_categories: []
+  max_model_attempts: 3
+  task_cap_micros: 100000
+  max_output_tokens: 2048
+  tier_order: [routine, strong, deep]
+  tier_by_difficulty: {routine: routine, substantial: strong, deep: deep}
+  baseline:
+    default_tier: strong
+    by_intent: {coding: strong, research: strong, planning: strong, memory_recall: routine, transformation: routine, mixed: strong, uncertain: strong}
+  thresholds:
+    - {model_version: jev-1.13.0, question_version: "2026-10-03.1", intent: 0.90, difficulty: 0.90}
+  data_class_providers:
+    public: [anthropic]
+    personal: [anthropic]
+  candidates:
+    - {id: mock-small, provider: anthropic, tier: routine, capabilities: [text, tools], context_tokens: 32000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}
+    - {id: mock-routed, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 32000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}
+    - {id: mock-deep, provider: anthropic, tier: deep, capabilities: [text, tools], context_tokens: 32000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}

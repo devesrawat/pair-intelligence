@@ -1,6 +1,7 @@
 //! Audit trail for the execution gate (spec sections 2 and 12: every tool execution, approval
 //! and routing decision is traceable). The gate writes one row per `execute` call through an
 //! [`ExecutionRecorder`]. Rows never carry raw arguments, only their sha256.
+use crate::egress::parse_destination;
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{ApprovalId, TaskId, ToolExecutionId, TraceId};
@@ -36,6 +37,9 @@ pub enum ExecOutcome {
     Error,
     Denied,
     ApprovalRequired,
+    /// `POST /v1/policy/authorize` allowed the request. Nothing was executed by PAIR: the caller
+    /// runs the tool itself, so this is a decision record, not an execution result.
+    Authorized,
 }
 
 impl ExecOutcome {
@@ -46,6 +50,7 @@ impl ExecOutcome {
             Self::Error => "error",
             Self::Denied => "denied",
             Self::ApprovalRequired => "approval_required",
+            Self::Authorized => "authorized",
         }
     }
 
@@ -72,6 +77,26 @@ pub struct ExecutionRecord {
     pub error_code: Option<String>,
     /// Set by recorders that track completion (the in-memory one); not an input.
     pub finished: bool,
+}
+
+/// Stored in place of a destination that cannot be parsed (it may hold anything, even a secret).
+pub const UNPARSEABLE_DESTINATION: &str = "[unparseable]";
+
+/// Reduces a destination to `scheme://host[:port][/path]`: userinfo, query and fragment are
+/// dropped because they can carry credentials (`https://x:TOKEN@host`, `?access_token=`). A
+/// destination that does not parse is replaced by [`UNPARSEABLE_DESTINATION`]. Idempotent.
+pub fn sanitize_destination(raw: &str) -> String {
+    let Ok(dest) = parse_destination(raw) else {
+        return UNPARSEABLE_DESTINATION.to_owned();
+    };
+    let rest = raw.split_once("://").map_or(raw, |(_, rest)| rest);
+    let without_tail = rest.split(['?', '#']).next().unwrap_or_default();
+    let path = without_tail
+        .find('/')
+        .map_or("", |start| &without_tail[start..]);
+    let scheme = dest.scheme.map(|s| format!("{s}://")).unwrap_or_default();
+    let port = dest.port.map(|p| format!(":{p}")).unwrap_or_default();
+    format!("{scheme}{}{port}{path}", dest.host)
 }
 
 /// sha256 (hex) of the canonical JSON array of arguments.
@@ -105,7 +130,7 @@ impl ExecutionRecord {
             tool: req.tool.clone(),
             executable: req.executable.clone(),
             args_hash: args_hash(&req.args)?,
-            destination: req.destination.clone(),
+            destination: req.destination.as_deref().map(sanitize_destination),
             data_class: req.data_class,
             policy_version: policy_version.to_owned(),
             decision,
@@ -125,8 +150,10 @@ impl ExecutionRecord {
 }
 
 /// Sink for gate audit rows. `record` inserts a row (terminal for refusals, `Started` for an
-/// execution about to run); `finish` closes a `Started` row. The gate refuses to run a tool if
-/// `record` fails, so a tool never runs without an audit row.
+/// execution about to run); `finish` closes a `Started` row; `link_approval` attaches the consumed
+/// approval to a `Started` row (the row is written BEFORE the approval is consumed, so a recorder
+/// outage can never burn a single-use approval). The gate refuses to run a tool if `record`
+/// fails, so a tool never runs without an audit row.
 #[async_trait]
 pub trait ExecutionRecorder: Send + Sync {
     async fn record(&self, row: &ExecutionRecord) -> Result<()>;
@@ -136,9 +163,10 @@ pub trait ExecutionRecorder: Send + Sync {
         outcome: ExecOutcome,
         error_code: Option<&str>,
     ) -> Result<()>;
+    async fn link_approval(&self, id: ToolExecutionId, approval: ApprovalId) -> Result<()>;
 }
 
-/// Records nothing. The default for a gate built without `with_recorder`.
+/// Records nothing. Only for gates that are deliberately unaudited (`Gate::unaudited_for_tests`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopRecorder;
 
@@ -148,6 +176,9 @@ impl ExecutionRecorder for NoopRecorder {
         Ok(())
     }
     async fn finish(&self, _: ToolExecutionId, _: ExecOutcome, _: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+    async fn link_approval(&self, _: ToolExecutionId, _: ApprovalId) -> Result<()> {
         Ok(())
     }
 }
@@ -213,6 +244,17 @@ impl ExecutionRecorder for MemoryRecorder {
         row.outcome = outcome;
         row.error_code = error_code.map(str::to_owned);
         row.finished = true;
+        Ok(())
+    }
+
+    async fn link_approval(&self, id: ToolExecutionId, approval: ApprovalId) -> Result<()> {
+        self.check_up()?;
+        let mut rows = self.lock()?;
+        let row = rows
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| PairError::new(ErrorCode::NotFound, format!("execution {id}")))?;
+        row.approval = Some(approval);
         Ok(())
     }
 }

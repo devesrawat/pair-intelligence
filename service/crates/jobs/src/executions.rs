@@ -2,9 +2,11 @@
 use crate::error::db_err;
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
-use pair_core::ids::ToolExecutionId;
+use pair_core::ids::{ApprovalId, ToolExecutionId};
 use pair_core::types::DataClass;
-use pair_policy::recorder::{ExecOutcome, ExecutionRecord, ExecutionRecorder};
+use pair_policy::recorder::{
+    sanitize_destination, ExecOutcome, ExecutionRecord, ExecutionRecorder,
+};
 use sqlx::PgPool;
 
 /// Writes one `tool_executions` row per gate call. Cheap to clone.
@@ -44,7 +46,8 @@ impl ExecutionRecorder for PgExecutionRecorder {
         .bind(&row.tool)
         .bind(&row.executable)
         .bind(&row.args_hash)
-        .bind(&row.destination)
+        // Defense in depth: `ExecutionRecord::new` already reduces it, a hand-built row might not.
+        .bind(row.destination.as_deref().map(sanitize_destination))
         .bind(data_class_str(row.data_class))
         .bind(&row.policy_version)
         .bind(row.decision.as_str())
@@ -76,6 +79,25 @@ impl ExecutionRecorder for PgExecutionRecorder {
         .bind(id.0)
         .bind(outcome.as_str())
         .bind(error_code)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?
+        .rows_affected();
+        if n == 0 {
+            return Err(PairError::new(
+                ErrorCode::NotFound,
+                format!("no started execution {id}"),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn link_approval(&self, id: ToolExecutionId, approval: ApprovalId) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE tool_executions SET approval_id = $2 WHERE id = $1 AND outcome = 'started'",
+        )
+        .bind(id.0)
+        .bind(approval.0)
         .execute(&self.pool)
         .await
         .map_err(db_err)?

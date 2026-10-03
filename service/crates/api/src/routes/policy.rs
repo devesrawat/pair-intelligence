@@ -1,7 +1,9 @@
 //! `POST /v1/policy/authorize` and `POST /v1/approvals`.
 //!
 //! `authorize` only decides: it never executes anything and never consumes an approval (that
-//! happens inside `Gate::execute`, at the execution boundary). Approvals can only be created with
+//! happens inside `Gate::execute`, at the execution boundary). Every decision is written to
+//! `tool_executions` BEFORE it is returned; if that write fails the call fails (no verdict is
+//! handed out that the audit trail does not know about). Approvals can only be created with
 //! a second credential, so the party being policed cannot mint its own approvals.
 
 use axum::extract::{Extension, State};
@@ -11,7 +13,8 @@ use chrono::Utc;
 use pair_core::error::{ErrorCode, PairError};
 use pair_core::ids::{ApprovalId, TaskId};
 use pair_core::traits::{Approvals, Policy};
-use pair_core::types::{ActionRequest, DataClass, PolicyContext};
+use pair_core::types::{ActionRequest, DataClass, Decision, PolicyContext, PolicyOutcome};
+use pair_policy::recorder::{ExecDecision, ExecOutcome, ExecutionRecord, ExecutionRecorder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -77,7 +80,41 @@ pub async fn authorize(
             .policy_version
             .unwrap_or_else(|| services.policy.version().to_owned()),
     };
-    ok(services.policy.authorize(&request, &context))
+    let verdict = services.policy.authorize(&request, &context);
+    record_decision(services.recorder.as_ref(), &request, &verdict).await?;
+    ok(verdict)
+}
+
+/// One terminal audit row per decision. Fails closed: the caller gets an error, not the verdict.
+async fn record_decision(
+    recorder: &dyn ExecutionRecorder,
+    request: &ActionRequest,
+    verdict: &PolicyOutcome,
+) -> Result<(), ApiError> {
+    let (decision, outcome, error) = match &verdict.decision {
+        Decision::Allow => (ExecDecision::Allow, ExecOutcome::Authorized, None),
+        Decision::Deny { .. } => (
+            ExecDecision::Deny,
+            ExecOutcome::Denied,
+            Some(ErrorCode::PolicyDenied),
+        ),
+        Decision::NeedsApproval { .. } => (
+            ExecDecision::NeedsApproval,
+            ExecOutcome::ApprovalRequired,
+            Some(ErrorCode::ApprovalRequired),
+        ),
+    };
+    let mut row = ExecutionRecord::new(request, &verdict.policy_version, decision, None, outcome)?;
+    if let Some(code) = error {
+        row = row.with_error(code);
+    }
+    recorder.record(&row).await.map_err(|e| {
+        tracing::error!(tool = %request.tool, trace = %request.trace, error = %e, "audit record failed; authorize withheld");
+        ApiError(PairError::new(
+            ErrorCode::Internal,
+            "audit record could not be written; authorization withheld",
+        ))
+    })
 }
 
 #[derive(Debug, Deserialize)]

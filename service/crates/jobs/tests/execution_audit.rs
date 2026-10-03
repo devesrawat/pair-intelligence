@@ -74,8 +74,11 @@ fn ctx(approvals: Vec<pair_core::ids::ApprovalId>) -> PolicyContext {
 
 fn gate(db: &TestDb, hash: &str) -> Gate {
     let approvals: Arc<dyn Approvals> = Arc::new(PgApprovals::new(db.pool.clone()));
-    Gate::new(Arc::new(ByName { hash: hash.into() }), Some(approvals))
-        .with_recorder(Arc::new(PgExecutionRecorder::new(db.pool.clone())))
+    Gate::new(
+        Arc::new(ByName { hash: hash.into() }),
+        Some(approvals),
+        Arc::new(PgExecutionRecorder::new(db.pool.clone())),
+    )
 }
 
 #[tokio::test]
@@ -187,8 +190,8 @@ async fn recorder_failure_blocks_execution() {
             hash: String::new(),
         }),
         None,
-    )
-    .with_recorder(Arc::new(PgExecutionRecorder::new(broken)));
+        Arc::new(PgExecutionRecorder::new(broken)),
+    );
     let ran = Arc::new(AtomicU32::new(0));
     let r = ran.clone();
     let err = g
@@ -226,6 +229,10 @@ async fn execution_row_check_constraints_reject_bad_values() {
     let good = "a".repeat(64);
     assert!(insert_row(&db.pool, "allow", "ok", &good).await);
     assert!(
+        insert_row(&db.pool, "allow", "authorized", &good).await,
+        "authorize decisions are recorded with the 'authorized' outcome"
+    );
+    assert!(
         !insert_row(&db.pool, "maybe", "ok", &good).await,
         "decision"
     );
@@ -241,6 +248,50 @@ async fn execution_row_check_constraints_reject_bad_values() {
         !insert_row(&db.pool, "allow", "denied", &good).await,
         "denied needs deny"
     );
+}
+
+#[tokio::test]
+async fn destination_userinfo_and_query_never_stored() {
+    let db = TestDb::new().await;
+    let g = gate(&db, "");
+    let mut r = req("ok.x", &[]);
+    r.destination =
+        Some("https://x:ghp_TOKEN@api.github.com:8443/repos?access_token=SECRET#f".into());
+    g.execute(&r, &ctx(vec![]), || async { Ok(()) })
+        .await
+        .unwrap();
+
+    let stored: Option<String> = sqlx::query_scalar("SELECT destination FROM tool_executions")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    // host, port and path stay (egress audit evidence); credentials never reach the table
+    assert_eq!(stored.as_deref(), Some("https://api.github.com:8443/repos"));
+}
+
+#[tokio::test]
+async fn pg_recorder_sanitizes_destination_even_for_a_hand_built_row() {
+    let db = TestDb::new().await;
+    let mut r = req("ok.x", &[]);
+    r.destination = Some("fine.example".into());
+    let mut row = pair_policy::recorder::ExecutionRecord::new(
+        &r,
+        POLICY_VERSION,
+        pair_policy::recorder::ExecDecision::Allow,
+        None,
+        pair_policy::recorder::ExecOutcome::Authorized,
+    )
+    .unwrap();
+    row.destination = Some("https://u:SECRET@h.example/p?k=SECRET".into());
+    let rec = PgExecutionRecorder::new(db.pool.clone());
+    pair_policy::recorder::ExecutionRecorder::record(&rec, &row)
+        .await
+        .unwrap();
+    let stored: Option<String> = sqlx::query_scalar("SELECT destination FROM tool_executions")
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_deref(), Some("https://h.example/p"));
 }
 
 // ---------- trace ids on approvals and effect intents ----------

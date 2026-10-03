@@ -122,7 +122,7 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         fetched: Mutex::new(Vec::new()),
     };
     let policy = Arc::new(FakePolicy::default());
-    let gate = Gate::new(policy.clone(), None);
+    let gate = Gate::unaudited_for_tests(policy.clone(), None);
     let budget = FakeBudget::default();
     let store = EvidenceStore::new(db.pool.clone());
     let deps = ResearchDeps {
@@ -200,7 +200,7 @@ async fn research_network_access_only_happens_after_gate_allow() {
     let scope = gated_scope();
     // search denied: error, and the search service is never called
     let fetcher = CountingFetcher::default();
-    let deny_all = Gate::new(
+    let deny_all = Gate::unaudited_for_tests(
         Arc::new(FixedPolicy(Decision::Deny {
             reason: "no".into(),
         })),
@@ -221,7 +221,7 @@ async fn research_network_access_only_happens_after_gate_allow() {
     assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
 
     // search needs approval (none supplied): same
-    let needs = Gate::new(
+    let needs = Gate::unaudited_for_tests(
         Arc::new(FixedPolicy(Decision::NeedsApproval {
             payload_hash: "h".into(),
         })),
@@ -239,7 +239,7 @@ async fn research_network_access_only_happens_after_gate_allow() {
         denied_destinations: vec![GATED_URL.into()],
         ..FakePolicy::default()
     };
-    let gate = Gate::new(Arc::new(policy), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(policy), None);
     let net = Network { gate: &gate, ..net };
     let sources = capture_sources(&net, &scope).await.unwrap();
     assert_eq!(fetcher.searches.load(Ordering::SeqCst), 1);
@@ -393,7 +393,7 @@ async fn research_scope_without_usable_data_class_refused() {
     let db = TestDb::create().await;
     let fetcher = CountingFetcher::default();
     let provider = FnProvider::scripted(vec![]);
-    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(FakePolicy::default()), None);
     let budget = FakeBudget::default();
     let store = EvidenceStore::new(db.pool.clone());
     let deps = ResearchDeps {
@@ -433,7 +433,7 @@ async fn research_scope_without_usable_data_class_refused() {
 async fn research_scope_max_sources_is_capped_and_tool_calls_limited() {
     use crate::limits::{RunLimits, MAX_RESEARCH_SOURCES};
     let fetcher = CountingFetcher::default();
-    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(FakePolicy::default()), None);
     let net = |limits: RunLimits| Network {
         gate: &gate,
         fetcher: &fetcher,

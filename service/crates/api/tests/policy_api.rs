@@ -179,3 +179,75 @@ async fn approvals_need_the_separate_approver_credential() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     stack.finish().await;
 }
+
+/// (tool, decision, outcome, approval linked, finished) of every audit row, oldest first.
+async fn audit_rows(stack: &Stack) -> Vec<(String, String, String, bool, bool)> {
+    sqlx::query_as(
+        "SELECT tool, decision, outcome, approval_id IS NOT NULL, finished_at IS NOT NULL \
+         FROM tool_executions ORDER BY started_at, id",
+    )
+    .fetch_all(&stack.db.pool)
+    .await
+    .expect("audit rows")
+}
+
+#[tokio::test]
+async fn authorize_writes_a_tool_execution_row_for_every_decision() {
+    let stack = Stack::start(StackOpts::default()).await;
+    let mut deny = action("shell.exec");
+    deny["executable"] = json!("rm");
+    let allow = action("fs.read");
+    let needs = action("message.send");
+    for req in [&deny, &needs, &allow] {
+        let (resp, body) = send(&stack.app, post_json("/v1/policy/authorize", req)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{body}");
+    }
+
+    let s = |v: &str| v.to_owned();
+    assert_eq!(
+        audit_rows(&stack).await,
+        vec![
+            (s("shell.exec"), s("deny"), s("denied"), false, true),
+            (
+                s("message.send"),
+                s("needs_approval"),
+                s("approval_required"),
+                false,
+                true
+            ),
+            (s("fs.read"), s("allow"), s("authorized"), false, true),
+        ],
+        "authorize executes nothing, so an Allow is the terminal outcome 'authorized'"
+    );
+    let versions: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT policy_version FROM tool_executions")
+            .fetch_all(&stack.db.pool)
+            .await
+            .expect("versions");
+    assert_eq!(versions, vec![stack.services.policy.version().to_owned()]);
+    stack.finish().await;
+}
+
+#[tokio::test]
+async fn authorize_fails_closed_when_recorder_down() {
+    let stack = Stack::start(StackOpts::default()).await;
+    sqlx::query("ALTER TABLE tool_executions RENAME TO tool_executions_offline")
+        .execute(&stack.db.pool)
+        .await
+        .expect("take the audit table away");
+
+    for tool in ["fs.read", "message.send", "unregistered.tool"] {
+        let (resp, body) = send(&stack.app, post_json("/v1/policy/authorize", &action(tool))).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{tool}: {body}"
+        );
+        assert_eq!(body["success"], false, "{tool}: {body}");
+        assert!(
+            body["data"].is_null() && !body.to_string().contains("\"allow\""),
+            "{tool}: no verdict may leak when the decision could not be recorded: {body}"
+        );
+    }
+    stack.finish().await;
+}

@@ -181,7 +181,7 @@ fn push_refspec_pins_the_exact_commit_and_rejects_odd_refs() {
 #[tokio::test]
 async fn approval_request_equals_the_request_the_runner_presents() {
     let policy = Arc::new(FakePolicy::default());
-    let gate = Gate::new(policy.clone(), None);
+    let gate = Gate::unaudited_for_tests(policy.clone(), None);
     let (task, trace) = (TaskId::new(), TraceId::new());
     let cwd = std::env::temp_dir();
     let a = action("git@github.com:acme/repo.git");

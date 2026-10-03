@@ -9,7 +9,7 @@ use pair_budget::{BudgetConfig, PgBudget, PriceBook};
 use pair_context::{ContextBudgets, PairContextCompiler};
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::traits::{Classifier, Provider};
-use pair_jobs::PgApprovals;
+use pair_jobs::{PgApprovals, PgExecutionRecorder};
 use pair_models::classification::config::RoutingConfig;
 use pair_models::classification::pipeline::RoutingPipeline;
 use pair_models::classification::questions::QuestionSet;
@@ -82,6 +82,7 @@ pub fn build_services(i: ServiceInputs) -> Result<Services> {
         store: ConversationStore::new(i.pool.clone()),
         attempts: AttemptStore::new(i.pool.clone(), max_attempts),
         policy: Arc::new(i.policy),
+        recorder: Arc::new(PgExecutionRecorder::new(i.pool.clone())),
         approvals: PgApprovals::new(i.pool),
         workspace_root: i.workspace_root,
         approver_token: i.approver_token.map(Arc::from),

@@ -12,7 +12,7 @@ use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::{ApprovalId, TaskId, TraceId};
 use pair_core::traits::{Approvals, Policy};
 use pair_core::types::{ActionRequest, DataClass, Decision};
-use pair_policy::recorder::MemoryRecorder;
+use pair_policy::recorder::{ExecDecision, ExecOutcome, ExecutionRecord, MemoryRecorder};
 use pair_policy::Gate;
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
@@ -257,7 +257,7 @@ async fn observe(case: &Case) -> (Expected, bool) {
         attach_approval(&f, &store, &mut ctx, &req, spec).await;
     }
     let recorder = Arc::new(MemoryRecorder::default());
-    let gate = Gate::new(Arc::new(f.engine.clone()), Some(store)).with_recorder(recorder.clone());
+    let gate = Gate::new(Arc::new(f.engine.clone()), Some(store), recorder.clone());
     let ran = Arc::new(AtomicUsize::new(0));
     let r = ran.clone();
     let result = gate
@@ -272,31 +272,77 @@ async fn observe(case: &Case) -> (Expected, bool) {
         Err(e) if e.code == ErrorCode::ApprovalRequired => Expected::NeedsApproval,
         Err(e) => panic!("{}: unexpected gate error {e}", case.id),
     };
-    assert_eq!(
-        recorder.rows().len(),
-        1,
-        "{}: the gate must audit every call",
-        case.id
-    );
+    let rows = recorder.rows();
+    assert_eq!(rows.len(), 1, "{}: the gate must audit every call", case.id);
+    assert_audit_row(case, observed, &rows[0]);
     if case.approval.is_none() {
         let direct = f.engine.authorize(&req, &ctx).decision;
         assert_eq!(kind(&direct), observed, "{}: authorize vs gate", case.id);
     }
     if let Some(text) = &case.tool_output {
-        // The injected text has no channel into authorize except as data in the request; carrying
-        // it as an extra argument must not move the verdict.
-        let mut carried = req.clone();
-        carried.args.push(text.clone());
-        let with_text = f.engine.authorize(&carried, &ctx).decision;
-        let without = f.engine.authorize(&req, &ctx).decision;
-        assert_eq!(
-            kind(&with_text),
-            kind(&without),
-            "{}: injected tool output changed the verdict",
+        assert_injected_output_is_inert(case, &f, &req, &ctx, text);
+    }
+    (observed, ran.load(Ordering::SeqCst) > 0)
+}
+
+/// 0 = Allow, 1 = NeedsApproval, 2 = Deny. A higher number is a stricter verdict.
+fn strictness(e: Expected) -> u8 {
+    match e {
+        Expected::Allow => 0,
+        Expected::NeedsApproval => 1,
+        Expected::Deny => 2,
+    }
+}
+
+/// The audit row must say what happened: decision, terminal outcome and (only for an approved
+/// run) the consumed approval id.
+fn assert_audit_row(case: &Case, observed: Expected, row: &ExecutionRecord) {
+    let approved_run = observed == Expected::Allow && case.approval.is_some();
+    let (decision, outcome) = match observed {
+        Expected::Deny => (ExecDecision::Deny, ExecOutcome::Denied),
+        Expected::NeedsApproval => (ExecDecision::NeedsApproval, ExecOutcome::ApprovalRequired),
+        Expected::Allow if approved_run => (ExecDecision::NeedsApproval, ExecOutcome::Ok),
+        Expected::Allow => (ExecDecision::Allow, ExecOutcome::Ok),
+    };
+    assert_eq!(row.decision, decision, "{}: audit decision", case.id);
+    assert_eq!(row.outcome, outcome, "{}: audit outcome", case.id);
+    assert_eq!(
+        row.approval.is_some(),
+        approved_run,
+        "{}: approval_id is recorded exactly when an approval was consumed",
+        case.id
+    );
+    assert!(row.finished, "{}: row must be terminal", case.id);
+}
+
+/// Text a tool returned can only reach the policy as data inside a request. Whichever field it
+/// lands in, the verdict may get stricter but must never move TOWARD Allow.
+fn assert_injected_output_is_inert(
+    case: &Case,
+    f: &Fixture,
+    req: &ActionRequest,
+    ctx: &pair_core::types::PolicyContext,
+    text: &str,
+) {
+    let baseline = strictness(kind(&f.engine.authorize(req, ctx).decision));
+    let mut as_arg = req.clone();
+    as_arg.args.push(text.to_owned());
+    let mut as_path = req.clone();
+    as_path.paths.push(text.to_owned());
+    let mut as_destination = req.clone();
+    as_destination.destination = Some(text.to_owned());
+    for (field, carried) in [
+        ("args", as_arg),
+        ("paths", as_path),
+        ("destination", as_destination),
+    ] {
+        let verdict = strictness(kind(&f.engine.authorize(&carried, ctx).decision));
+        assert!(
+            verdict >= baseline,
+            "{}: injected tool output in {field} moved the verdict toward Allow",
             case.id
         );
     }
-    (observed, ran.load(Ordering::SeqCst) > 0)
 }
 
 async fn attach_approval(

@@ -36,7 +36,7 @@ impl Approvals for FakeApprovals {
 async fn gate_does_not_call_closure_on_deny_or_needs_approval() {
     let f = fixture();
     let calls = Arc::new(AtomicUsize::new(0));
-    let gate = Gate::new(Arc::new(f.engine.clone()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(f.engine.clone()), None);
 
     for tool in ["unknown.tool", "message.send"] {
         let c = Arc::clone(&calls);
@@ -54,7 +54,7 @@ async fn gate_does_not_call_closure_on_deny_or_needs_approval() {
 #[tokio::test]
 async fn gate_error_codes_distinguish_deny_from_approval() {
     let f = fixture();
-    let gate = Gate::new(Arc::new(f.engine.clone()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(f.engine.clone()), None);
     let denied = gate
         .execute(&request("unknown.tool"), &f.ctx, || async { Ok(()) })
         .await;
@@ -71,7 +71,7 @@ async fn gate_error_codes_distinguish_deny_from_approval() {
 #[tokio::test]
 async fn gate_runs_closure_on_allow_and_returns_value() {
     let f = fixture();
-    let gate = Gate::new(Arc::new(f.engine.clone()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(f.engine.clone()), None);
     let out = gate
         .execute(&request("git.commit"), &f.ctx, || async { Ok(42_u32) })
         .await;
@@ -90,7 +90,7 @@ async fn gate_runs_closure_only_with_matching_approval() {
     let mut ctx = f.ctx.clone();
     ctx.approvals = vec![ApprovalId::new()];
 
-    let wrong = Gate::new(
+    let wrong = Gate::unaudited_for_tests(
         Arc::new(f.engine.clone()),
         Some(Arc::new(FakeApprovals {
             expected_hash: "other".into(),
@@ -106,7 +106,7 @@ async fn gate_runs_closure_only_with_matching_approval() {
     assert!(res.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
-    let right = Gate::new(
+    let right = Gate::unaudited_for_tests(
         Arc::new(f.engine.clone()),
         Some(Arc::new(FakeApprovals {
             expected_hash: hash,

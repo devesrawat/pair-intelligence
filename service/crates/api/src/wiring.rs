@@ -90,6 +90,7 @@ pub fn build_services(i: ServiceInputs) -> Result<Services> {
         allow_unverified_ids: i.allow_unverified_ids,
         turn_budget: DEFAULT_TURN_BUDGET,
         adapter_budget: AdapterBudget::default(),
+        allow_turn_kind_override: false,
         turns: TaskTracker::new(),
     })
 }

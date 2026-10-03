@@ -47,6 +47,8 @@ pub struct StackOpts {
     /// Registry models that may see public data only (a personal turn is then `provider_disallowed`).
     pub public_only_models: bool,
     pub limits: Option<Limits>,
+    /// `PAIR_TURN_ALLOW_KIND_OVERRIDE`: `/v1/turn` may carry `kind: research|coding`.
+    pub allow_turn_kind_override: bool,
 }
 
 impl Default for StackOpts {
@@ -60,6 +62,7 @@ impl Default for StackOpts {
             max_attempts: 3,
             public_only_models: false,
             limits: None,
+            allow_turn_kind_override: false,
         }
     }
 }
@@ -238,6 +241,7 @@ impl Stack {
         })
         .expect("services");
         services.turn_budget = TURN_BUDGET;
+        services.allow_turn_kind_override = opts.allow_turn_kind_override;
         let state = AppState::new(db.pool.clone(), super::TOKEN)
             .with_limits(opts.limits.unwrap_or_default())
             .with_services(services.clone())

@@ -42,6 +42,9 @@ pub struct Services {
     pub turn_budget: Duration,
     /// Server-side cost rules for the adapter routes `/v1/budget/*`.
     pub adapter_budget: AdapterBudget,
+    /// `PAIR_TURN_ALLOW_KIND_OVERRIDE`: when false, `/v1/turn` only runs `default` tasks (research
+    /// and coding caps are for server-side workflows, not for a caller to pick).
+    pub allow_turn_kind_override: bool,
     /// Every spawned turn. A turn outlives its HTTP request, so shutdown waits on this tracker.
     pub turns: TaskTracker,
 }

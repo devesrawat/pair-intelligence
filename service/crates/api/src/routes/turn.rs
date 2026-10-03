@@ -3,6 +3,7 @@
 use axum::extract::{Extension, State};
 use axum::Json;
 use pair_core::error::{ErrorCode, PairError};
+use pair_core::types::TaskKind;
 use serde_json::Value;
 
 use super::{ok, trace_id};
@@ -24,6 +25,12 @@ pub async fn turn(
     // The data class is judged before anything else, including whether the service is configured.
     let turn = body.validate().map_err(BoundaryError::from_validation)?;
     let services = state.services()?;
+    if turn.kind != TaskKind::Default && !services.allow_turn_kind_override {
+        return Err(BoundaryError::from_validation(PairError::new(
+            ErrorCode::InvalidInput,
+            "kind must be default: research and coding tasks are server-side only",
+        )));
+    }
     let trace = trace_id(&trace);
     // Detached from the request: the HTTP timeout or a dropped connection must not cancel a turn
     // between reserve and reconcile (that would strand a held reservation and lose the audit row).

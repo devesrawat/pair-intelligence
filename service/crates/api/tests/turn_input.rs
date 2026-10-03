@@ -74,3 +74,47 @@ async fn internal_errors_do_not_leak_database_text() {
     assert!(resp.headers().contains_key("x-trace-id"));
     stack.finish().await;
 }
+
+#[tokio::test]
+async fn turn_kind_other_than_default_is_refused() {
+    let stack = Stack::start(StackOpts::default()).await;
+    for kind in ["coding", "research"] {
+        let mut body = turn("hello");
+        body["kind"] = json!(kind);
+        let (resp, out) = send(&stack.app, post_json("/v1/turn", &body)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{kind}: {out}"
+        );
+        assert_eq!(out["error"]["code"], "invalid_input");
+    }
+    // An explicit `default` and an omitted kind are both fine.
+    let mut body = turn("hello");
+    body["kind"] = json!("default");
+    let (resp, out) = send(&stack.app, post_json("/v1/turn", &body)).await;
+    assert_eq!(resp.status(), StatusCode::OK, "{out}");
+    assert_eq!(
+        stack.provider.hits(),
+        1,
+        "refused kinds never reached the provider"
+    );
+    assert_eq!(count(&stack, "budget_reservations").await, 1);
+    stack.finish().await;
+}
+
+#[tokio::test]
+async fn turn_kind_override_flag_allows_research_and_coding() {
+    let stack = Stack::start(StackOpts {
+        allow_turn_kind_override: true,
+        ..StackOpts::default()
+    })
+    .await;
+    for kind in ["research", "coding"] {
+        let mut body = turn("hello");
+        body["kind"] = json!(kind);
+        let (resp, out) = send(&stack.app, post_json("/v1/turn", &body)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{kind}: {out}");
+    }
+    stack.finish().await;
+}

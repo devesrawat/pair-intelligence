@@ -39,6 +39,7 @@ fn request(task: TaskId) -> ModelRequest {
 async fn attempt_cap_is_persisted_across_step_retries() {
     let stack = Stack::start(StackOpts {
         provider: ProviderMode::Fail(500),
+        allow_turn_kind_override: true,
         ..StackOpts::default()
     })
     .await;
@@ -92,6 +93,7 @@ async fn attempt_cap_is_persisted_across_step_retries() {
 async fn fourth_attempt_for_same_task_refused_even_after_restart() {
     let stack = Stack::start(StackOpts {
         provider: ProviderMode::Fail(500),
+        allow_turn_kind_override: true,
         ..StackOpts::default()
     })
     .await;

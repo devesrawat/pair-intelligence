@@ -144,5 +144,6 @@ pub fn load_services(
     })?;
     services.turn_budget = cfg.turn_budget;
     services.adapter_budget = cfg.adapter_budget;
+    services.allow_turn_kind_override = cfg.allow_turn_kind_override;
     Ok(Some(services))
 }

@@ -79,6 +79,13 @@ env:
       max_output_tokens output)). The adapter's max_cost_micros can raise the hold, never lower it.
       At least 1.
 
+  PAIR_TURN_ALLOW_KIND_OVERRIDE:
+    default: unset
+    doc: >
+      `1` lets POST /v1/turn carry kind research or coding (task caps $0.50 and $1.00, the latter
+      equal to the daily cap). Unset: only kind default is accepted (422 otherwise); research and
+      coding are for server-side workflows, which register their own tasks.
+
   # ---- provider credentials (new; each optional) ----
   ANTHROPIC_API_KEY:
     secret: true
@@ -113,7 +120,7 @@ env:
 
 endpoints:
   "POST /v1/turn":
-    body: "{conversation_id?, client_message_id?, message, data_class, kind: default|research|coding, project_type?}"
+    body: "{conversation_id?, client_message_id?, message, data_class, kind?: default (research|coding only with PAIR_TURN_ALLOW_KIND_OVERRIDE=1), project_type?}"
     notes: >
       data_class public|personal only (employer, sensitive and unknown are refused before any I/O).
       Pass conversation_id + client_message_id to make retries share one task id, one attempt

@@ -67,6 +67,8 @@ pub struct Config {
     pub turn_budget: Duration,
     /// Server-side cost rules for the adapter routes `/v1/budget/*`.
     pub adapter_budget: AdapterBudget,
+    /// `PAIR_TURN_ALLOW_KIND_OVERRIDE=1`: `/v1/turn` accepts `kind: research|coding`.
+    pub allow_turn_kind_override: bool,
 }
 
 /// Empty counts as unset, so compose can pass `${VAR:-}` through.
@@ -252,6 +254,8 @@ impl Config {
             shutdown_drain: timing.drain,
             turn_budget: timing.turn_budget,
             adapter_budget: adapter_budget(&get)?,
+            allow_turn_kind_override: get("PAIR_TURN_ALLOW_KIND_OVERRIDE")
+                .is_some_and(|v| v == ENABLED_FLAG),
         })
     }
 

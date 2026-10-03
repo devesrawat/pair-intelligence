@@ -154,6 +154,7 @@ async fn employer_data_refused_before_any_network_call() {
 async fn jev_failure_falls_back_to_baseline_and_still_answers() {
     let stack = Stack::start(StackOpts {
         jev: Some(JevMode::Fail(503)),
+        allow_turn_kind_override: true,
         ..StackOpts::default()
     })
     .await;
@@ -188,6 +189,7 @@ async fn jev_failure_falls_back_to_baseline_and_still_answers() {
 async fn jev_shadow_mode_records_the_recommendation_and_does_not_change_the_route() {
     let stack = Stack::start(StackOpts {
         jev: Some(JevMode::Ok),
+        allow_turn_kind_override: true,
         ..StackOpts::default()
     })
     .await;

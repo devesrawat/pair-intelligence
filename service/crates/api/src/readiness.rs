@@ -10,6 +10,7 @@ use serde::Serialize;
 use sqlx::migrate::Migrator;
 use sqlx::PgPool;
 
+use crate::background::TaskStatus;
 use crate::providers::ProviderStatus;
 use crate::state::AppState;
 
@@ -63,6 +64,17 @@ pub async fn build_report(state: &AppState) -> ReadyReport {
 
     let providers = state.providers.statuses().await;
     checks.push(provider_check(&providers));
+    if state.services_required && state.services.is_none() {
+        // Without the budget and policy services nothing enforces a cap or a gate: not ready.
+        checks.push(CheckResult::new(
+            "services",
+            HealthLevel::Critical,
+            "budget, policy and routing services are not configured",
+        ));
+    }
+    if let Some(liveness) = &state.liveness {
+        checks.push(background_check(&liveness.statuses()));
+    }
 
     let mut report = ReadyReport {
         status: "ready",
@@ -221,6 +233,30 @@ async fn check_disk(state: &AppState) -> CheckResult {
             tracing::warn!(error = %e, "readyz: disk probe task failed");
             CheckResult::new("disk", HealthLevel::Warn, "probe task failed")
         }
+    }
+}
+
+/// A stalled background task (lease sweeper, orphan reconciler, jobs worker) degrades readiness to
+/// a warning: requests are still served, but expired leases or orphaned effects are not being
+/// handled, which an operator must see.
+fn background_check(tasks: &[TaskStatus]) -> CheckResult {
+    let stalled: Vec<&str> = tasks
+        .iter()
+        .filter(|t| t.stalled)
+        .map(|t| t.name.as_str())
+        .collect();
+    if stalled.is_empty() {
+        CheckResult::new(
+            "background",
+            HealthLevel::Ok,
+            format!("{} tasks running", tasks.len()),
+        )
+    } else {
+        CheckResult::new(
+            "background",
+            HealthLevel::Warn,
+            format!("stalled: {stalled:?}"),
+        )
     }
 }
 

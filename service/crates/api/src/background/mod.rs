@@ -37,6 +37,16 @@ pub struct DrainReport {
 
 type Trigger = oneshot::Sender<()>;
 
+/// A cloneable handle that asks the tasks to stop (for the HTTP server's graceful-shutdown future).
+#[derive(Clone)]
+pub struct Stopper(watch::Sender<bool>);
+
+impl Stopper {
+    pub fn stop(&self) {
+        let _ = self.0.send(true);
+    }
+}
+
 pub struct Background {
     stop: watch::Sender<bool>,
     handles: Vec<(&'static str, JoinHandle<()>)>,
@@ -80,6 +90,10 @@ impl Background {
         ack_rx.await.map_err(|_| {
             PairError::new(ErrorCode::Conflict, format!("background task {name} stopped"))
         })
+    }
+
+    pub fn stopper(&self) -> Stopper {
+        Stopper(self.stop.clone())
     }
 
     /// Ask every task to stop after its current iteration. Does not wait.

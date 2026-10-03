@@ -2,7 +2,7 @@
 //! task cap, compile context, call the provider through the budget, persist with a cost state.
 
 mod persist;
-mod recording;
+pub mod recording;
 pub mod request;
 
 use std::time::Instant;

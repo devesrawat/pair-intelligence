@@ -4,6 +4,7 @@
 pub mod attempts;
 pub mod auth;
 pub mod background;
+pub mod bootstrap;
 pub mod config;
 pub mod error;
 pub mod healthcheck;

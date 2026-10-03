@@ -1,0 +1,118 @@
+# pair-api runtime configuration reference.
+#
+# pair-api is configured ONLY through environment variables. This file is documentation: it is not
+# parsed at runtime, but a unit test (`every_env_var_the_config_reads_is_documented_in_api_yaml`)
+# fails if the service reads a variable that is not listed here. Secrets are never logged and never
+# appear in `Debug` output.
+#
+# A path variable that is SET must point at an existing file or the service refuses to start. A
+# path left at its default that does not exist leaves the budget/policy/routing services
+# unconfigured: `/v1/*` answers 503 and `/readyz` reports `services` critical (not ready).
+
+env:
+  # ---- core (unchanged) ----
+  PAIR_SERVICE_TOKEN:
+    required: true
+    secret: true
+    doc: Bearer token for every endpoint except /healthz. At least 16 characters.
+  DATABASE_URL:
+    default: postgres://pair:pair@127.0.0.1:55432/pair   # dev-only credentials
+    secret: true
+  PAIR_BIND:
+    default: 127.0.0.1:8080
+  PAIR_MIGRATIONS_DIR:
+    default: migrations
+    doc: Applied at startup. Setting it explicitly makes a missing directory a startup error.
+  PAIR_DATA_DIR:
+    default: .
+    doc: Directory whose free disk space /readyz checks.
+  PAIR_MODELS_CONFIG:
+    default: config/models.yaml
+    doc: Provider registry and the `routing:` section (candidates, tiers, classifier mode).
+  RUST_LOG:
+    default: info
+    doc: tracing filter.
+
+  # ---- services hosted by /v1 (new) ----
+  PAIR_BUDGET_CONFIG:
+    default: config/budget.yaml
+    doc: >
+      Caps (task, day, month, classifier sub-cap). Validated strictly at startup, including cap
+      ordering. Kill switch levels 1-2: set every cap to 0.00 and restart; see runbooks/kill-switch.md.
+  PAIR_POLICY_CONFIG:
+    default: config/policy.yaml
+    doc: Tool policy for POST /v1/policy/authorize. A parse error means no engine, so no service.
+  PAIR_CONTEXT_CONFIG:
+    default: config/context.yaml
+    doc: Context-compiler section budgets (default profile is used for turns).
+  PAIR_WORKSPACE_ROOT:
+    default: unset
+    doc: >
+      Directory the policy engine resolves paths against. Server-side only: the request cannot
+      choose it. Unset means every /v1/policy/authorize call is denied (fail closed).
+  HOME:
+    default: from the process environment
+    doc: Home directory used to expand `~` in the policy's denied credential paths.
+  PAIR_APPROVER_TOKEN:
+    default: unset
+    secret: true
+    doc: >
+      Second credential (header X-Approver-Token) required by POST /v1/approvals, so the adapter
+      holding PAIR_SERVICE_TOKEN cannot mint its own approvals. At least 16 characters and different
+      from PAIR_SERVICE_TOKEN. Unset disables approval creation (every call is refused).
+  PAIR_TURN_BUDGET_SECS:
+    default: 25
+    doc: Wall-clock a turn may spend on provider attempts; at most 28 (the HTTP timeout is 30).
+
+  # ---- provider credentials (new; each optional) ----
+  ANTHROPIC_API_KEY:
+    secret: true
+    doc: Enables the Anthropic adapter. Without it every call to an Anthropic model fails closed.
+  OLLAMA_API_KEY:
+    secret: true
+    doc: Enables the Ollama Cloud adapter (models without a verified price are never routed).
+  TYPESAFE_API_KEY:
+    secret: true
+    doc: Enables the Jev classifier (only used when routing.classifier.mode is shadow or active).
+  PAIR_ALLOW_UNVERIFIED_MODEL_IDS:
+    default: unset
+    doc: >
+      `1` lets calls proceed for registry entries marked id_verified: false. Leave unset until the
+      ignored live model-id test has passed; the turn pipeline refuses unverified models up front.
+
+  # ---- background tasks (new) ----
+  PAIR_SWEEP_INTERVAL_SECS:
+    default: 15
+    doc: Lease sweeper period (marks expired leases interrupted and requeues them). Minimum 1.
+  PAIR_ORPHAN_INTERVAL_SECS:
+    default: 60
+    doc: >
+      Orphaned effect-intent reconciler period. No reconciler can decide an effect yet, so every
+      orphan stays unresolved and is logged each sweep.
+  PAIR_WORKER_INTERVAL_SECS:
+    default: 2
+    doc: Jobs worker poll period. The worker only runs when a step handler is registered (none yet).
+  PAIR_SHUTDOWN_DRAIN_SECS:
+    default: 20
+    doc: How long background tasks may finish their current iteration after SIGTERM/Ctrl-C.
+
+endpoints:
+  "POST /v1/turn":
+    body: "{conversation_id?, client_message_id?, message, data_class, kind: default|research|coding, project_type?}"
+    notes: >
+      data_class public|personal only (employer, sensitive and unknown are refused before any I/O).
+      Pass conversation_id + client_message_id to make retries share one task id, one attempt
+      counter and one task budget.
+  "POST /v1/budget/reserve":
+    body: "{task_id?, kind, category: metered|classifier, max_cost_micros, price_version}"
+  "POST /v1/budget/reconcile":
+    body: "{reservation_id, input_tokens, output_tokens, actual_cost_micros|null, price_version}"
+    notes: A null cost leaves the reservation unresolved and counted in full.
+  "POST /v1/policy/authorize":
+    body: "{tool, executable?, args, paths, destination?, data_class, task_id?, approvals?, policy_version?}"
+    notes: >
+      Decides only; never executes and never consumes an approval. The payload hash covers task_id,
+      so reuse one task_id across authorize and approval.
+  "POST /v1/approvals":
+    body: "{payload_hash, expires_in_secs?<=86400}"
+    notes: Requires X-Approver-Token in addition to the service token.

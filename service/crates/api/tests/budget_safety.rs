@@ -201,3 +201,16 @@ async fn reconcile_with_wrong_task_is_refused() {
     assert_eq!(resp.status(), StatusCode::OK, "{out}");
     stack.finish().await;
 }
+
+#[tokio::test]
+async fn reconcile_with_zero_reported_cost_is_counted_at_the_token_price() {
+    let stack = Stack::start(StackOpts::default()).await;
+    let id = reserved_id(&stack, &reserve_body(Some(MID), "coding", 1)).await;
+    // 100 in x $2/M + 20 out x $10/M = 400 micros: a reported 0 does not make the call free.
+    let body = settle(&id, TASK, (100, 20), json!(0));
+    let (resp, out) = send(&stack.app, post_json("/v1/budget/reconcile", &body)).await;
+    assert_eq!(resp.status(), StatusCode::OK, "{out}");
+    assert_eq!(out["data"]["amount_micros"], 400);
+    assert_eq!(row(&stack, &id).await, ("settled".to_owned(), 400));
+    stack.finish().await;
+}

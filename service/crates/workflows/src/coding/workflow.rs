@@ -2,26 +2,30 @@
 use super::{
     classify::{classify_failure, FailureClass},
     config::RepoConfig,
-    edits::{apply_edits, parse_edit_set},
-    llm::budgeted_generate,
-    runner::{CmdReport, Runner},
+    edits::{apply_edits, parse_edit_set, EditContext},
+    integrity,
+    runner::{CmdReport, Runner, RunnerSetup},
+    sandbox::Sandbox,
     scope::Scope,
     worktree,
+};
+use crate::{
+    calls::{data_message, ModelCaller, ModelPlanner, PriceSource},
+    limits::RunLimits,
 };
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    money::Micros,
-    traits::{Budget, ContextCompiler, Memory, Provider},
+    traits::{BudgetEx, ContextCompiler, Memory, Provider},
     types::{
         DataClass, ModelLimits, ModelMessage, ModelRequest, PolicyContext, RetrievalQuery,
-        TaskContext, TrustClass,
+        TaskContext, TaskKind, TrustClass,
     },
 };
 use pair_policy::Gate;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 const DISCARD_TIMEOUT_SECS: u64 = 60;
 const MEMORY_LIMIT: usize = 5;
@@ -56,13 +60,21 @@ pub enum CodingStatus {
 pub struct CodingDeps<'a> {
     pub provider: &'a dyn Provider,
     pub gate: &'a Gate,
-    pub budget: &'a dyn Budget,
+    pub budget: &'a dyn BudgetEx,
+    /// Registry prices: reservations are derived from these, never from a caller figure.
+    pub prices: &'a dyn PriceSource,
+    /// The router: which model(s) to call. Workflows never choose a model themselves.
+    pub planner: &'a dyn ModelPlanner,
     pub memory: &'a dyn Memory,
     pub compiler: &'a dyn ContextCompiler,
     /// Policy context for every command: active policy version (`PolicyEngine::version()`),
     /// the workspace root the policy confines paths to (must contain the repo and the
     /// worktrees), and the approval ids offered to the Gate (default empty).
     pub policy: PolicyContext,
+    /// Where build/test/acceptance commands run. Production: `ContainerSandbox`.
+    pub sandbox: Arc<dyn Sandbox>,
+    /// Tool-call and wall-clock limits of this task (`RunLimits::interactive()`).
+    pub limits: Arc<RunLimits>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,8 +85,6 @@ pub struct CodingTask {
     pub repo: PathBuf,
     pub scope: Scope,
     pub workspaces_root: PathBuf,
-    pub model_id: String,
-    pub max_call_cost: Micros,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,22 +108,26 @@ struct Ctx<'a, 'd> {
     deps: &'d CodingDeps<'a>,
     task: &'d CodingTask,
     runner: &'d Runner<'a>,
-    base_head: String,
+    data_class: DataClass,
+    /// Fingerprint of the original repo's git state when the task started.
+    repo_fingerprint: String,
+    /// The task's own branch ref, which the fingerprint leaves out.
+    own_ref: String,
 }
 
 impl Ctx<'_, '_> {
-    /// Stops the task if the original checkout moved since the task started.
-    async fn assert_unchanged(&self, stage: Stage) -> Result<()> {
-        let now = worktree::head(self.runner, &self.task.repo).await?;
-        if now == self.base_head {
+    /// Stops the task if the original repository changed since it started: HEAD, refs,
+    /// `.git/config` or hooks. Compared by content hash, without running git.
+    fn assert_unchanged(&self, stage: Stage) -> Result<()> {
+        let now = integrity::fingerprint(&self.task.repo, &self.own_ref)?;
+        if now == self.repo_fingerprint {
             return Ok(());
         }
-        tracing::error!(task = %self.task.id, ?stage, "repository HEAD changed during task");
+        tracing::error!(task = %self.task.id, ?stage, "original repository changed during task");
         Err(PairError::new(
             ErrorCode::Conflict,
             format!(
-                "repository HEAD moved from {} to {now} during {stage:?}; task stopped",
-                self.base_head
+                "original repository (HEAD, refs, .git/config or hooks) changed during {stage:?}; task stopped"
             ),
         ))
     }
@@ -125,31 +139,30 @@ impl Ctx<'_, '_> {
             trust: TrustClass::Owner,
         });
         let req = ModelRequest {
-            model_id: self.task.model_id.clone(),
+            model_id: String::new(),
             messages,
             max_output_tokens: MAX_OUTPUT_TOKENS,
             deadline_ms: CALL_DEADLINE_MS,
-            data_class: DataClass::Personal,
+            data_class: self.data_class,
             task: self.task.id,
             trace: self.task.trace,
         };
-        let resp = budgeted_generate(
-            self.deps.provider,
-            self.deps.budget,
-            req,
-            self.task.max_call_cost,
-        )
-        .await?;
-        Ok(resp.text)
+        let caller = ModelCaller {
+            provider: self.deps.provider,
+            budget: self.deps.budget,
+            prices: self.deps.prices,
+            planner: self.deps.planner,
+            limits: &self.deps.limits,
+            kind: TaskKind::Coding,
+            intent: "coding",
+        };
+        Ok(caller.generate(req).await?.text)
     }
 }
 
-fn tool_message(content: String) -> ModelMessage {
-    ModelMessage {
-        role: "user".into(),
-        content,
-        trust: TrustClass::Tool,
-    }
+/// Model output, diffs and command output are not owner instructions: wrapped as data.
+fn tool_message(source: &str, content: &str) -> ModelMessage {
+    data_message(source, TrustClass::Tool, content)
 }
 
 async fn verify(
@@ -174,25 +187,36 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     if task.issue.trim().is_empty() {
         return Err(PairError::new(ErrorCode::InvalidInput, "issue is empty"));
     }
+    deps.limits
+        .require_within(crate::limits::INTERACTIVE_WALL)?;
     let cfg = RepoConfig::load(&task.repo)?;
     let home = task.workspaces_root.join(format!(".home-{}", task.id));
     std::fs::create_dir_all(&home)
         .map_err(|e| PairError::new(ErrorCode::Internal, format!("home dir: {e}")))?;
     let runner = Runner::new(
         deps.gate,
-        task.id,
-        task.trace,
-        deps.policy.clone(),
-        home,
-        Duration::from_secs(cfg.timeout_secs),
-        cfg.env_passthrough.clone(),
-    );
+        RunnerSetup {
+            task: task.id,
+            trace: task.trace,
+            ctx: deps.policy.clone(),
+            home,
+            timeout: Duration::from_secs(cfg.timeout_secs),
+            passthrough: cfg.env_passthrough.clone(),
+            data_class: cfg.data_class,
+        },
+    )
+    .with_sandbox(deps.sandbox.clone())
+    .with_limits(deps.limits.clone());
+    let own_ref = format!("refs/heads/{}{}", worktree::BRANCH_PREFIX, task.id);
+    let repo_fingerprint = integrity::fingerprint(&task.repo, &own_ref)?;
     let base_head = worktree::head(&runner, &task.repo).await?;
     let ctx = Ctx {
         deps,
         task,
         runner: &runner,
-        base_head: base_head.clone(),
+        data_class: cfg.data_class,
+        repo_fingerprint,
+        own_ref,
     };
     tracing::info!(task = %task.id, base = %base_head, "coding task started");
 
@@ -219,7 +243,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     };
     let compiled = deps.compiler.compile(&task_ctx, &limits, &evidence)?;
     stages.push(Stage::Context);
-    ctx.assert_unchanged(Stage::Context).await?;
+    ctx.assert_unchanged(Stage::Context)?;
 
     // plan
     let plan = ctx
@@ -229,36 +253,47 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         )
         .await?;
     stages.push(Stage::Plan);
-    ctx.assert_unchanged(Stage::Plan).await?;
+    ctx.assert_unchanged(Stage::Plan)?;
 
     // worktree
     let wt = worktree::create(&runner, &task.repo, &task.workspaces_root, task.id).await?;
     stages.push(Stage::Worktree);
-    ctx.assert_unchanged(Stage::Worktree).await?;
+    ctx.assert_unchanged(Stage::Worktree)?;
 
     // edit: model proposes a structured edit set; the whole set must be in scope.
     let mut edit_msgs = compiled.messages.clone();
-    edit_msgs.push(tool_message(format!("Approved plan:\n{plan}")));
+    edit_msgs.push(tool_message(
+        "coding:plan",
+        &format!("Approved plan:\n{plan}"),
+    ));
     let edit_text = ctx
         .ask(
             edit_msgs,
             "Step: output JSON {\"edits\":[{\"path\":...,\"content\":...}]} implementing the plan.",
         )
         .await?;
-    ctx.assert_unchanged(Stage::Edit).await?;
+    ctx.assert_unchanged(Stage::Edit)?;
     let edits = parse_edit_set(&edit_text)?;
-    apply_edits(&wt.path, &task.scope, &edits)?;
-    let changed = worktree::changed_files(&runner, &wt.path).await?;
+    let edit_cx = EditContext {
+        gate: deps.gate,
+        policy: &deps.policy,
+        task: task.id,
+        trace: task.trace,
+        data_class: cfg.data_class,
+        limits: &deps.limits,
+    };
+    apply_edits(&edit_cx, &wt.path, &task.scope, &edits).await?;
+    let changed = worktree::changed_files(&runner, &wt).await?;
     task.scope.check_all(changed.iter().map(String::as_str))?;
     stages.push(Stage::Edit);
 
     // verify
     let (commands, failure) = verify(&ctx, &cfg, &wt.path).await?;
     stages.push(Stage::Verify);
-    ctx.assert_unchanged(Stage::Verify).await?;
-    let changed = worktree::changed_files(&runner, &wt.path).await?;
+    ctx.assert_unchanged(Stage::Verify)?;
+    let changed = worktree::changed_files(&runner, &wt).await?;
     task.scope.check_all(changed.iter().map(String::as_str))?;
-    let diff = worktree::diff(&runner, &wt.path).await?;
+    let diff = worktree::diff(&runner, &wt).await?;
 
     let (status, review, summary) = if let Some(class) = failure {
         let last = commands
@@ -272,12 +307,15 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         )
     } else {
         let mut msgs = compiled.messages.clone();
-        msgs.push(tool_message(format!("Diff under review:\n{diff}")));
+        msgs.push(tool_message(
+            "coding:diff",
+            &format!("Diff under review:\n{diff}"),
+        ));
         let review = ctx
             .ask(msgs, "Step: review this diff for defects and scope creep.")
             .await?;
         stages.push(Stage::Review);
-        ctx.assert_unchanged(Stage::Review).await?;
+        ctx.assert_unchanged(Stage::Review)?;
         (
             CodingStatus::Succeeded,
             Some(review),
@@ -310,14 +348,18 @@ pub async fn discard_workspace(
     task: &CodingTask,
     result: &CodingResult,
 ) -> Result<()> {
+    let cfg = RepoConfig::load(&task.repo)?;
     let runner = Runner::new(
         gate,
-        task.id,
-        task.trace,
-        policy,
-        task.workspaces_root.join(format!(".home-{}", task.id)),
-        Duration::from_secs(DISCARD_TIMEOUT_SECS),
-        Vec::new(),
+        RunnerSetup {
+            task: task.id,
+            trace: task.trace,
+            ctx: policy,
+            home: task.workspaces_root.join(format!(".home-{}", task.id)),
+            timeout: Duration::from_secs(DISCARD_TIMEOUT_SECS),
+            passthrough: Vec::new(),
+            data_class: cfg.data_class,
+        },
     );
     worktree::remove(&runner, &task.repo, &result.worktree).await
 }

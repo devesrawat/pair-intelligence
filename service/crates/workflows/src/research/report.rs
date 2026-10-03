@@ -1,10 +1,54 @@
-//! Markdown export. Page-derived strings are flattened to one line so captured text
-//! cannot inject headings or links into the report structure.
+//! Markdown export. Everything derived from a page or a model is rendered inert:
+//! URLs only inside code spans (newlines percent-encoded), other strings flattened to one
+//! line with markdown metacharacters backslash-escaped and bare URLs defanged, so captured
+//! text cannot inject headings, links, images or autolinks into the report.
 use super::types::{Claim, Report, Source};
 use std::fmt::Write;
 
-fn inline(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+const ZERO_WIDTH_SPACE: char = '\u{200B}';
+/// Characters that carry markdown or HTML meaning. The backslash comes first in intent:
+/// every occurrence is escaped exactly once, in a single pass.
+const MD_SPECIAL: &str = "\\[]()!<>`#*_|~&";
+
+fn flatten(s: &str) -> String {
+    s.split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Page- or model-derived prose: one line, metacharacters escaped, URLs defanged.
+fn esc(s: &str) -> String {
+    let flat = flatten(s)
+        .replace("://", &format!(":{ZERO_WIDTH_SPACE}//"))
+        .replace("www.", &format!("www.{ZERO_WIDTH_SPACE}"));
+    let mut out = String::with_capacity(flat.len());
+    for c in flat.chars() {
+        if MD_SPECIAL.contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Literal text in a code span. Whitespace/control characters and backticks are
+/// percent-encoded so the span cannot end early or span lines.
+fn code(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('`');
+    for c in s.trim().chars() {
+        if c == '`' || c.is_control() || c.is_whitespace() {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                let _ = write!(out, "%{b:02X}");
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('`');
+    out
 }
 
 fn source_label(sources: &[Source], c: &Claim) -> String {
@@ -17,9 +61,9 @@ fn source_label(sources: &[Source], c: &Claim) -> String {
             let hash = s.content_sha256.as_deref().map_or(String::new(), |h| {
                 format!(", sha256 {}", &h[..h.len().min(12)])
             });
-            format!("{} ({date}{hash})", s.url)
+            format!("{} ({date}{hash})", code(&s.url))
         }
-        None => c.raw.url.clone(),
+        None => code(&c.raw.url),
     }
 }
 
@@ -28,7 +72,7 @@ pub fn render_markdown(r: &Report) -> String {
     let _ = writeln!(
         o,
         "# Research report\n\n**Question:** {}\n\nGenerated {} (run {}).\n",
-        inline(&r.question),
+        esc(&r.question),
         r.generated_at.to_rfc3339(),
         r.run_id
     );
@@ -43,7 +87,7 @@ pub fn render_markdown(r: &Report) -> String {
             .iter()
             .map(|id| format!("[{}]", &id.simple().to_string()[..8]))
             .collect();
-        let _ = writeln!(o, "- {} {}", inline(&st.text), refs.join(""));
+        let _ = writeln!(o, "- {} {}", esc(&st.text), refs.join(""));
     }
 
     let _ = writeln!(o, "\n## Conflicting evidence\n");
@@ -51,14 +95,14 @@ pub fn render_markdown(r: &Report) -> String {
         let _ = writeln!(o, "_None detected._");
     }
     for k in &r.conflicts {
-        let _ = writeln!(o, "- **{}** — sources disagree:", inline(&k.topic));
+        let _ = writeln!(o, "- **{}** — sources disagree:", esc(&k.topic));
         for (value, ids) in &k.positions {
             for c in r.claims.iter().filter(|c| ids.contains(&c.id)) {
                 let _ = writeln!(
                     o,
-                    "  - `{}`: {} — {}",
-                    inline(value),
-                    inline(&c.raw.text),
+                    "  - {}: {} — {}",
+                    code(value),
+                    esc(&c.raw.text),
                     source_label(&r.sources, c)
                 );
             }
@@ -71,8 +115,8 @@ pub fn render_markdown(r: &Report) -> String {
             o,
             "- [{}] {}\n  > {}\n  > {}",
             &c.id.simple().to_string()[..8],
-            inline(&c.raw.text),
-            inline(&c.raw.span),
+            esc(&c.raw.text),
+            esc(&c.raw.span),
             source_label(&r.sources, c)
         );
     }
@@ -81,10 +125,10 @@ pub fn render_markdown(r: &Report) -> String {
     for s in &r.sources {
         match (&s.unavailable_reason, s.duplicate_of) {
             (Some(why), _) => {
-                let _ = writeln!(o, "- {} — **UNAVAILABLE**: {}", s.url, inline(why));
+                let _ = writeln!(o, "- {} — **UNAVAILABLE**: {}", code(&s.url), esc(why));
             }
             (None, Some(_)) => {
-                let _ = writeln!(o, "- {} — duplicate of an earlier source", s.url);
+                let _ = writeln!(o, "- {} — duplicate of an earlier source", code(&s.url));
             }
             (None, None) => {
                 let date = s
@@ -93,7 +137,7 @@ pub fn render_markdown(r: &Report) -> String {
                 let _ = writeln!(
                     o,
                     "- {} — {date}, fetched {}",
-                    s.url,
+                    code(&s.url),
                     s.fetched_at.to_rfc3339()
                 );
             }
@@ -111,18 +155,14 @@ pub fn render_markdown(r: &Report) -> String {
                 .unwrap_or_default();
             let _ = writeln!(
                 o,
-                "- claim \"{}\" ({}): {why}",
-                inline(&c.raw.text),
-                inline(&c.raw.url)
+                "- claim \"{}\" ({}): {}",
+                esc(&c.raw.text),
+                code(&c.raw.url),
+                esc(&why)
             );
         }
         for s in &r.rejected_statements {
-            let _ = writeln!(
-                o,
-                "- statement \"{}\": {}",
-                inline(&s.text),
-                inline(&s.reason)
-            );
+            let _ = writeln!(o, "- statement \"{}\": {}", esc(&s.text), esc(&s.reason));
         }
     }
 

@@ -1,18 +1,20 @@
 //! In-test fakes of external services (policy engine, model provider, budget ledger,
 //! memory store, context compiler). Test-only.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use crate::calls::{ModelPlanner, ModelTerms, PriceSource};
+use crate::coding::{CommandExecutor, ExecOutput, ExecSpec, HostSandbox, ProcessExecutor, Sandbox};
 use crate::tools::{GIT_PUSH, PR_CREATE};
 use async_trait::async_trait;
 use pair_core::{
     error::Result,
     ids::{CandidateId, LedgerEntryId, MemoryId, ReservationId, TaskId},
-    money::Micros,
-    traits::{Budget, ContextCompiler, Memory, Policy, Provider},
+    money::{Micros, Price},
+    traits::{Budget, BudgetEx, ContextCompiler, Memory, Policy, Provider},
     types::*,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
 
 pub type Responder = Box<dyn Fn(usize, &ModelRequest) -> Result<String> + Send + Sync>;
@@ -69,6 +71,7 @@ impl Provider for FnProvider {
 pub struct FakePolicy {
     pub denied_exes: Vec<String>,
     pub denied_destinations: Vec<String>,
+    pub denied_tools: Vec<String>,
     pub allow_remote_writes: bool,
     pub seen: Mutex<Vec<ActionRequest>>,
 }
@@ -76,26 +79,26 @@ pub struct FakePolicy {
 impl Policy for FakePolicy {
     fn authorize(&self, req: &ActionRequest, _ctx: &PolicyContext) -> PolicyOutcome {
         self.seen.lock().unwrap().push(req.clone());
-        let decision =
-            if matches!(req.tool.as_str(), GIT_PUSH | PR_CREATE) && !self.allow_remote_writes {
-                Decision::NeedsApproval {
-                    payload_hash: "hash".into(),
-                }
-            } else if req
+        let denied = self.denied_tools.contains(&req.tool)
+            || req
                 .executable
                 .as_ref()
                 .is_some_and(|e| self.denied_exes.contains(e))
-                || req
-                    .destination
-                    .as_ref()
-                    .is_some_and(|d| self.denied_destinations.contains(d))
-            {
-                Decision::Deny {
-                    reason: "denied by fake policy".into(),
-                }
-            } else {
-                Decision::Allow
-            };
+            || req
+                .destination
+                .as_ref()
+                .is_some_and(|d| self.denied_destinations.contains(d));
+        let decision = if denied {
+            Decision::Deny {
+                reason: "denied by fake policy".into(),
+            }
+        } else if matches!(req.tool.as_str(), GIT_PUSH | PR_CREATE) && !self.allow_remote_writes {
+            Decision::NeedsApproval {
+                payload_hash: "hash".into(),
+            }
+        } else {
+            Decision::Allow
+        };
         PolicyOutcome {
             decision,
             policy_version: "fake-1".into(),
@@ -118,6 +121,8 @@ impl Policy for FixedPolicy {
 pub struct FakeBudget {
     pub reserved: AtomicUsize,
     pub reconciled: AtomicUsize,
+    pub reservations: Mutex<Vec<ReserveRequest>>,
+    pub usages: Mutex<Vec<UsageReport>>,
 }
 
 impl Default for FakeBudget {
@@ -125,23 +130,70 @@ impl Default for FakeBudget {
         Self {
             reserved: AtomicUsize::new(0),
             reconciled: AtomicUsize::new(0),
+            reservations: Mutex::new(Vec::new()),
+            usages: Mutex::new(Vec::new()),
         }
     }
 }
 
 #[async_trait]
 impl Budget for FakeBudget {
-    async fn reserve(&self, _task: TaskId, _max: Micros) -> Result<ReservationId> {
-        self.reserved.fetch_add(1, Ordering::SeqCst);
-        Ok(ReservationId::new())
+    async fn reserve(&self, task: TaskId, max: Micros) -> Result<ReservationId> {
+        self.reserve_with(ReserveRequest::metered(
+            task,
+            max,
+            TaskKind::Default,
+            String::new(),
+        ))
+        .await
     }
-    async fn reconcile(&self, id: ReservationId, _usage: UsageReport) -> Result<LedgerEntry> {
+    async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
         self.reconciled.fetch_add(1, Ordering::SeqCst);
+        let settled = usage.actual_cost.is_some();
+        self.usages.lock().unwrap().push(usage);
         Ok(LedgerEntry {
             id: LedgerEntryId::new(),
             reservation: id,
             amount: Micros(1),
-            settled: true,
+            settled,
+        })
+    }
+}
+
+#[async_trait]
+impl BudgetEx for FakeBudget {
+    async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
+        self.reserved.fetch_add(1, Ordering::SeqCst);
+        self.reservations.lock().unwrap().push(req);
+        Ok(ReservationId::new())
+    }
+}
+
+/// Registry stand-in: every model id has the same price and accepts every data class.
+pub struct FixedPrices(pub Option<Price>);
+
+impl FixedPrices {
+    pub fn standard() -> Self {
+        Self(Some(Price {
+            version: TEST_PRICE_VERSION.into(),
+            input_per_mtok: Micros(3_000_000),
+            output_per_mtok: Micros(15_000_000),
+        }))
+    }
+}
+
+pub const TEST_PRICE_VERSION: &str = "pv-test-1";
+
+impl PriceSource for FixedPrices {
+    fn terms(&self, _model_id: &str) -> Option<ModelTerms> {
+        Some(ModelTerms {
+            price: self.0.clone(),
+            allowed_data_classes: vec![
+                DataClass::Public,
+                DataClass::Personal,
+                DataClass::Sensitive,
+                DataClass::Employer,
+            ],
         })
     }
 }
@@ -188,5 +240,70 @@ pub fn fake_ctx(workspace_root: &std::path::Path) -> PolicyContext {
         workspace_root: workspace_root.display().to_string(),
         approvals: Vec::new(),
         policy_version: "fake-1".into(),
+    }
+}
+
+/// Host execution for tests, enabled through an injected env lookup (never `set_var`).
+pub fn host_sandbox() -> Arc<dyn Sandbox> {
+    Arc::new(HostSandbox::with_lookup(Arc::new(ProcessExecutor), |_| Some("1".into())).unwrap())
+}
+
+/// Records every spec and answers with a canned output instead of running anything.
+pub struct RecordingExecutor {
+    pub calls: Mutex<Vec<ExecSpec>>,
+    reply: Mutex<Vec<ExecOutput>>,
+}
+
+impl RecordingExecutor {
+    /// Replies in order; the last reply repeats.
+    pub fn new(reply: Vec<ExecOutput>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            reply: Mutex::new(reply),
+        }
+    }
+    pub fn ok() -> Self {
+        Self::new(vec![ExecOutput {
+            exit_code: Some(0),
+            ..ExecOutput::default()
+        }])
+    }
+}
+
+#[async_trait]
+impl CommandExecutor for RecordingExecutor {
+    async fn exec(&self, spec: &ExecSpec) -> ExecOutput {
+        self.calls.lock().unwrap().push(spec.clone());
+        let mut r = self.reply.lock().unwrap();
+        if r.len() > 1 {
+            r.remove(0)
+        } else {
+            r.first().cloned().unwrap_or_default()
+        }
+    }
+}
+
+/// Router stand-in with a fixed attempt order; records the profiles it was asked about.
+pub struct FixedPlanner {
+    pub order: Vec<String>,
+    pub profiles: Mutex<Vec<TaskProfile>>,
+}
+
+impl FixedPlanner {
+    pub fn new(order: &[&str]) -> Self {
+        Self {
+            order: order.iter().map(|s| (*s).to_string()).collect(),
+            profiles: Mutex::new(Vec::new()),
+        }
+    }
+    pub fn single() -> Self {
+        Self::new(&["fake"])
+    }
+}
+
+impl ModelPlanner for FixedPlanner {
+    fn attempt_order(&self, profile: &TaskProfile) -> Result<Vec<String>> {
+        self.profiles.lock().unwrap().push(profile.clone());
+        Ok(self.order.clone())
     }
 }

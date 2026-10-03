@@ -2,7 +2,7 @@
 //! policy), so a tool name, policy version or egress mismatch fails here instead of in
 //! production where every action would be denied.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use crate::coding::Runner;
+use crate::coding::{Runner, RunnerSetup};
 use crate::research::{
     capture::{capture_sources, Network},
     Candidate, FetchOutcome, ResearchScope, SourceFetcher,
@@ -13,7 +13,7 @@ use pair_core::{
     error::{ErrorCode, Result},
     ids::{ApprovalId, TaskId, TraceId},
     traits::Approvals,
-    types::PolicyContext,
+    types::{DataClass, PolicyContext},
 };
 use pair_jobs::PgApprovals;
 use pair_policy::{Gate, PolicyEngine};
@@ -98,13 +98,17 @@ impl World {
     fn runner<'a>(&self, gate: &'a Gate, task: TaskId, approvals: Vec<ApprovalId>) -> Runner<'a> {
         Runner::new(
             gate,
-            task,
-            TraceId::new(),
-            self.ctx(approvals),
-            self.root.join("home"),
-            TIMEOUT,
-            Vec::new(),
+            RunnerSetup {
+                task,
+                trace: TraceId::new(),
+                ctx: self.ctx(approvals),
+                home: self.root.join("home"),
+                timeout: TIMEOUT,
+                passthrough: Vec::new(),
+                data_class: DataClass::Personal,
+            },
         )
+        .with_sandbox(crate::coding::testkit::host_sandbox())
     }
 
     fn has_remote_branch(&self, branch: &str) -> bool {
@@ -229,18 +233,73 @@ async fn real_engine_denies_stale_policy_version() {
     ctx.policy_version = "coding-workflow".into();
     let runner = Runner::new(
         &gate,
-        TaskId::new(),
-        TraceId::new(),
-        ctx,
-        world.root.join("home"),
-        TIMEOUT,
-        Vec::new(),
-    );
+        RunnerSetup {
+            task: TaskId::new(),
+            trace: TraceId::new(),
+            ctx,
+            home: world.root.join("home"),
+            timeout: TIMEOUT,
+            passthrough: Vec::new(),
+            data_class: DataClass::Personal,
+        },
+    )
+    .with_sandbox(crate::coding::testkit::host_sandbox());
     let err = runner
         .run(&argv(&["git", "status"]), &world.repo)
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
+}
+
+#[tokio::test]
+async fn real_engine_gates_edit_writes_by_workspace_and_denied_paths() {
+    use crate::coding::{apply_edits, EditContext, FileEdit, Scope};
+    let world = World::new();
+    let gate = engine_gate(&world, None);
+    let limits = crate::limits::RunLimits::interactive();
+    let ctx = world.ctx(Vec::new());
+    let cx = EditContext {
+        gate: &gate,
+        policy: &ctx,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+        data_class: DataClass::Personal,
+        limits: &limits,
+    };
+    let scope = Scope::new(vec!["src/".into()]);
+    let edit = vec![FileEdit {
+        path: "src/a.txt".into(),
+        content: "x".into(),
+    }];
+    // inside the policy workspace: allowed and written
+    let inside = world.repo.clone();
+    apply_edits(&cx, &inside, &scope, &edit).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(inside.join("src/a.txt")).unwrap(),
+        "x"
+    );
+    // a root outside the policy workspace is refused by the engine and nothing is written
+    let outside = std::env::temp_dir()
+        .join(format!("pair_t_outside_{}", uuid::Uuid::new_v4().simple()))
+        .canonicalize_or_create();
+    let err = apply_edits(&cx, &outside, &scope, &edit).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
+    assert!(!outside.join("src/a.txt").exists());
+    std::fs::remove_dir_all(&outside).unwrap();
+
+    // inside the workspace but under a denied credential location (~/.ssh of the engine's home)
+    let home = world.root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ssh_scope = Scope::new(vec![".ssh/".into()]);
+    let ssh_edit = vec![FileEdit {
+        path: ".ssh/config".into(),
+        content: "Host *\n".into(),
+    }];
+    let err = apply_edits(&cx, &home, &ssh_scope, &ssh_edit)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
+    assert!(!home.join(".ssh/config").exists());
 }
 
 // ---- research -------------------------------------------------------------------------
@@ -282,11 +341,14 @@ async fn research(world: &World, page: &str) -> (Vec<crate::research::Source>, S
         trace: TraceId::new(),
         ctx: world.ctx(Vec::new()),
         search_host: ALLOWED_SEARCH_HOST.into(),
+        data_class: DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let scope = ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     };
     let sources = capture_sources(&net, &scope).await.unwrap();
     (sources, fetcher)
@@ -329,11 +391,14 @@ async fn real_engine_denies_search_when_service_host_not_listed() {
         trace: TraceId::new(),
         ctx: world.ctx(Vec::new()),
         search_host: "search.unlisted.example.org".into(),
+        data_class: DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let scope = ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
@@ -416,6 +481,83 @@ async fn required_hash(world: &World, task: TaskId, refspec: &str) -> String {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::ApprovalRequired);
     err.message.rsplit(' ').next().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn push_approval_hash_equals_gate_hash_under_real_engine() {
+    use crate::coding::{request_remote_write, RemoteAction, RemoteCtx, RemoteKind, RemoteOutcome};
+    let world = World::new();
+    let head = String::from_utf8(
+        Command::new("git")
+            .current_dir(&world.repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let task = TaskId::new();
+    let action = RemoteAction {
+        kind: RemoteKind::Push,
+        remote_url: "git@github.com:acme/repo.git".into(),
+        branch: "pair/t".into(),
+        head_sha: head,
+        diff_sha256: "d".into(),
+        data_class: DataClass::Personal,
+    };
+    // the hash an approver is shown (scp-style remote: host derived, egress checked)
+    let ctx = world.ctx(Vec::new());
+    let shown = request_remote_write(
+        &RemoteCtx {
+            policy: world.engine.as_ref(),
+            ctx: &ctx,
+            task,
+            trace: TraceId::new(),
+            cwd: &world.repo,
+        },
+        &action,
+    )
+    .unwrap();
+    let RemoteOutcome::NeedsApproval {
+        payload_hash: shown,
+    } = shown
+    else {
+        panic!("expected NeedsApproval, got {shown:?}");
+    };
+    // the hash the Gate demands when the real `git push` argv is executed
+    let gate = engine_gate(&world, None);
+    let runner = world.runner(&gate, task, Vec::new());
+    let host = action.host().unwrap();
+    let err = runner
+        .run_tool(GIT_PUSH, &action.push_argv(), &world.repo, Some(&host))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ApprovalRequired);
+    let demanded = err.message.rsplit(' ').next().unwrap();
+    assert_eq!(
+        shown, demanded,
+        "approval would bind to a different payload"
+    );
+
+    // a host that is not on the egress list is denied up front for scp-style remotes too
+    let evil = RemoteAction {
+        remote_url: "git@evil.example:a/b.git".into(),
+        ..action
+    };
+    let err = request_remote_write(
+        &RemoteCtx {
+            policy: world.engine.as_ref(),
+            ctx: &ctx,
+            task,
+            trace: TraceId::new(),
+            cwd: &world.repo,
+        },
+        &evil,
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
 }
 
 #[tokio::test]

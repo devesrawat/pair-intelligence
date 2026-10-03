@@ -33,7 +33,10 @@ pub async fn extract_claims(llm: &ResearchLlm<'_>, sources: &[Source]) -> Result
             .chars()
             .take(MAX_SOURCE_PROMPT_CHARS)
             .collect();
-        messages.push(untrusted_msg(format!("SOURCE url={}\n{text}", s.url)));
+        messages.push(untrusted_msg(
+            "research:source",
+            &format!("SOURCE url={}\n{text}", s.url),
+        ));
     }
     if messages.len() == 1 {
         return Ok(Vec::new());

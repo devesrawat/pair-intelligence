@@ -8,7 +8,6 @@ use pair_core::types::Decision;
 use pair_core::{
     error::Result,
     ids::{TaskId, TraceId},
-    money::Micros,
     types::TrustClass,
 };
 use pair_policy::Gate;
@@ -130,6 +129,9 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         provider: &provider,
         gate: &gate,
         budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(crate::limits::RunLimits::background()),
         fetcher: &fetcher,
         store: &store,
         judge,
@@ -139,13 +141,12 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
     let run = ResearchRun {
         task: TaskId::new(),
         trace: TraceId::new(),
-        model_id: "fake".into(),
-        max_call_cost: Micros(10),
     };
     let scope = ResearchScope {
         question: fx.question,
         queries: vec![],
         max_sources: 5,
+        data_class: Some("public".into()),
     };
     let out = run_research(&deps, &run, &scope).await.unwrap();
     Harness {
@@ -190,6 +191,7 @@ fn gated_scope() -> ResearchScope {
         question: "q".into(),
         queries: vec![],
         max_sources: 3,
+        data_class: Some("public".into()),
     }
 }
 
@@ -211,6 +213,8 @@ async fn research_network_access_only_happens_after_gate_allow() {
         trace: TraceId::new(),
         ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
         search_host: SEARCH_HOST.into(),
+        data_class: pair_core::types::DataClass::Public,
+        limits: Arc::new(crate::limits::RunLimits::background()),
     };
     let err = capture_sources(&net, &scope).await.unwrap_err();
     assert_eq!(err.code, pair_core::error::ErrorCode::PolicyDenied);
@@ -385,6 +389,160 @@ async fn injected_webpage_instruction_ignored() {
 }
 
 #[tokio::test]
+async fn research_scope_without_usable_data_class_refused() {
+    let db = TestDb::create().await;
+    let fetcher = CountingFetcher::default();
+    let provider = FnProvider::scripted(vec![]);
+    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let budget = FakeBudget::default();
+    let store = EvidenceStore::new(db.pool.clone());
+    let deps = ResearchDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(crate::limits::RunLimits::background()),
+        fetcher: &fetcher,
+        store: &store,
+        judge: None,
+        policy: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+    };
+    let run = ResearchRun {
+        task: TaskId::new(),
+        trace: TraceId::new(),
+    };
+    for class in [None, Some("employer"), Some("classified")] {
+        let scope = ResearchScope {
+            data_class: class.map(String::from),
+            ..gated_scope()
+        };
+        let err = run_research(&deps, &run, &scope).await.unwrap_err();
+        assert_eq!(
+            err.code,
+            pair_core::error::ErrorCode::PolicyDenied,
+            "{class:?}"
+        );
+    }
+    assert_eq!(fetcher.searches.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_count(), 0);
+}
+
+#[tokio::test]
+async fn research_scope_max_sources_is_capped_and_tool_calls_limited() {
+    use crate::limits::{RunLimits, MAX_RESEARCH_SOURCES};
+    let fetcher = CountingFetcher::default();
+    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let net = |limits: RunLimits| Network {
+        gate: &gate,
+        fetcher: &fetcher,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+        ctx: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+        data_class: pair_core::types::DataClass::Public,
+        limits: Arc::new(limits),
+    };
+    // search + fetch are tool calls: a budget of 1 allows the search and stops at the fetch
+    let err = capture_sources(
+        &net(RunLimits::with_deadline(
+            1,
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+        )),
+        &gated_scope(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, pair_core::error::ErrorCode::LimitExceeded);
+    assert_eq!(fetcher.fetches.load(Ordering::SeqCst), 0);
+
+    // the scope cap is enforced before anything happens
+    let db = TestDb::create().await;
+    let provider = FnProvider::scripted(vec![]);
+    let budget = FakeBudget::default();
+    let store = EvidenceStore::new(db.pool.clone());
+    let deps = ResearchDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
+        planner: &crate::coding::testkit::FixedPlanner::single(),
+        limits: Arc::new(RunLimits::background()),
+        fetcher: &fetcher,
+        store: &store,
+        judge: None,
+        policy: crate::coding::testkit::fake_ctx(&std::env::temp_dir()),
+        search_host: SEARCH_HOST.into(),
+    };
+    let run = ResearchRun {
+        task: TaskId::new(),
+        trace: TraceId::new(),
+    };
+    let scope = ResearchScope {
+        max_sources: MAX_RESEARCH_SOURCES + 1,
+        ..gated_scope()
+    };
+    let err = run_research(&deps, &run, &scope).await.unwrap_err();
+    assert_eq!(err.code, pair_core::error::ErrorCode::InvalidInput);
+    assert_eq!(
+        fetcher.searches.load(Ordering::SeqCst),
+        1,
+        "only the earlier probe searched"
+    );
+}
+
+#[tokio::test]
+async fn research_data_class_flows_to_requests() {
+    use pair_core::types::DataClass;
+    let h = run_fixture("conflicting_evidence.json", None).await;
+    assert!(h
+        .provider
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.data_class == DataClass::Public));
+    assert!(h
+        .policy
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|a| a.data_class == DataClass::Public));
+}
+
+#[tokio::test]
+async fn page_text_is_wrapped_as_untrusted_data() {
+    let fx = load("injected_webpage_instruction.json");
+    let marker = fx.injection_marker.clone().unwrap();
+    let h = run_fixture("injected_webpage_instruction.json", None).await;
+    let seen = h.provider.seen.lock().unwrap();
+    let carrying: Vec<_> = seen
+        .iter()
+        .flat_map(|r| r.messages.iter())
+        .filter(|m| m.content.contains(&marker))
+        .collect();
+    assert!(!carrying.is_empty());
+    for m in carrying {
+        assert_eq!(m.trust, TrustClass::Untrusted);
+        assert!(
+            m.content.starts_with(pair_context::DATA_OPEN),
+            "{}",
+            m.content
+        );
+        assert!(m.content.contains("trust=untrusted"));
+        assert!(m.content.trim_end().ends_with(">>>"));
+    }
+    // owner instructions stay unwrapped, and no non-owner message is ever unwrapped
+    for m in seen.iter().flat_map(|r| r.messages.iter()) {
+        if m.trust != TrustClass::Owner {
+            assert!(m.content.starts_with(pair_context::DATA_OPEN));
+        }
+    }
+}
+
+#[tokio::test]
 async fn invented_url_rejected() {
     let h = run_fixture("invented_url.json", None).await;
     let r = &h.out.report;
@@ -463,6 +621,27 @@ async fn judge_hook_can_veto_a_lexically_supported_claim() {
         .iter()
         .any(|c| matches!(c.rejected, Some(RejectReason::JudgeRejected(_)))));
     assert!(h.out.report.statements.is_empty());
+}
+
+#[tokio::test]
+async fn statement_lexical_limitation_always_printed() {
+    let judge = VetoJudge;
+    for judge in [None, Some(&judge as &dyn SupportJudge)] {
+        let h = run_fixture("inaccessible_source.json", judge).await;
+        assert!(
+            h.out
+                .report
+                .limitations
+                .iter()
+                .any(|l| l.contains("Synthesized statements were checked lexically")),
+            "{:?}",
+            h.out.report.limitations
+        );
+        assert!(h
+            .out
+            .markdown
+            .contains("Synthesized statements were checked lexically"));
+    }
 }
 
 #[test]

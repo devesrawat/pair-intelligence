@@ -3,8 +3,7 @@ use super::testkit::*;
 use super::*;
 use pair_core::{
     error::ErrorCode,
-    ids::{ApprovalId, TaskId, TraceId},
-    money::Micros,
+    ids::{TaskId, TraceId},
     types::Decision,
 };
 use pair_policy::Gate;
@@ -24,6 +23,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(acceptance: &str) -> Self {
+        Self::with_class(acceptance, Some("personal"))
+    }
+
+    /// `class` is written into repo.json as `data_class`; `None` omits the key.
+    fn with_class(acceptance: &str, class: Option<&str>) -> Self {
         let root =
             std::env::temp_dir().join(format!("pair_t_wf_{}", uuid::Uuid::new_v4().simple()));
         let repo = root.join("repo");
@@ -33,7 +37,8 @@ impl Fixture {
         std::fs::write(repo.join("src/lib.txt"), "old\n").unwrap();
         std::fs::write(repo.join("README.md"), "readme\n").unwrap();
         std::fs::write(repo.join(".env"), format!("{SECRET_FILE_VALUE}\n")).unwrap();
-        let cfg = format!(r#"{{"acceptance":[{acceptance}],"timeout_secs":2}}"#);
+        let class_field = class.map_or(String::new(), |c| format!(r#","data_class":"{c}""#));
+        let cfg = format!(r#"{{"acceptance":[{acceptance}],"timeout_secs":2{class_field}}}"#);
         std::fs::write(repo.join(".pair/repo.json"), cfg).unwrap();
         let fx = Self { root };
         fx.git(&["init", "-q", "-b", "main"]);
@@ -68,8 +73,6 @@ impl Fixture {
             repo: self.repo(),
             scope: Scope::new(scope.iter().map(|s| (*s).to_string()).collect()),
             workspaces_root: self.root.join("ws"),
-            model_id: "fake".into(),
-            max_call_cost: Micros(10),
         }
     }
 }
@@ -103,15 +106,34 @@ async fn run(
     provider: &FnProvider,
     policy: &Arc<FakePolicy>,
 ) -> pair_core::error::Result<CodingResult> {
+    run_limited(
+        fx_task,
+        provider,
+        policy,
+        Arc::new(crate::limits::RunLimits::interactive()),
+    )
+    .await
+}
+
+async fn run_limited(
+    fx_task: &CodingTask,
+    provider: &FnProvider,
+    policy: &Arc<FakePolicy>,
+    limits: Arc<crate::limits::RunLimits>,
+) -> pair_core::error::Result<CodingResult> {
     let budget = FakeBudget::default();
     let gate = Gate::new(policy.clone(), None);
     let deps = CodingDeps {
         provider,
         gate: &gate,
         budget: &budget,
+        prices: &FixedPrices::standard(),
+        planner: &FixedPlanner::single(),
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
         policy: fake_ctx(&fx_task.workspaces_root),
+        sandbox: host_sandbox(),
+        limits,
     };
     run_coding_task(&deps, fx_task).await
 }
@@ -131,13 +153,44 @@ async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
     assert!(res.branch.starts_with("pair/"));
     // every executed command went through policy, and none was a remote write
     let seen = policy.seen.lock().unwrap();
-    assert!(seen.iter().all(|r| r.tool == crate::tools::SHELL_EXEC));
+    assert!(seen.iter().all(|r| matches!(
+        r.tool.as_str(),
+        crate::tools::SHELL_EXEC | crate::tools::FS_WRITE
+    )));
     assert!(seen.iter().all(|r| !r.args.iter().any(|a| a == "push")));
     // original checkout untouched
     assert_eq!(
         std::fs::read_to_string(fx.repo().join("src/lib.txt")).unwrap(),
         "old\n"
     );
+}
+
+#[tokio::test]
+async fn coding_plan_and_diff_are_wrapped_as_data() {
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap();
+    let seen = provider.seen.lock().unwrap();
+    let non_owner: Vec<_> = seen
+        .iter()
+        .flat_map(|r| r.messages.iter())
+        .filter(|m| m.trust != pair_core::types::TrustClass::Owner)
+        .collect();
+    assert_eq!(
+        non_owner.len(),
+        2,
+        "plan (edit step) and diff (review step)"
+    );
+    for m in non_owner {
+        assert!(
+            m.content.starts_with(pair_context::DATA_OPEN),
+            "{}",
+            m.content
+        );
+    }
 }
 
 #[tokio::test]
@@ -187,6 +240,220 @@ async fn repository_mutation_during_run_stops_task() {
     assert_eq!(provider.call_count(), 2);
 }
 
+/// Each mutation happens "underneath" the task while the model call for the edit step runs.
+#[tokio::test]
+async fn hooks_or_config_change_in_original_repo_stops_task() {
+    type Mutation = fn(&Path);
+    let mutations: [(&str, Mutation); 4] = [
+        ("hook", |repo| {
+            let hooks = repo.join(".git/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            std::fs::write(hooks.join("post-checkout"), "#!/bin/sh\ntouch /tmp/pwn\n").unwrap();
+        }),
+        ("config", |repo| {
+            let mut cfg = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            cfg.push_str("[core]\n\tfsmonitor = /tmp/pwn\n");
+            std::fs::write(repo.join(".git/config"), cfg).unwrap();
+        }),
+        ("ref", |repo| {
+            std::fs::write(
+                repo.join(".git/refs/heads/planted"),
+                std::fs::read_to_string(repo.join(".git/refs/heads/main")).unwrap(),
+            )
+            .unwrap();
+        }),
+        ("hook content", |repo| {
+            let hooks = repo.join(".git/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            std::fs::write(hooks.join("pre-push.sample"), "changed\n").unwrap();
+        }),
+    ];
+    for (name, mutate) in mutations {
+        let fx = Fixture::new(PASS_ACCEPTANCE);
+        let repo = fx.repo();
+        let provider = FnProvider::new(Box::new(move |i, _| {
+            if i == 1 {
+                mutate(&repo);
+            }
+            Ok(if i == 1 {
+                edit_json(&[("src/lib.txt", "new\n")])
+            } else {
+                "text".into()
+            })
+        }));
+        let task = fx.task(&["src/"]);
+        let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict, "{name}: {}", err.message);
+        // stopped before the edit was applied or anything ran
+        let wt_file = fx
+            .root
+            .join("ws")
+            .join(task.id.to_string())
+            .join("src/lib.txt");
+        assert_eq!(std::fs::read_to_string(wt_file).unwrap(), "old\n", "{name}");
+    }
+}
+
+#[tokio::test]
+async fn untouched_original_repo_passes_the_integrity_check_with_its_own_branch() {
+    // creating the task worktree adds refs/heads/pair/<id>, which must not look like tampering
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let res = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status, CodingStatus::Succeeded);
+}
+
+#[tokio::test]
+async fn forged_git_pointer_in_worktree_is_never_followed() {
+    let marker =
+        std::env::temp_dir().join(format!("pair_t_fsmon_{}", uuid::Uuid::new_v4().simple()));
+    let hook =
+        std::env::temp_dir().join(format!("pair_t_hook_{}.sh", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // the verify command (sandboxed code) swaps the worktree's .git pointer for a repo of its
+    // own whose config defines a clean filter that would run a program on every host-side `git add`
+    let acceptance = format!(
+        r#"["sh","-c","git init -q --bare evil.git && git -C evil.git config filter.x.clean {hook} && git -C evil.git config core.bare false && rm .git && printf 'gitdir: %s\n' \"$PWD/evil.git\" > .git && echo '* filter=x' > .gitattributes; grep -q new src/lib.txt"]"#,
+        hook = hook.display()
+    );
+    let fx = Fixture::new(&acceptance);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let res = run(&task, &provider, &Arc::new(FakePolicy::default())).await;
+    let _ = std::fs::remove_file(&hook);
+    let ran = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(
+        !ran,
+        "host git followed the forged .git pointer and ran its clean filter"
+    );
+    // evil.git is untracked output of the verify command and so out of scope; either way the
+    // patch is computed from the real repository, not the forged one
+    match res {
+        Ok(r) => assert!(r.diff.contains("+new")),
+        Err(e) => assert!(
+            matches!(e.code, ErrorCode::PolicyDenied | ErrorCode::Internal),
+            "{}",
+            e.message
+        ),
+    }
+}
+
+#[tokio::test]
+async fn container_sandbox_without_image_never_runs_acceptance_on_the_host() {
+    use crate::coding::{ContainerSandbox, ProcessExecutor};
+    let fx = Fixture::new(r#"["sh","-c","touch ran.marker"]"#);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let policy = Arc::new(FakePolicy::default());
+    let budget = FakeBudget::default();
+    let gate = Gate::new(policy, None);
+    let deps = CodingDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &FixedPrices::standard(),
+        planner: &FixedPlanner::single(),
+        memory: &EmptyMemory,
+        compiler: &PlainCompiler,
+        policy: fake_ctx(&task.workspaces_root),
+        sandbox: Arc::new(ContainerSandbox::new(Arc::new(ProcessExecutor), None)),
+        limits: Arc::new(crate::limits::RunLimits::interactive()),
+    };
+    let err = run_coding_task(&deps, &task).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert!(!fx
+        .root
+        .join("ws")
+        .join(task.id.to_string())
+        .join("ran.marker")
+        .exists());
+}
+
+#[tokio::test]
+async fn edit_write_denied_by_gate_leaves_file_untouched() {
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let task = fx.task(&["src/"]);
+    let policy = Arc::new(FakePolicy {
+        denied_tools: vec![crate::tools::FS_WRITE.into()],
+        ..FakePolicy::default()
+    });
+    let provider = provider_with_edit(edit_json(&[
+        ("src/lib.txt", "new\n"),
+        ("src/other.txt", "also new\n"),
+    ]));
+    let err = run(&task, &provider, &policy).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    let wt = fx.root.join("ws").join(task.id.to_string());
+    assert_eq!(
+        std::fs::read_to_string(wt.join("src/lib.txt")).unwrap(),
+        "old\n"
+    );
+    assert!(
+        !wt.join("src/other.txt").exists(),
+        "a denied batch writes nothing"
+    );
+    // the write was offered to policy as one fs.write request naming every target path
+    let seen = policy.seen.lock().unwrap();
+    let writes: Vec<_> = seen
+        .iter()
+        .filter(|r| r.tool == crate::tools::FS_WRITE)
+        .collect();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].paths.len(), 2);
+    assert!(writes[0]
+        .paths
+        .iter()
+        .all(|p| p.starts_with(wt.to_str().unwrap())));
+}
+
+#[tokio::test]
+async fn coding_task_stops_at_the_tool_call_cap_and_the_deadline() {
+    use crate::limits::{RunLimits, MAX_TOOL_CALLS};
+    // 25 passing commands + the write batch exceed the 20-call cap
+    let many = vec![r#"["true"]"#; 25].join(",");
+    let fx = Fixture::new(&many);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded, "{}", err.message);
+
+    // a deadline that has already passed stops the task before any model call
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let expired = Arc::new(RunLimits::with_deadline(
+        MAX_TOOL_CALLS,
+        std::time::Instant::now(),
+    ));
+    let err = run_limited(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+        expired,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::LimitExceeded);
+    assert_eq!(provider.call_count(), 0);
+}
+
 #[tokio::test]
 async fn hidden_credentials_not_exposed() {
     std::env::set_var("PAIR_TEST_API_TOKEN", SECRET_ENV_VALUE);
@@ -222,6 +489,60 @@ async fn hidden_credentials_not_exposed() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::PolicyDenied);
+}
+
+#[tokio::test]
+async fn employer_repo_refused() {
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("employer"));
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let task = fx.task(&["src/"]);
+    let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert_eq!(provider.call_count(), 0, "no model call for refused data");
+    assert!(!fx.root.join("ws").join(task.id.to_string()).exists());
+    // unknown classes are refused the same way
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("top_secret"));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+}
+
+#[tokio::test]
+async fn missing_data_class_refused() {
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, None);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let err = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert!(err.message.contains("data_class"), "{}", err.message);
+    assert_eq!(provider.call_count(), 0);
+}
+
+#[tokio::test]
+async fn data_class_flows_to_model_request() {
+    use pair_core::types::DataClass;
+    let fx = Fixture::with_class(PASS_ACCEPTANCE, Some("sensitive"));
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let policy = Arc::new(FakePolicy::default());
+    run(&fx.task(&["src/"]), &provider, &policy).await.unwrap();
+    let seen = provider.seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert!(seen.iter().all(|r| r.data_class == DataClass::Sensitive));
+    let actions = policy.seen.lock().unwrap();
+    assert!(!actions.is_empty());
+    assert!(actions.iter().all(|a| a.data_class == DataClass::Sensitive));
 }
 
 #[tokio::test]
@@ -295,13 +616,17 @@ async fn policy_denied_command_never_executes() {
 fn test_runner<'a>(gate: &'a Gate, dir: &Path) -> Runner<'a> {
     Runner::new(
         gate,
-        TaskId::new(),
-        TraceId::new(),
-        fake_ctx(dir),
-        dir.join("home"),
-        std::time::Duration::from_secs(2),
-        Vec::new(),
+        RunnerSetup {
+            task: TaskId::new(),
+            trace: TraceId::new(),
+            ctx: fake_ctx(dir),
+            home: dir.join("home"),
+            timeout: std::time::Duration::from_secs(2),
+            passthrough: Vec::new(),
+            data_class: pair_core::types::DataClass::Personal,
+        },
     )
+    .with_sandbox(host_sandbox())
 }
 
 #[tokio::test]
@@ -383,50 +708,6 @@ async fn patch_output_is_scoped() {
 }
 
 #[test]
-fn remote_write_requires_approval() {
-    let action = RemoteAction {
-        kind: RemoteKind::Push,
-        remote: "origin".into(),
-        host: "github.com".into(),
-        branch: "pair/x".into(),
-        head_sha: "abc".into(),
-        diff_sha256: "def".into(),
-    };
-    let (task, trace) = (TaskId::new(), TraceId::new());
-    let strict = FakePolicy::default();
-    for kind in [RemoteKind::Push, RemoteKind::OpenPr] {
-        let a = RemoteAction {
-            kind,
-            ..action.clone()
-        };
-        let out = request_remote_write(&strict, "/ws", "v", task, trace, &a, &[]).unwrap();
-        assert!(
-            matches!(out, RemoteOutcome::NeedsApproval { .. }),
-            "{kind:?}"
-        );
-    }
-    // even a permissive policy cannot authorize without an approval id
-    let lax = FakePolicy {
-        allow_remote_writes: true,
-        ..FakePolicy::default()
-    };
-    let out = request_remote_write(&lax, "/ws", "v", task, trace, &action, &[]).unwrap();
-    assert!(matches!(out, RemoteOutcome::NeedsApproval { .. }));
-    let out =
-        request_remote_write(&lax, "/ws", "v", task, trace, &action, &[ApprovalId::new()]).unwrap();
-    assert!(matches!(out, RemoteOutcome::Authorized { .. }));
-    // payload hash binds the exact payload
-    let changed = RemoteAction {
-        head_sha: "zzz".into(),
-        ..action.clone()
-    };
-    assert_ne!(
-        action.payload_hash().unwrap(),
-        changed.payload_hash().unwrap()
-    );
-}
-
-#[test]
 fn scope_permits_only_declared_paths() {
     let s = Scope::new(vec!["src/".into(), "Cargo.toml".into()]);
     assert!(s.permits("src/a/b.rs"));
@@ -443,14 +724,49 @@ fn scope_permits_only_declared_paths() {
 }
 
 #[test]
+fn dot_git_check_is_case_insensitive_and_more_secret_files_are_withheld() {
+    for p in [".GIT/config", "a/.Git/hooks/x", ".gIt"] {
+        assert!(!Scope::new(vec!["".into()]).permits(p), "{p}");
+        assert_eq!(
+            super::scope::normalize_rel(p).unwrap_err().code,
+            ErrorCode::PolicyDenied
+        );
+    }
+    for secret in [
+        ".envrc",
+        "sub/.git-credentials",
+        "keys/id_ecdsa",
+        "id_dsa",
+        "kubeconfig",
+        "deploy/prod.tfvars",
+        "release.jks",
+        "x/KUBECONFIG",
+    ] {
+        assert!(is_secret_path(secret), "{secret}");
+    }
+    assert!(!is_secret_path("src/environment.rs") && !is_secret_path("docs/envrc.md"));
+}
+
+#[test]
+fn env_passthrough_rejects_host_service_variables() {
+    for name in ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "docker_host"] {
+        let json = format!(
+            r#"{{"acceptance":[["true"]],"data_class":"public","env_passthrough":["{name}"]}}"#
+        );
+        assert!(RepoConfig::parse(&json).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn repo_config_requires_acceptance_and_rejects_secret_passthrough() {
-    assert!(RepoConfig::parse(r#"{"acceptance":[]}"#).is_err());
+    assert!(RepoConfig::parse(r#"{"acceptance":[],"data_class":"public"}"#).is_err());
     assert!(RepoConfig::parse(
-        r#"{"acceptance":[["true"]],"env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#
+        r#"{"acceptance":[["true"]],"data_class":"public","env_passthrough":["AWS_SECRET_ACCESS_KEY"]}"#
     )
     .is_err());
-    assert!(
-        RepoConfig::parse(r#"{"acceptance":[["true"]],"env_passthrough":["CARGO_HOME"]}"#).is_ok()
-    );
+    assert!(RepoConfig::parse(
+        r#"{"acceptance":[["true"]],"data_class":"public","env_passthrough":["CARGO_HOME"]}"#
+    )
+    .is_ok());
     let _ = Path::new(".");
 }

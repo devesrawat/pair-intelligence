@@ -24,6 +24,8 @@ pub use types::{
 };
 
 #[cfg(test)]
+mod report_tests;
+#[cfg(test)]
 mod testdb;
 #[cfg(test)]
 mod tests;

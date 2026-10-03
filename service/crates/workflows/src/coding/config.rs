@@ -1,35 +1,69 @@
 //! Per-repository authoritative commands, read from `<repo>/.pair/repo.json` of the
 //! original checkout (never from the task worktree, which the task may edit).
+use crate::data_class::require_data_class;
 use pair_core::error::{ErrorCode, PairError, Result};
-use serde::{Deserialize, Serialize};
+use pair_core::types::DataClass;
+use serde::Deserialize;
 use std::path::Path;
 
 pub const REPO_CONFIG_PATH: &str = ".pair/repo.json";
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
+/// Variables that reach host services or agents (docker, kube, ssh, git transports) and so
+/// are never forwarded to commands, even though their names do not look secret.
+const FORBIDDEN_PASSTHROUGH: [&str; 8] = [
+    "DOCKER_HOST",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "KUBECONFIG",
+    "SSH_AUTH_SOCK",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_EXEC_PATH",
+];
 
 fn default_timeout() -> u64 {
     DEFAULT_TIMEOUT_SECS
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RepoConfig {
-    /// Build / lint / type-check argv vectors, run first.
+/// On-disk shape; the data class is validated into [`RepoConfig::data_class`].
+#[derive(Debug, Deserialize)]
+struct RawRepoConfig {
     #[serde(default)]
+    build: Vec<Vec<String>>,
+    acceptance: Vec<Vec<String>>,
+    #[serde(default = "default_timeout")]
+    timeout_secs: u64,
+    #[serde(default)]
+    env_passthrough: Vec<String>,
+    #[serde(default)]
+    data_class: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RepoConfig {
+    /// Declared by the repo owner; Employer and unknown classes are refused at load.
+    pub data_class: DataClass,
+    /// Build / lint / type-check argv vectors, run first.
     pub build: Vec<Vec<String>>,
     /// Acceptance argv vectors; at least one is required.
     pub acceptance: Vec<Vec<String>>,
-    #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
     /// Extra environment variable names forwarded to commands (e.g. CARGO_HOME).
-    #[serde(default)]
     pub env_passthrough: Vec<String>,
 }
 
 impl RepoConfig {
     pub fn parse(json: &str) -> Result<Self> {
-        let cfg: RepoConfig = serde_json::from_str(json).map_err(|e| {
+        let raw: RawRepoConfig = serde_json::from_str(json).map_err(|e| {
             PairError::new(ErrorCode::InvalidInput, format!("invalid repo config: {e}"))
         })?;
+        let cfg = RepoConfig {
+            data_class: require_data_class(raw.data_class.as_deref(), "repo config")?,
+            build: raw.build,
+            acceptance: raw.acceptance,
+            timeout_secs: raw.timeout_secs,
+            env_passthrough: raw.env_passthrough,
+        };
         cfg.validate()?;
         Ok(cfg)
     }
@@ -69,11 +103,12 @@ impl RepoConfig {
                 "timeout_secs must be positive",
             ));
         }
-        if let Some(bad) = self
-            .env_passthrough
-            .iter()
-            .find(|n| super::runner::looks_secret_name(n))
-        {
+        if let Some(bad) = self.env_passthrough.iter().find(|n| {
+            super::runner::looks_secret_name(n)
+                || FORBIDDEN_PASSTHROUGH
+                    .iter()
+                    .any(|f| n.eq_ignore_ascii_case(f))
+        }) {
             return Err(PairError::new(
                 ErrorCode::PolicyDenied,
                 format!("env passthrough of secret-like name {bad}"),

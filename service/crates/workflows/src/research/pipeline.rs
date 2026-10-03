@@ -11,18 +11,24 @@ use super::{
     synth::synthesize,
     types::{Report, ResearchScope},
 };
+use crate::{calls::ModelCaller, data_class::require_data_class};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    money::Micros,
-    traits::{Budget, Provider},
+    traits::{BudgetEx, Provider},
+    types::{DataClass, TaskKind},
 };
 
 pub struct ResearchDeps<'a> {
     pub provider: &'a dyn Provider,
     pub gate: &'a pair_policy::Gate,
-    pub budget: &'a dyn Budget,
+    pub budget: &'a dyn BudgetEx,
+    pub prices: &'a dyn crate::calls::PriceSource,
+    /// The router: which model(s) to call.
+    pub planner: &'a dyn crate::calls::ModelPlanner,
+    /// Tool-call and wall-clock limits of this run (`RunLimits::background()`).
+    pub limits: std::sync::Arc<crate::limits::RunLimits>,
     pub fetcher: &'a dyn SourceFetcher,
     pub store: &'a EvidenceStore,
     /// Optional semantic veto on top of the deterministic support check.
@@ -37,23 +43,35 @@ pub struct ResearchDeps<'a> {
 pub struct ResearchRun {
     pub task: TaskId,
     pub trace: TraceId,
-    pub model_id: String,
-    pub max_call_cost: Micros,
 }
 
+#[derive(Debug)]
 pub struct ResearchOutput {
     pub report: Report,
     pub markdown: String,
 }
 
-fn validate_scope(scope: &ResearchScope) -> Result<()> {
+pub(crate) const STATEMENT_LIMITATION: &str = "Synthesized statements were checked lexically against the spans of the claims they cite (term overlap, figures, negation parity); no semantic check covers them, so each statement still needs a manual audit.";
+
+fn validate_scope(scope: &ResearchScope) -> Result<DataClass> {
+    let class = require_data_class(scope.data_class.as_deref(), "research scope")?;
     if scope.question.trim().is_empty() || scope.max_sources == 0 {
         return Err(PairError::new(
             ErrorCode::InvalidInput,
             "research scope needs a question and max_sources > 0",
         ));
     }
-    Ok(())
+    if scope.max_sources > crate::limits::MAX_RESEARCH_SOURCES {
+        return Err(PairError::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "max_sources {} exceeds the limit of {}",
+                scope.max_sources,
+                crate::limits::MAX_RESEARCH_SOURCES
+            ),
+        ));
+    }
+    Ok(class)
 }
 
 pub async fn run_research(
@@ -61,9 +79,10 @@ pub async fn run_research(
     run: &ResearchRun,
     scope: &ResearchScope,
 ) -> Result<ResearchOutput> {
-    validate_scope(scope)?;
+    deps.limits.require_within(crate::limits::BACKGROUND_WALL)?;
+    let class = validate_scope(scope)?;
     let run_id = deps.store.create_run(scope).await?;
-    match execute(deps, run, scope, run_id).await {
+    match execute(deps, run, scope, class, run_id).await {
         Ok(out) => {
             deps.store.finish_run(run_id, true).await?;
             Ok(out)
@@ -81,6 +100,7 @@ async fn execute(
     deps: &ResearchDeps<'_>,
     run: &ResearchRun,
     scope: &ResearchScope,
+    data_class: DataClass,
     run_id: uuid::Uuid,
 ) -> Result<ResearchOutput> {
     let net = Network {
@@ -90,14 +110,22 @@ async fn execute(
         trace: run.trace,
         ctx: deps.policy.clone(),
         search_host: deps.search_host.clone(),
+        data_class,
+        limits: deps.limits.clone(),
     };
     let llm = ResearchLlm {
-        provider: deps.provider,
-        budget: deps.budget,
+        caller: ModelCaller {
+            provider: deps.provider,
+            budget: deps.budget,
+            prices: deps.prices,
+            planner: deps.planner,
+            limits: &deps.limits,
+            kind: TaskKind::Research,
+            intent: "research",
+        },
         task: run.task,
         trace: run.trace,
-        model_id: run.model_id.clone(),
-        max_cost: run.max_call_cost,
+        data_class,
     };
 
     let sources = capture_sources(&net, scope).await?;
@@ -175,7 +203,9 @@ fn limitations(
         out.push("Some sources carry no publication date.".into());
     }
     if deps.judge.is_none() {
-        out.push("Support was checked lexically against captured text only (no semantic judge); every claim still needs a manual audit.".into());
+        out.push("Claim support was checked lexically against captured text only (no semantic judge); every claim still needs a manual audit.".into());
     }
+    // No judge covers synthesized statements, so this holds whether or not one is configured.
+    out.push(STATEMENT_LIMITATION.into());
     out
 }

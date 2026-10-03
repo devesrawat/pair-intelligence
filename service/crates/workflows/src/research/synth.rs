@@ -59,7 +59,7 @@ pub async fn synthesize(
     let set: StatementSet = llm
         .ask_json(vec![
             owner_msg(format!("{SYNTH_INSTRUCTIONS}\nQuestion: {question}")),
-            untrusted_msg(body),
+            untrusted_msg("research:claims", &body),
         ])
         .await?;
     Ok(validate_statements(set, &ids, conflicts))

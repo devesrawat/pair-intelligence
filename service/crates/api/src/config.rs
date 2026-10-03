@@ -28,7 +28,9 @@ const SECS_SETTINGS: [(&str, u64, u64); 5] = [
     ("PAIR_SHUTDOWN_DRAIN_SECS", 20, 1),
     ("PAIR_TURN_BUDGET_SECS", 25, 1),
 ];
-/// Must stay below the 30 s HTTP request timeout, or a turn can be cut off mid-flight.
+/// Kept below the 30 s HTTP request timeout so a turn normally answers before the client's
+/// request is cut off. It is a deadline for the whole turn (classifier and database time included);
+/// a turn that still outlives the request runs on, detached, and a retry gets its stored answer.
 const MAX_TURN_BUDGET_SECS: u64 = 28;
 
 #[derive(Debug, Clone)]

@@ -17,8 +17,10 @@ use tokio_util::task::TaskTracker;
 use crate::adapter_budget::AdapterBudget;
 use crate::attempts::AttemptStore;
 
-/// Total wall-clock a turn may spend on provider attempts. Below the 30 s HTTP request timeout so
-/// a slow provider ends the turn cleanly instead of being cut off between reserve and reconcile.
+/// Wall-clock deadline of a whole turn, measured from its start: the classifier and database time
+/// count against it, and the provider attempts get what is left. Below the 30 s HTTP request
+/// timeout so a turn normally answers in time; one that does not keeps running detached (the client
+/// sees a 504 and a retry returns the stored answer).
 pub const DEFAULT_TURN_BUDGET: Duration = Duration::from_secs(25);
 
 #[derive(Clone)]

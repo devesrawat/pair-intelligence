@@ -62,7 +62,10 @@ env:
       from PAIR_SERVICE_TOKEN. Unset disables approval creation (every call is refused).
   PAIR_TURN_BUDGET_SECS:
     default: 25
-    doc: Wall-clock a turn may spend on provider attempts; at most 28 (the HTTP timeout is 30).
+    doc: >
+      Deadline of a whole turn, measured from its start (classifier and database time count; the
+      provider attempts get the rest); at most 28 (the HTTP timeout is 30). A turn that outlives the
+      request keeps running detached; a retry with the same client_message_id gets its stored answer.
 
   PAIR_BUDGET_OVERRUN_FACTOR:
     default: 4

@@ -122,7 +122,7 @@ async fn run_limited(
     limits: Arc<crate::limits::RunLimits>,
 ) -> pair_core::error::Result<CodingResult> {
     let budget = FakeBudget::default();
-    let gate = Gate::new(policy.clone(), None);
+    let gate = Gate::unaudited_for_tests(policy.clone(), None);
     let deps = CodingDeps {
         provider,
         gate: &gate,
@@ -359,7 +359,7 @@ async fn container_sandbox_without_image_never_runs_acceptance_on_the_host() {
     let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
     let policy = Arc::new(FakePolicy::default());
     let budget = FakeBudget::default();
-    let gate = Gate::new(policy, None);
+    let gate = Gate::unaudited_for_tests(policy, None);
     let deps = CodingDeps {
         provider: &provider,
         gate: &gate,
@@ -647,12 +647,12 @@ async fn runner_cannot_execute_without_gate_allow() {
         (denied, ErrorCode::PolicyDenied),
         (needs_approval, ErrorCode::ApprovalRequired),
     ] {
-        let gate = Gate::new(Arc::new(FixedPolicy(decision)), None);
+        let gate = Gate::unaudited_for_tests(Arc::new(FixedPolicy(decision)), None);
         let err = test_runner(&gate, &dir).run(&argv, &dir).await.unwrap_err();
         assert_eq!(err.code, code);
         assert!(!dir.join("ran.marker").exists());
     }
-    let gate = Gate::new(Arc::new(FixedPolicy(Decision::Allow)), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(FixedPolicy(Decision::Allow)), None);
     let report = test_runner(&gate, &dir).run(&argv, &dir).await.unwrap();
     assert!(report.passed());
     assert!(dir.join("ran.marker").exists());

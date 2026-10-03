@@ -3,6 +3,7 @@ mod common;
 use common::*;
 use ops::export::export_all;
 use sha2::{Digest, Sha256};
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 
 fn read(dir: &Path, name: &str) -> String {
@@ -218,5 +219,154 @@ async fn export_redacts_secret_config_values() {
     assert!(config.contains("\"label\""));
     assert!(config.contains("work"), "non-secret values stay");
     assert!(config.contains("[redacted]"));
+    db.drop_db().await;
+}
+
+fn mode(path: &Path) -> u32 {
+    std::fs::symlink_metadata(path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[tokio::test]
+async fn export_files_are_0600_and_dir_0700() {
+    let db = TestDb::create().await;
+    seed(&db).await;
+    let out = temp_dir("modes").join("nested").join("export");
+
+    let manifest = export_all(&db.pool, &out, true).await.expect("export");
+
+    assert_eq!(mode(&out), 0o700, "export directory");
+    assert_eq!(
+        mode(out.parent().expect("parent")),
+        0o700,
+        "created parents too"
+    );
+    for f in manifest
+        .files
+        .iter()
+        .map(|f| f.name.as_str())
+        .chain(["manifest.json"])
+    {
+        assert_eq!(mode(&out.join(f)), 0o600, "{f}");
+    }
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn export_refuses_symlink_target() {
+    let db = TestDb::create().await;
+    seed(&db).await;
+    let victim_dir = temp_dir("victim");
+    let victim = victim_dir.join("bashrc");
+    std::fs::write(&victim, "export PATH=safe").expect("victim");
+
+    // --out itself is a symlink to a real (empty) directory.
+    let empty_target = temp_dir("empty_target");
+    let link = temp_dir("link_parent").join("out");
+    symlink(&empty_target, &link).expect("symlink out");
+    export_all(&db.pool, &link, false)
+        .await
+        .expect_err("a symlinked --out must be refused");
+    assert_eq!(std::fs::read_dir(&empty_target).expect("ls").count(), 0);
+
+    // A file inside --out is a symlink to somewhere else (manifest.json -> victim).
+    let out = temp_dir("planted");
+    symlink(&victim, out.join("manifest.json")).expect("symlink manifest");
+    export_all(&db.pool, &out, false)
+        .await
+        .expect_err("a planted symlink must be refused, never followed");
+
+    assert_eq!(
+        read(&victim_dir, "bashrc"),
+        "export PATH=safe",
+        "victim untouched"
+    );
+    assert_eq!(std::fs::read_dir(&victim_dir).expect("ls").count(), 1);
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn export_refuses_non_empty_out_dir() {
+    let db = TestDb::create().await;
+    seed(&db).await;
+    let out = temp_dir("busy");
+    std::fs::write(out.join("notes.txt"), "mine").expect("unrelated file");
+
+    export_all(&db.pool, &out, false)
+        .await
+        .expect_err("a directory with foreign content is refused");
+
+    assert_eq!(read(&out, "notes.txt"), "mine");
+    assert!(!out.join("manifest.json").exists(), "nothing was written");
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn stale_config_jsonl_not_left_behind() {
+    let db = TestDb::create().await;
+    seed(&db).await;
+    let out = temp_dir("stale");
+
+    export_all(&db.pool, &out, true).await.expect("with config");
+    assert!(out.join("config.jsonl").exists());
+    // Re-exporting into the previous export's own directory replaces it entirely.
+    let manifest = export_all(&db.pool, &out, false)
+        .await
+        .expect("without config");
+
+    assert!(
+        !out.join("config.jsonl").exists(),
+        "config.jsonl from the earlier run must not survive an export without config"
+    );
+    let mut on_disk: Vec<String> = std::fs::read_dir(&out)
+        .expect("ls")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    let mut expected: Vec<String> = manifest.files.iter().map(|f| f.name.clone()).collect();
+    expected.push("manifest.json".to_owned());
+    on_disk.sort();
+    expected.sort();
+    assert_eq!(on_disk, expected, "only manifest files remain");
+    db.drop_db().await;
+}
+
+#[tokio::test]
+async fn export_markdown_groups_evidence_under_the_right_memory() {
+    let db = TestDb::create().await;
+    let src = insert_source(&db.pool, 10, false, "file:///a").await;
+    let first = insert_memory(&db.pool, "fact", "first fact", src, "span of first", 10).await;
+    let second = insert_memory(&db.pool, "fact", "second fact", src, "span of second", 10).await;
+    sqlx::query("INSERT INTO memory_evidence (memory_id, source_id, span, extraction_version) VALUES ($1, $2, 'extra span of first', 'v1')")
+        .bind(first)
+        .bind(src)
+        .execute(&db.pool)
+        .await
+        .expect("second evidence row");
+    let out = temp_dir("group");
+
+    export_all(&db.pool, &out, false).await.expect("export");
+
+    let index = read(&out, "index.md");
+    let section = |id: uuid::Uuid| {
+        let start = index
+            .find(&format!("### memory {id}"))
+            .expect("memory section");
+        let rest = &index[start + 1..];
+        let end = rest.find("### memory ").unwrap_or(rest.len());
+        rest[..end].to_owned()
+    };
+    let (a, b) = (section(first), section(second));
+    assert!(
+        a.contains("span of first") && a.contains("extra span of first"),
+        "{a}"
+    );
+    assert!(!a.contains("span of second"), "{a}");
+    assert!(
+        b.contains("span of second") && !b.contains("span of first"),
+        "{b}"
+    );
     db.drop_db().await;
 }

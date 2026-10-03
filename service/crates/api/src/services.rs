@@ -11,6 +11,7 @@ use pair_jobs::PgApprovals;
 use pair_models::classification::pipeline::RoutingPipeline;
 use pair_models::provider::store::ConversationStore;
 use pair_models::provider::ProviderRegistry;
+use pair_policy::recorder::ExecutionRecorder;
 use pair_policy::PolicyEngine;
 
 use crate::attempts::AttemptStore;
@@ -29,6 +30,8 @@ pub struct Services {
     pub store: ConversationStore,
     pub attempts: AttemptStore,
     pub policy: Arc<PolicyEngine>,
+    /// Audit sink for every `/v1/policy/authorize` decision (`tool_executions`).
+    pub recorder: Arc<dyn ExecutionRecorder>,
     pub approvals: PgApprovals,
     /// Workspace the policy engine resolves paths against. Server-side only: a caller-chosen root
     /// would let a request declare any directory (such as `/`) to be inside the workspace.

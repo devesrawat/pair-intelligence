@@ -164,7 +164,7 @@ fn argv(parts: &[&str]) -> Vec<String> {
 }
 
 fn engine_gate(world: &World, approvals: Option<Arc<dyn Approvals>>) -> Gate {
-    Gate::new(world.engine.clone(), approvals)
+    Gate::unaudited_for_tests(world.engine.clone(), approvals)
 }
 
 #[tokio::test]

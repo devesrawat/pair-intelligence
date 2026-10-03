@@ -16,11 +16,10 @@ const DEFAULT_BATCH_SIZE: i64 = 500;
 const DEFAULT_MAX_BATCHES: u32 = 100;
 
 /// Payload-like columns of `tool_executions`, erased when present. The table is owned by another
-/// migration, so its shape is detected rather than assumed.
+/// migration, so its shape is detected rather than assumed. The real table (migration 090) keeps
+/// only an args hash and a destination reduced to `scheme://host[:port][/path]` at record time, so
+/// it has none of these: `destination` is deliberately NOT listed, it is egress audit evidence.
 const TOOL_PAYLOAD_COLUMNS: &[&str] = &[
-    // The real table (migration 090) keeps only an args hash; `destination` is stored verbatim and
-    // can carry a token in a URL, so it is the one content-like column to erase.
-    "destination",
     "request",
     "args",
     "arguments",
@@ -33,6 +32,15 @@ const TOOL_PAYLOAD_COLUMNS: &[&str] = &[
     "stderr",
 ];
 const TOOL_AGE_COLUMNS: &[&str] = &["created_at", "started_at", "requested_at"];
+
+/// Targets every deployment has. If one cannot run (missing table or column, or a decoy table
+/// earlier on the search_path) the purge is refused: a quiet skip would report success while old
+/// payloads stay behind.
+const CORE_TARGETS: &[&str] = &[
+    "model_calls.payloads",
+    "effect_intents.payloads",
+    "sources.raw",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetentionPolicy {
@@ -148,6 +156,26 @@ const STATIC_TARGETS: &[Target] = &[
         age: Age::Source,
     },
     Target {
+        name: "research_claim_evidence.span",
+        table: "research_claim_evidence",
+        required: &["id", "span", "source_id"],
+        // `span` is NOT NULL and quotes the source verbatim, so it goes with the source text.
+        set: "span = '[purged]'",
+        pred: "span <> '[purged]' AND source_id IN ( \
+               SELECT s.id FROM research_sources s WHERE s.fetched_at < $1 AND NOT s.pinned)",
+        age: Age::Source,
+    },
+    Target {
+        name: "research_reports.markdown",
+        table: "research_reports",
+        required: &["run_id", "markdown"],
+        // The rendered report quotes the sources of its run; once one is purged it must go too.
+        set: "markdown = ''",
+        pred: "markdown <> '' AND run_id IN ( \
+               SELECT s.run_id FROM research_sources s WHERE s.fetched_at < $1 AND NOT s.pinned)",
+        age: Age::Source,
+    },
+    Target {
         name: "integration_sources.content",
         table: "integration_sources",
         required: &["content", "pinned", "updated_at"],
@@ -201,12 +229,25 @@ pub async fn purge(
         dry_run: policy.dry_run,
         ..PurgeReport::default()
     };
+    let mut runnable = Vec::with_capacity(STATIC_TARGETS.len());
     for target in STATIC_TARGETS {
         let cols = schema::columns(pool, target.table).await?;
-        if !schema::has_all(&cols, target.required) {
+        if schema::has_all(&cols, target.required) {
+            runnable.push(target);
+        } else {
             report.skipped.push(target.name.to_owned());
-            continue;
         }
+    }
+    let missing_core: Vec<String> = report
+        .skipped
+        .iter()
+        .filter(|name| CORE_TARGETS.contains(&name.as_str()))
+        .cloned()
+        .collect();
+    if !missing_core.is_empty() {
+        return Err(OpsError::CoreTargetSkipped(missing_core));
+    }
+    for target in runnable {
         let cutoff = cutoff_for(target.age, now, policy);
         let sql = statements(target.table, target.set, target.pred);
         run_target(pool, target.name, &sql, cutoff, now, policy, &mut report).await?;
@@ -271,7 +312,13 @@ fn tool_clauses(cols: &[ColumnInfo]) -> Option<(String, String)> {
     if sets.is_empty() {
         return None;
     }
-    let pred = format!("\"{age}\" < $1 AND ({})", unerased.join(" OR "));
+    // A row still `started` is evidence of an unfinished action: never erased.
+    let finished = if cols.iter().any(|c| c.name == "outcome") {
+        " AND \"outcome\" IS DISTINCT FROM 'started'"
+    } else {
+        ""
+    };
+    let pred = format!("\"{age}\" < $1 AND ({}){finished}", unerased.join(" OR "));
     Some((sets.join(", "), pred))
 }
 
@@ -284,32 +331,17 @@ async fn run_target(
     policy: &RetentionPolicy,
     report: &mut PurgeReport,
 ) -> Result<()> {
-    let mut erased: u64 = 0;
-    if policy.dry_run {
-        let n: i64 = sqlx::query_scalar(&sql.count)
-            .bind(cutoff)
-            .fetch_one(pool)
-            .await?;
-        erased = u64::try_from(n).unwrap_or(0);
+    let erased = if policy.dry_run {
+        u64::try_from(remaining(pool, sql, cutoff).await?).unwrap_or(0)
     } else {
-        let batch = u64::try_from(policy.batch_size).unwrap_or(1);
-        for attempt in 1..=policy.max_batches_per_target {
-            let done = sqlx::query(&sql.update)
-                .bind(cutoff)
-                .bind(now)
-                .bind(policy.batch_size)
-                .execute(pool)
-                .await?
-                .rows_affected();
-            erased += done;
-            if done < batch {
-                break;
-            }
-            if attempt == policy.max_batches_per_target {
-                report.truncated = true;
-            }
+        let erased = erase_in_batches(pool, sql, cutoff, now, policy).await?;
+        // `FOR UPDATE SKIP LOCKED` can return fewer rows than the batch while locked rows remain,
+        // and a run that exactly covers the work is not truncated: ask what is actually left.
+        if remaining(pool, sql, cutoff).await? > 0 {
+            report.truncated = true;
         }
-    }
+        erased
+    };
     tracing::info!(
         target = name,
         erased,
@@ -321,6 +353,38 @@ async fn run_target(
         erased,
     });
     Ok(())
+}
+
+async fn remaining(pool: &PgPool, sql: &Statements, cutoff: DateTime<Utc>) -> Result<i64> {
+    Ok(sqlx::query_scalar(&sql.count)
+        .bind(cutoff)
+        .fetch_one(pool)
+        .await?)
+}
+
+async fn erase_in_batches(
+    pool: &PgPool,
+    sql: &Statements,
+    cutoff: DateTime<Utc>,
+    now: DateTime<Utc>,
+    policy: &RetentionPolicy,
+) -> Result<u64> {
+    let batch = u64::try_from(policy.batch_size).unwrap_or(1);
+    let mut erased: u64 = 0;
+    for _ in 0..policy.max_batches_per_target {
+        let done = sqlx::query(&sql.update)
+            .bind(cutoff)
+            .bind(now)
+            .bind(policy.batch_size)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        erased += done;
+        if done < batch {
+            break;
+        }
+    }
+    Ok(erased)
 }
 
 #[cfg(test)]

@@ -275,7 +275,7 @@ fn default_runner_uses_the_container_sandbox() {
     use super::{Runner, RunnerSetup};
     use pair_core::ids::{TaskId, TraceId};
     use pair_policy::Gate;
-    let gate = Gate::new(Arc::new(super::testkit::FakePolicy::default()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(super::testkit::FakePolicy::default()), None);
     let runner = Runner::new(
         &gate,
         RunnerSetup {

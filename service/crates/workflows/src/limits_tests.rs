@@ -66,7 +66,7 @@ fn request(class: DataClass) -> ModelRequest {
 #[tokio::test]
 async fn tool_call_cap_20_enforced() {
     let dir = temp();
-    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(FakePolicy::default()), None);
     let limits = Arc::new(RunLimits::interactive());
     let r = runner(&gate, &dir, limits.clone());
     for i in 0..MAX_TOOL_CALLS {
@@ -92,7 +92,7 @@ async fn tool_call_cap_20_enforced() {
 #[tokio::test]
 async fn interactive_deadline_enforced() {
     let dir = temp();
-    let gate = Gate::new(Arc::new(FakePolicy::default()), None);
+    let gate = Gate::unaudited_for_tests(Arc::new(FakePolicy::default()), None);
 
     // already past the deadline: no command and no model call is started
     let expired = Arc::new(RunLimits::with_deadline(

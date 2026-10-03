@@ -247,6 +247,39 @@ fn dotenv_and_private_key_files_denied_but_templates_allowed() {
     }
 }
 
+#[test]
+fn production_env_suffix_denied() {
+    let f = fixture();
+    for name in [
+        "config/production.env",
+        "staging.env",
+        "sub/Prod.ENV",
+        "deploy/secrets.env",
+        "app.production.env",
+    ] {
+        let mut r = request("fs.read");
+        r.paths = vec![name.into()];
+        assert!(is_deny(&f.engine.authorize(&r, &f.ctx).decision), "{name}");
+    }
+    // Templates and unrelated names that merely contain "env" stay readable.
+    for name in [
+        ".env.example",
+        "config/.env.sample",
+        "env.rs",
+        "src/environment.rs",
+        "envelope.txt",
+        "config/env/README.md",
+    ] {
+        let mut r = request("fs.read");
+        r.paths = vec![name.into()];
+        assert_eq!(
+            f.engine.authorize(&r, &f.ctx).decision,
+            Decision::Allow,
+            "{name}"
+        );
+    }
+}
+
 const GIT_PUSH_POLICY: &str = r#"
 version: "t1"
 tools: { git.push: external_write }

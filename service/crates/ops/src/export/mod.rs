@@ -5,13 +5,19 @@
 //! a Markdown index, and `manifest.json` listing row counts and a SHA-256 per file. All reads happen
 //! in one repeatable-read transaction, so the files are mutually consistent.
 //!
+//! The output directory is created 0700 and every file 0600 with `create_new` (no overwrite, no
+//! symlink following); a non-empty `--out` is refused unless it holds only an earlier export,
+//! which is replaced whole so no stale file (such as `config.jsonl`) survives.
+//!
 //! Deletion semantics: a memory whose evidence is entirely from deleted sources is exported as a
 //! tombstone (no content, topic or project), and evidence rows of deleted sources carry no span,
 //! uri or external id. Configuration values that look like secrets are replaced by `[redacted]`.
 mod markdown;
+mod output;
 pub mod redact;
 
-use crate::error::{OpsError, Result};
+use crate::error::Result;
+use output::OutDir;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -78,57 +84,80 @@ SELECT to_jsonb(x)::text FROM ( \
 const CONFIG_ACCOUNTS_SQL: &str = "SELECT to_jsonb(t) FROM integration_accounts t ORDER BY t.id";
 const CONFIG_ROUTINES_SQL: &str = "SELECT to_jsonb(t) FROM scheduled_routines t ORDER BY t.name";
 
-/// Writes the export into `out_dir` (created if missing) and returns the manifest.
-pub async fn export_all(pool: &PgPool, out_dir: &Path, include_config: bool) -> Result<Manifest> {
-    tokio::fs::create_dir_all(out_dir)
-        .await
-        .map_err(|e| OpsError::io(out_dir, e))?;
+/// Everything read from the database in one consistent snapshot.
+struct Snapshot {
+    conversations: Vec<Row>,
+    messages: Vec<Row>,
+    memories: Vec<Row>,
+    evidence: Vec<Row>,
+    goals: Vec<Row>,
+    open_loops: Vec<Row>,
+    reservations: Vec<Row>,
+    ledger: Vec<Row>,
+    config: Option<Vec<Row>>,
+}
+
+async fn read_snapshot(pool: &PgPool, include_config: bool) -> Result<Snapshot> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let conversations = rows(&mut tx, CONVERSATIONS_SQL).await?;
-    let messages = rows(&mut tx, MESSAGES_SQL).await?;
-    let memories = rows(&mut tx, MEMORIES_SQL).await?;
-    let evidence = rows(&mut tx, EVIDENCE_SQL).await?;
-    let goals = rows(&mut tx, GOALS_SQL).await?;
-    let open_loops = rows(&mut tx, OPEN_LOOPS_SQL).await?;
-    let reservations = rows(&mut tx, RESERVATIONS_SQL).await?;
-    let ledger = rows(&mut tx, LEDGER_SQL).await?;
-    let config = if include_config {
-        Some(config_rows(&mut tx).await?)
-    } else {
-        None
+    let snapshot = Snapshot {
+        conversations: rows(&mut tx, CONVERSATIONS_SQL).await?,
+        messages: rows(&mut tx, MESSAGES_SQL).await?,
+        memories: rows(&mut tx, MEMORIES_SQL).await?,
+        evidence: rows(&mut tx, EVIDENCE_SQL).await?,
+        goals: rows(&mut tx, GOALS_SQL).await?,
+        open_loops: rows(&mut tx, OPEN_LOOPS_SQL).await?,
+        reservations: rows(&mut tx, RESERVATIONS_SQL).await?,
+        ledger: rows(&mut tx, LEDGER_SQL).await?,
+        config: if include_config {
+            Some(config_rows(&mut tx).await?)
+        } else {
+            None
+        },
     };
     tx.rollback().await?;
+    Ok(snapshot)
+}
 
+impl Snapshot {
+    fn tables(&self) -> Vec<(&'static str, &[Row])> {
+        let mut tables: Vec<(&'static str, &[Row])> = vec![
+            ("conversations.jsonl", &self.conversations),
+            ("messages.jsonl", &self.messages),
+            ("memories.jsonl", &self.memories),
+            ("memory_evidence.jsonl", &self.evidence),
+            ("goals.jsonl", &self.goals),
+            ("open_loops.jsonl", &self.open_loops),
+            ("billing_reservations.jsonl", &self.reservations),
+            ("billing_ledger.jsonl", &self.ledger),
+        ];
+        if let Some(c) = &self.config {
+            tables.push(("config.jsonl", c));
+        }
+        tables
+    }
+}
+
+/// Writes the export into `out_dir` and returns the manifest. `out_dir` must be new, empty, or
+/// the output of an earlier export (see the module docs); it is created 0700, files 0600.
+pub async fn export_all(pool: &PgPool, out_dir: &Path, include_config: bool) -> Result<Manifest> {
+    let snapshot = read_snapshot(pool, include_config).await?;
+    let dir = OutDir::prepare(out_dir).await?;
     let mut files = Vec::new();
-    let mut tables: Vec<(&str, &[Row])> = vec![
-        ("conversations.jsonl", &conversations),
-        ("messages.jsonl", &messages),
-        ("memories.jsonl", &memories),
-        ("memory_evidence.jsonl", &evidence),
-        ("goals.jsonl", &goals),
-        ("open_loops.jsonl", &open_loops),
-        ("billing_reservations.jsonl", &reservations),
-        ("billing_ledger.jsonl", &ledger),
-    ];
-    if let Some(c) = &config {
-        tables.push(("config.jsonl", c));
+    for (name, table) in snapshot.tables() {
+        files.push(write_jsonl(&dir, name, table).await?);
     }
-    for (name, table) in tables {
-        files.push(write_jsonl(out_dir, name, table).await?);
-    }
-
     let index = markdown::render_index(&markdown::IndexInput {
         files: &files,
-        conversations: &conversations,
-        memories: &memories,
-        evidence: &evidence,
-        goals: &goals,
-        open_loops: &open_loops,
+        conversations: &snapshot.conversations,
+        memories: &snapshot.memories,
+        evidence: &snapshot.evidence,
+        goals: &snapshot.goals,
+        open_loops: &snapshot.open_loops,
     });
-    files.push(write_file(out_dir, INDEX_FILE, &index, 1).await?);
+    files.push(write_file(&dir, INDEX_FILE, &index, 1).await?);
 
     let manifest = Manifest {
         format_version: FORMAT_VERSION,
@@ -137,7 +166,7 @@ pub async fn export_all(pool: &PgPool, out_dir: &Path, include_config: bool) -> 
     };
     let mut text = serde_json::to_string_pretty(&manifest)?;
     text.push('\n');
-    write_text(out_dir, MANIFEST_FILE, &text).await?;
+    dir.write(MANIFEST_FILE, &text).await?;
     tracing::info!(
         files = manifest.files.len(),
         include_config,
@@ -186,7 +215,7 @@ fn escape_line_separators(json: &str) -> String {
         .replace('\u{85}', "\\u0085")
 }
 
-async fn write_jsonl(dir: &Path, name: &str, table: &[Row]) -> Result<FileEntry> {
+async fn write_jsonl(dir: &OutDir, name: &str, table: &[Row]) -> Result<FileEntry> {
     let mut text = String::new();
     for r in table {
         text.push_str(&r.line);
@@ -195,8 +224,8 @@ async fn write_jsonl(dir: &Path, name: &str, table: &[Row]) -> Result<FileEntry>
     write_file(dir, name, &text, table.len() as u64).await
 }
 
-async fn write_file(dir: &Path, name: &str, text: &str, rows: u64) -> Result<FileEntry> {
-    write_text(dir, name, text).await?;
+async fn write_file(dir: &OutDir, name: &str, text: &str, rows: u64) -> Result<FileEntry> {
+    dir.write(name, text).await?;
     let sha256 = Sha256::digest(text.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -206,11 +235,4 @@ async fn write_file(dir: &Path, name: &str, text: &str, rows: u64) -> Result<Fil
         rows,
         sha256,
     })
-}
-
-async fn write_text(dir: &Path, name: &str, text: &str) -> Result<()> {
-    let path = dir.join(name);
-    tokio::fs::write(&path, text)
-        .await
-        .map_err(|e| OpsError::io(&path, e))
 }

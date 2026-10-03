@@ -65,11 +65,13 @@ impl PolicyEngine {
             .tools
             .get(&req.tool)
             .ok_or_else(|| format!("tool {:?} is not registered", req.tool))?;
-        let workspace = Path::new(&ctx.workspace_root)
-            .canonicalize()
-            .map_err(|e| format!("workspace root unusable: {e}"))?;
+        let declared_root = Path::new(&ctx.workspace_root);
+        let workspace = declared_root.canonicalize().map_err(|e| {
+            tracing::error!(error = %e, "policy workspace root is unusable");
+            "workspace root is not available".to_owned()
+        })?;
         let extra_paths = self.check_executable(req)?;
-        self.check_paths(req, &workspace, &extra_paths)?;
+        self.check_paths(req, &workspace, declared_root, &extra_paths)?;
         self.check_destinations(req)?;
         match class {
             ActionClass::Read | ActionClass::LocalEdit | ActionClass::LocalCommit => {
@@ -104,6 +106,7 @@ impl PolicyEngine {
         &self,
         req: &ActionRequest,
         workspace: &Path,
+        declared_root: &Path,
         extra_paths: &[String],
     ) -> Result<(), String> {
         let refs = args::extract_for(req.executable.as_deref(), &req.args);
@@ -111,7 +114,7 @@ impl PolicyEngine {
             .iter()
             .chain(extra_paths)
             .chain(&refs.paths)
-            .try_for_each(|p| self.guard.check(workspace, p).map(drop))
+            .try_for_each(|p| self.guard.check_in(workspace, declared_root, p).map(drop))
     }
 
     fn check_destinations(&self, req: &ActionRequest) -> Result<(), String> {

@@ -22,8 +22,6 @@ tracing.workspace = true
 chrono.workspace = true
 sqlx = { workspace = true, features = ["json"] }
 sha2 = "0.10"
-
-[dev-dependencies]
 uuid.workspace = true
 
 [lints]

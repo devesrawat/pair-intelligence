@@ -1,34 +1,27 @@
-[90m2026-10-03T18:14:50.813+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
-[90m2026-10-03T18:14:51.002+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
-[90m2026-10-03T18:14:51.004+05:30[39m [36m[gateway][39m [36mstarting...[39m
-[90m2026-10-03T18:14:51.195+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
-[90m2026-10-03T18:14:52.661+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
-[90m2026-10-03T18:14:52.753+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
-[90m2026-10-03T18:14:53.702+05:30[39m [35m[plugins][39m [31mpair-spike: refusing to run ungated: PAIR_API_URL is not loopback; set PAIR_ADAPTER_ALLOW_REMOTE=1 to allow a remote service[39m
-[90m2026-10-03T18:14:54.116+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/adapters/openclaw/pair-spike/dist/index.js)[39m
-[90m2026-10-03T18:14:54.125+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
-[90m2026-10-03T18:14:54.126+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 2.9s)[39m
-[90m2026-10-03T18:14:54.126+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
-[90m2026-10-03T18:14:54.126+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":16605,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
-[90m2026-10-03T18:14:54.126+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":6,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"session-transcript.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
-[90m2026-10-03T18:14:54.510+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
-[90m2026-10-03T18:14:54.888+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
-[90m2026-10-03T18:14:54.963+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
-[90m2026-10-03T18:14:54.967+05:30[39m [36m[gateway][39m [36mready[39m
-[90m2026-10-03T18:14:55.000+05:30[39m [36m[heartbeat][39m [36mstarted[39m
-[90m2026-10-03T18:14:55.227+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
-[90m2026-10-03T18:14:56.542+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md[39m
-[90m2026-10-03T18:14:56.543+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md[39m
-[90m2026-10-03T18:14:56.543+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md[39m
-[90m2026-10-03T18:14:56.564+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md[39m
-[90m2026-10-03T18:14:56.564+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md[39m
-[90m2026-10-03T18:14:56.564+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md[39m
-[90m2026-10-03T18:15:03.268+05:30[39m [36m[ws][39m [36m⇄ res ✓ agent 100ms runId=9692f5c1-cff1-4a7b-8af3-179d6ab1ada9 conn=d0ddd228…8eb7 id=2:6fb876b9-5…409a[39m
-[90m2026-10-03T18:15:03.501+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
-[33m[state/agent-db][39m [36magent database integrity gate[39m
-[90m2026-10-03T18:15:03.932+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/acp-router/SKILL.md[39m
-[90m2026-10-03T18:15:03.933+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/browser-automation/SKILL.md[39m
-[90m2026-10-03T18:15:03.933+05:30[39m [36m[skills][39m [33mSkipping invalid skill: file=/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md error=symlink prefix resolves outside the root ancestry: /var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/state/plugin-skills/canvas/SKILL.md[39m
-[90m2026-10-03T18:15:04.250+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
-[90m2026-10-03T18:15:04.967+05:30[39m [33m[agent/embedded][39m [33mbefore_agent_run hook blocked by pair-spike[39m
-2026-10-03T18:15:05.050+05:30 Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)
+(node:57179) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+openclaw: Retrying with "<HOME>/.nvm/versions/node/v24.21.0/bin/node" (nvm default; current Node failed runtime admission).
+[90m2026-10-03T18:48:41.994+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
+[90m2026-10-03T18:48:42.185+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
+[90m2026-10-03T18:48:42.187+05:30[39m [36m[gateway][39m [36mstarting...[39m
+[90m2026-10-03T18:48:42.381+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
+[90m2026-10-03T18:48:43.931+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
+[90m2026-10-03T18:48:44.024+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
+[90m2026-10-03T18:48:45.004+05:30[39m [35m[plugins][39m [31mpair-spike: refusing to run ungated: PAIR_API_URL is not loopback; set PAIR_ADAPTER_ALLOW_REMOTE=1 to allow a remote https service[39m
+[90m2026-10-03T18:48:45.597+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<REPO>/adapters/openclaw/pair-spike/dist/index.js)[39m
+[90m2026-10-03T18:48:45.608+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
+[90m2026-10-03T18:48:45.609+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 3.2s)[39m
+[90m2026-10-03T18:48:45.609+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
+[90m2026-10-03T18:48:45.610+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":57187,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
+[90m2026-10-03T18:48:45.610+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":6,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"session-transcript.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
+[90m2026-10-03T18:48:46.206+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
+[90m2026-10-03T18:48:46.640+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
+[90m2026-10-03T18:48:46.723+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
+[90m2026-10-03T18:48:46.727+05:30[39m [36m[gateway][39m [36mready[39m
+[90m2026-10-03T18:48:46.757+05:30[39m [36m[heartbeat][39m [36mstarted[39m
+[90m2026-10-03T18:48:47.052+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
+[90m2026-10-03T18:48:54.490+05:30[39m [36m[ws][39m [36m⇄ res ✓ agent 111ms runId=93c0f92d-591e-4a67-9f96-acbb48eaa132 conn=f32f8bd3…7925 id=2:9795e35f-1…6710[39m
+[90m2026-10-03T18:48:54.762+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
+[90m2026-10-03T18:48:55.607+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
+[90m2026-10-03T18:48:56.942+05:30[39m [33m[agent/embedded][39m [33mbefore_agent_run hook blocked by pair-spike[39m
+2026-10-03T18:48:57.046+05:30 Your message could not be sent: pair: adapter is misconfigured, runs are denied (blocked by pair-spike)

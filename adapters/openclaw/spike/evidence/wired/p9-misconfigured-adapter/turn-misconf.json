@@ -1,5 +1,5 @@
 {
-  "runId": "9692f5c1-cff1-4a7b-8af3-179d6ab1ada9",
+  "runId": "93c0f92d-591e-4a67-9f96-acbb48eaa132",
   "status": "error",
   "summary": "failed",
   "result": {
@@ -11,9 +11,9 @@
       }
     ],
     "meta": {
-      "durationMs": 943,
+      "durationMs": 1592,
       "agentMeta": {
-        "sessionId": "5376b9b7-99c6-4104-82b8-3a25bcee41d1",
+        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
         "sessionFile": "agent:main:w-misconf",
         "provider": "mock",
         "model": "mock-small",
@@ -27,12 +27,12 @@
       },
       "systemPromptReport": {
         "source": "run",
-        "generatedAt": 1791031504397,
-        "sessionId": "5376b9b7-99c6-4104-82b8-3a25bcee41d1",
+        "generatedAt": 1791033536037,
+        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
         "sessionKey": "agent:main:w-misconf",
         "provider": "mock",
         "model": "mock-small",
-        "workspaceDir": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace",
+        "workspaceDir": "<SPIKE_DIR>/workspace",
         "bootstrapMaxChars": 20000,
         "bootstrapTotalMaxChars": 60000,
         "bootstrapTruncation": {
@@ -47,15 +47,15 @@
           "sandboxed": false
         },
         "systemPrompt": {
-          "chars": 41896,
-          "hash": "0148e0abf3fad0b6a2dd776748668e2b4316b213eb559158c41f850d0863994f",
-          "projectContextChars": 19297,
-          "nonProjectContextChars": 22599
+          "chars": 42239,
+          "hash": "ea51c591fb7be151a34793c09c763c92e0788bb7ca60372d23360eecbf3f6056",
+          "projectContextChars": 19337,
+          "nonProjectContextChars": 22902
         },
         "injectedWorkspaceFiles": [
           {
             "name": "AGENTS.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/AGENTS.md",
+            "path": "<SPIKE_DIR>/workspace/AGENTS.md",
             "missing": false,
             "rawChars": 6449,
             "injectedChars": 6449,
@@ -63,7 +63,7 @@
           },
           {
             "name": "SOUL.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/SOUL.md",
+            "path": "<SPIKE_DIR>/workspace/SOUL.md",
             "missing": false,
             "rawChars": 1526,
             "injectedChars": 1526,
@@ -71,7 +71,7 @@
           },
           {
             "name": "IDENTITY.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/IDENTITY.md",
+            "path": "<SPIKE_DIR>/workspace/IDENTITY.md",
             "missing": false,
             "rawChars": 1398,
             "injectedChars": 1398,
@@ -79,7 +79,7 @@
           },
           {
             "name": "USER.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/USER.md",
+            "path": "<SPIKE_DIR>/workspace/USER.md",
             "missing": false,
             "rawChars": 1136,
             "injectedChars": 1136,
@@ -87,7 +87,7 @@
           },
           {
             "name": "BOOTSTRAP.md",
-            "path": "/var/folders/hh/p2ks_8gj5xb8lzzdn0_ch9j40000gn/T/pair-wired-0rxrzB/workspace/BOOTSTRAP.md",
+            "path": "<SPIKE_DIR>/workspace/BOOTSTRAP.md",
             "missing": false,
             "rawChars": 7475,
             "injectedChars": 7475,
@@ -95,12 +95,12 @@
           }
         ],
         "skills": {
-          "promptChars": 7344,
-          "hash": "fd0d6abf3e8cc59c6ba91aa66061b98caf90b99ca01ccf929d65a62c220defa2",
+          "promptChars": 7623,
+          "hash": "aa84084f9e16e8a931d45e23fe6a3186234356dbfd4601f47179915916eac211",
           "entries": [
             {
               "name": "acp-router",
-              "blockChars": 270
+              "blockChars": 282
             },
             {
               "name": "add-model-provider",
@@ -116,11 +116,11 @@
             },
             {
               "name": "browser-automation",
-              "blockChars": 289
+              "blockChars": 298
             },
             {
               "name": "canvas",
-              "blockChars": 264
+              "blockChars": 274
             },
             {
               "name": "clawhub",
@@ -161,6 +161,10 @@
             {
               "name": "healthcheck",
               "blockChars": 251
+            },
+            {
+              "name": "mcporter",
+              "blockChars": 245
             },
             {
               "name": "meme-maker",

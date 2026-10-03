@@ -16,8 +16,15 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 for tool in node jq curl docker; do command -v "$tool" >/dev/null || { echo "wired: need $tool" >&2; exit 2; }; done
 
 RUN_ID="$(uuidgen | tr 'A-Z' 'a-z' | tr -d '-' | cut -c1-12)"
-export SPIKE_DIR="${SPIKE_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/pair-wired-XXXXXX")}"
-EVID="${EVID:-$HERE/evidence/wired}"
+# The temp dir is created here (and removed at exit), resolved with pwd -P so the physical path
+# (/private/var/... on macOS) is what the logs contain and what sanitize replaces.
+SPIKE_RAW="$(mktemp -d "${TMPDIR:-/tmp}/pair-wired-XXXXXX")"
+SPIKE_DIR="$(cd "$SPIKE_RAW" && pwd -P)"
+export SPIKE_DIR
+# Fixed on purpose: never taken from the environment, so the final replace cannot be aimed elsewhere.
+EVID="$HERE/evidence/wired"
+EVID_FAILED="$HERE/evidence/wired.failed"
+STAGE="$SPIKE_DIR/evidence-stage"
 OUT="$SPIKE_DIR/out"
 WS="$SPIKE_DIR/workspace"
 GW_PORT="${GW_PORT:-18921}"; MOCK_PORT="${MOCK_PORT:-18922}"; PAIR_PORT="${PAIR_PORT:-18923}"
@@ -48,12 +55,16 @@ check() { # name, command...
 }
 
 # ---------- processes ----------
-PAIR_PID=""; MOCK_PID=""; GW_PID=""
+PAIR_PID=""; MOCK_PID=""; GW_PID=""; TURN_PIDS=""
 cleanup() {
   log "cleanup"
+  local pid
+  for pid in $TURN_PIDS; do pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null; done
   for pid in "$GW_PID" "$MOCK_PID" "$PAIR_PID"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null; done
   sleep 1
   pg_psql postgres -c "DROP DATABASE IF EXISTS \"$DB\" WITH (FORCE)" >/dev/null 2>&1 || true
+  # The directory holds the gateway token (config file) and every raw log.
+  case "$SPIKE_DIR" in */pair-wired-*) rm -rf "$SPIKE_DIR" ;; esac
 }
 trap cleanup EXIT
 
@@ -129,13 +140,16 @@ all_requests() { grep -c . "$OUT/mock-all-requests.log" 2>/dev/null || true; }
 hooks() { jq -c "select($1)" "$OUT/hooks.jsonl" 2>/dev/null; }
 turn_text() { cat "$OUT/turn-$1.json" "$OUT/turn-$1.err" 2>/dev/null; }
 
+# Order matters: the longest, most specific prefixes first. SPIKE_DIR (physical and raw spelling)
+# and ROOT / OPENCLAW_DIR all live under HOME, so HOME must come last.
 sanitize() {
-  sed -e "s#$SPIKE_DIR#<SPIKE_DIR>#g" -e "s#$SVC_TOKEN#<service-token>#g" -e "s#$NEW_SVC_TOKEN#<rotated-token>#g" \
-      -e "s#$OPENCLAW_GATEWAY_TOKEN#<gateway-token>#g" -e "s#$HOME#<HOME>#g" -e "s#$ROOT#<REPO>#g" \
-      -e "s#$OPENCLAW_DIR#<OPENCLAW>#g"
+  sed -e "s#$SPIKE_DIR#<SPIKE_DIR>#g" -e "s#$SPIKE_RAW#<SPIKE_DIR>#g" \
+      -e "s#$SVC_TOKEN#<service-token>#g" -e "s#$NEW_SVC_TOKEN#<rotated-token>#g" \
+      -e "s#$OPENCLAW_GATEWAY_TOKEN#<gateway-token>#g" \
+      -e "s#$ROOT#<REPO>#g" -e "s#$OPENCLAW_DIR#<OPENCLAW>#g" -e "s#$HOME#<HOME>#g"
 }
 snap() { # phase  (copies sanitized outputs, then truncates the per-phase logs)
-  local d="$EVID/$1" f; mkdir -p "$d"
+  local d="$STAGE/$1" f; mkdir -p "$d"
   for f in "$OUT"/*.jsonl "$OUT"/*.log "$OUT"/turn-*.json "$OUT"/turn-*.err "$OUT"/turn-*.exit "$SPIKE_DIR"/db-*.txt; do
     [ -f "$f" ] && sanitize < "$f" > "$d/$(basename "$f")"
   done
@@ -150,8 +164,14 @@ setup() {
   for port in "$GW_PORT" "$MOCK_PORT" "$PAIR_PORT"; do
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then echo "wired: port $port already in use (stale process?)" >&2; exit 2; fi
   done
-  mkdir -p "$OUT" "$WS" "$OPENCLAW_HOME" "$OPENCLAW_STATE_DIR" "$EVID"
-  rm -rf "${EVID:?}"/*
+  mkdir -p "$OUT" "$WS" "$OPENCLAW_HOME" "$OPENCLAW_STATE_DIR" "$STAGE"
+  # Build the plugin from HEAD's src with the checkout's tsc, so the gateway loads what is recorded.
+  OPENCLAW_DIR="$OPENCLAW_DIR" "$HERE/setup-plugin.sh" >&2 || { echo "wired: plugin build failed" >&2; exit 2; }
+  {
+    echo "head $(git -C "$ROOT" rev-parse HEAD)"
+    echo "node $(node -v)"
+  } >> "$RESULTS"
+  check "plugin source tree is clean (evidence matches HEAD)" test -z "$(git -C "$ROOT" status --porcelain -- adapters/openclaw/pair-spike adapters/openclaw/spike)"
   printf 'HELLO-CANARY-7731\n' > "$WS/hello.txt"
   printf 'TFVARS-CANARY-4410\n' > "$WS/prod.tfvars"
   cat > "$WS/write_canary.py" <<EOF
@@ -225,6 +245,14 @@ phase_deny() { # (i)
     sh -c "hooks_reason=\$(jq -r 'select(.decision==\"deny\") | .reason' '$OUT/hooks.jsonl' | head -1); echo \"\$hooks_reason\" | grep -q python3"
   check "service denial: nothing executed (canary file absent)" test ! -e "$SPIKE_DIR/canary-executed"
   snap p4-denied-code-exec
+
+  turn gitpush w-push "do it SCENARIO:gitpush"
+  check "git push: sent to pair-api as tool git.push (not shell.exec)" \
+    test "$(hooks '.hook=="before_tool_call" and .source=="pair-api"' | jq -r .pairTool | head -1)" = git.push
+  check "git push: not allowed (denied by egress or held for approval, which the adapter cannot grant)" \
+    test "$(hooks '.hook=="before_tool_call" and .source=="pair-api"' | jq -r .decision | head -1)" != allow
+  check "git push: the model saw a block reason" grep -q "pair" "$OUT/turn-gitpush.json"
+  snap p4b-denied-git-push
 }
 
 wait_for_new_completion() { # baseline
@@ -241,7 +269,7 @@ phase_pair_down() { # (iii)
   rm -f "$SPIKE_DIR/canary-executed"
   local base; base="$(all_requests)"
   turn slowdown w-down "go SCENARIO:slowtool" &
-  local tp=$!
+  local tp=$!; TURN_PIDS="$TURN_PIDS $tp"
   wait_for_new_completion "$base" || log "mock never saw the slow request"
   log "stopping pair-api while the model response is delayed"
   stop_pair
@@ -271,7 +299,7 @@ phase_token_rotation() { # kill-switch level 3
   rm -f "$SPIKE_DIR/canary-executed"
   local base; base="$(all_requests)"
   turn slowrot w-rot "go SCENARIO:slowtool" &
-  local tp=$!
+  local tp=$!; TURN_PIDS="$TURN_PIDS $tp"
   wait_for_new_completion "$base" || log "mock never saw the slow request"
   log "rotating PAIR_SERVICE_TOKEN (restart pair-api with a new token) while the response is delayed"
   start_pair budget.open.yaml "$NEW_SVC_TOKEN" || log "pair-api restart failed"
@@ -312,16 +340,16 @@ phase_noconv() { # (v)
   local before base; before="$(dbq "SELECT count(*) FROM budget_reservations")"; base="$(completions)"
   grep -i "allowConversationAccess" "$OUT/gateway.log" > "$SPIKE_DIR/load-warnings.log" || true
   cp "$SPIKE_DIR/load-warnings.log" "$OUT/load-warnings.log"
-  check "WARN visible at start for before_model_resolve" grep -q 'typed hook "before_model_resolve" blocked' "$OUT/gateway.log"
-  check "WARN visible at start for before_agent_run" grep -q 'typed hook "before_agent_run" blocked' "$OUT/gateway.log"
-  check "WARN visible at start for llm_output" grep -q 'typed hook "llm_output" blocked' "$OUT/gateway.log"
+  check "loud ERROR at start from the adapter (model gate cannot run)" grep -q "pair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true" "$OUT/gateway.log"
+  check "no model hooks were registered, so OpenClaw has nothing to WARN about" \
+    sh -c "! grep -q 'typed hook \"before_model_resolve\" blocked' '$OUT/gateway.log'"
   turn noconv w-noconv "say hi SCENARIO:plain"
-  check "no opt-in: the model call HAPPENS (budget gate is gone)" test "$(completions)" -gt "$base"
+  check "no opt-in: the model call HAPPENS (the adapter cannot gate it; the ERROR above is the signal)" test "$(completions)" -gt "$base"
   check "no opt-in: model override not applied (default model used)" test "$(jq -r .model "$OUT/mock-requests.jsonl" | sort -u)" = "mock-small"
   check "no opt-in: no reservation was created" test "$(dbq "SELECT count(*) FROM budget_reservations")" = "$before"
-  turn noconvdeny w-noconv2 "do it SCENARIO:svcsecret"
-  check "no opt-in: tool gate still blocks via the real policy engine" \
-    test "$(hooks '.hook=="before_tool_call" and .source=="pair-api"' | jq -r .decision | head -1)" = deny
+  turn noconvdeny w-noconv2 "do it SCENARIO:allowcat"
+  check "no opt-in: the tool gate is deny-all (even a read the policy would allow)" grep -q "misconfigured, tool calls are denied" "$OUT/turn-noconvdeny.json"
+  check "no opt-in: the tool did not execute" sh -c "! grep -q HELLO-CANARY-7731 '$OUT/turn-noconvdeny.json'"
   snap p8-no-conversation-access
 }
 
@@ -340,10 +368,24 @@ main() {
   local phases=("$@"); [ ${#phases[@]} -gt 0 ] || phases=(normal deny pair_down token_rotation budget_refused noconv misconfig)
   local p
   for p in "${phases[@]}"; do "phase_$p"; done
-  # Final secret scan of the evidence: tokens must not appear anywhere.
-  check "no token appears in the evidence" sh -c "! grep -rqF -e '$SVC_TOKEN' -e '$NEW_SVC_TOKEN' -e '$OPENCLAW_GATEWAY_TOKEN' '$EVID'"
-  cp "$RESULTS" "$EVID/results.txt"
-  log "done: $FAILS failed check(s); evidence in $EVID"
+  # Final scans of the evidence: no tokens and no host paths anywhere.
+  check "no token appears in the evidence" sh -c "! grep -rqF -e '$SVC_TOKEN' -e '$NEW_SVC_TOKEN' -e '$OPENCLAW_GATEWAY_TOKEN' '$STAGE'"
+  check "no host path appears in the evidence (HOME, temp dir, repo)" \
+    sh -c "! grep -rqF -e '$HOME' -e '$SPIKE_DIR' -e '$SPIKE_RAW' -e '$ROOT' '$STAGE'"
+  cp "$RESULTS" "$STAGE/results.txt"
+  publish_evidence
   [ "$FAILS" -eq 0 ]
+}
+
+# The committed evidence is replaced only by a run in which every check passed; a failed run
+# leaves it untouched and writes its own (sanitized) evidence next to it.
+publish_evidence() {
+  if [ "$FAILS" -eq 0 ]; then
+    rm -rf "$EVID" && mkdir -p "$EVID" && cp -R "$STAGE"/. "$EVID"/
+    log "done: all checks passed; evidence replaced in $EVID"
+  else
+    rm -rf "$EVID_FAILED" && mkdir -p "$EVID_FAILED" && cp -R "$STAGE"/. "$EVID_FAILED"/
+    log "done: $FAILS failed check(s); committed evidence untouched; failed run in $EVID_FAILED"
+  fi
 }
 main "$@"

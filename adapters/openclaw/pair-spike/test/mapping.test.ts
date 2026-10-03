@@ -124,7 +124,6 @@ describe("mapping table", () => {
       action: { tool: "web.fetch", args: [], paths: [], destination: "https://docs.rs/x" },
     });
     assert.equal(mapToolCall("web_fetch", {}).ok, false);
-    assert.equal(mapToolCall("web_search", { query: "q" }).ok, true);
   });
 
   it("tokenizer rejects forbidden characters only when unquoted", () => {

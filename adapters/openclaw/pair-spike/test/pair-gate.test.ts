@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { createPairClient } from "../src/client.ts";
 import { createToolGate, type GateResult, type HookLog } from "../src/gate.ts";
-import { createPairToolGate, PAIR_UNAVAILABLE_REASON } from "../src/pair-gate.ts";
+import { createPairToolGate, PAIR_APPROVAL_UNAVAILABLE_REASON, PAIR_UNAVAILABLE_REASON } from "../src/pair-gate.ts";
 import {
   allow,
   deny,
@@ -86,16 +86,19 @@ describe("pair gate: decisions", () => {
     });
   });
 
-  it("needs_approval returns requireApproval carrying the payload hash, allow-once only", async () => {
-    await withGate(() => needsApproval("hash-abc"), async (gate) => {
-      const r = await gate(ev("web_fetch", { url: "https://github.com/x" }));
-      assert.ok(r && "requireApproval" in r);
-      if (r && "requireApproval" in r) {
-        assert.ok(r.requireApproval.description.includes("hash-abc"));
-        assert.deepEqual(r.requireApproval.allowedDecisions, ["allow-once", "deny"]);
-        assert.equal(r.requireApproval.timeoutMs, APPROVAL_TIMEOUT_MS);
-      }
-    });
+  it("needs_approval_from_pair_blocks_until_the_approval_flow_is_wired (M4)", async () => {
+    for (const [tool, params] of [
+      ["web_fetch", { url: "https://github.com/x" }],
+      ["exec", { command: "git push https://github.com/x/y.git main" }],
+    ] as const) {
+      await withGate(() => needsApproval("hash-abc"), async (gate, _mock, logs) => {
+        const r = await gate(ev(tool, params));
+        assert.ok(isBlock(r), tool);
+        assert.equal(r !== undefined && "requireApproval" in r, false);
+        assert.ok(r && "blockReason" in r && r.blockReason === PAIR_APPROVAL_UNAVAILABLE_REASON);
+        assert.ok(logs.some((l) => l.detail["decision"] === "needs_approval"));
+      });
+    }
   });
 
   it("local approval is kept even when the service allows (the stricter verdict wins)", async () => {

@@ -8,8 +8,10 @@ Model output cannot override permissions or budgets (spec global constraints); t
 
 `pair-api` hosts the budget, policy, routing, context and conversation crates behind `/v1/turn`, `/v1/budget/reserve`, `/v1/budget/reconcile`, `/v1/policy/authorize` and `/v1/approvals`. The OpenClaw adapter (`pair-spike` plugin) now calls the policy and budget endpoints, so levels 1 and 3 reach OpenClaw's own tool and model calls **when the adapter is loaded with `allowConversationAccess=true`** (proven in `adapters/openclaw/spike/wired.sh`, see [spike doc](../spike-openclaw-plugin.md)). Limits:
 
-- Without `allowConversationAccess=true` the model-call gate does not exist (the gateway only logs a WARN at start): levels 1 and 3 then stop tool calls but **not model calls**. Check the gateway log for `typed hook "before_agent_run" blocked`.
-- Only runs that start after the change are refused. A run already past `before_agent_run` finishes its model calls inside its existing reservation.
+- Without `allowConversationAccess=true` the model-call gate does not exist: levels 1 and 3 then stop tool calls (the adapter denies every tool and logs `pair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true` at start) but **not model calls**. Check the gateway log for that line.
+- Only runs that start after the change are refused. A run already past `before_agent_run` finishes its model calls with no further reservation; a later attempt of the same run (retry, compaction) is blocked.
+- The adapter path's budget is a per-run **estimate**, not a bound: caps are enforced on holds, not on realised spend, and a long tool loop can overspend its hold (the per-run tool-call guard, default 10, limits tool round trips). Zeroing caps does not recover spend already incurred.
+- Anything PAIR holds for approval (for example `git push`) is blocked on the adapter path, not approved.
 - Proven with a mock model only; no real provider call has been made.
 - The control that holds regardless of PAIR is the provider console (A) and stopping the OpenClaw gateway (B).
 - Interrupting jobs (level 2) has no mechanism and stays **NOT EFFECTIVE**.
@@ -36,7 +38,7 @@ Set a new `PAIR_SERVICE_TOKEN` (at least 16 characters) and restart `pair-api`. 
 
 Proof: `kill_switch.rs::rotated_service_token_locks_out_the_old_token`, `turn.rs::turn_requires_service_token`.
 
-Adapter path (proven live, `wired.sh` phase 6): after rotation, the adapter (still holding the old token) gets HTTP 401 on `/v1/policy/authorize` and `/v1/budget/reserve`, so tool calls are blocked and new runs are refused before any model call. The adapter is configured through `PAIR_SERVICE_TOKEN` in the gateway's environment: update it and restart the gateway to restore service. Not covered: a run already past `before_agent_run` completes its model calls (its tool calls are blocked); the same `allowConversationAccess` caveat as above.
+Adapter path (proven live, `wired.sh` phase 6): after rotation, the adapter (still holding the old token) gets HTTP 401 on `/v1/policy/authorize` and `/v1/budget/reserve`, so tool calls are blocked and new runs are refused before any model call. The adapter is configured through `PAIR_SERVICE_TOKEN` in the gateway's environment: update it and restart the gateway to restore service. Not covered: a run already past `before_agent_run` completes its model calls (its tool calls are blocked; a later attempt of that run is blocked at `before_agent_run` when its reservation was already reconciled); the same `allowConversationAccess` caveat as above.
 
 ## Controls outside PAIR
 

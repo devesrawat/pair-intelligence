@@ -3,6 +3,8 @@ import type { PairConnection } from "./config.ts";
 
 export const ACTOR = "openclaw-adapter";
 export const REQUEST_TIMEOUT_MS = 3_000;
+/** pair-api envelopes are small; anything larger is a misbehaving or hostile peer. */
+export const MAX_RESPONSE_BYTES = 1_048_576;
 
 export type CallFailure = {
   readonly ok: false;
@@ -49,6 +51,26 @@ function parseSuccess(envelope: unknown): CallResult {
   return shapeOk ? { ok: true, data: envelope["data"] } : { ok: false, kind: "malformed" };
 }
 
+/** Body text, or `undefined` when it exceeds MAX_RESPONSE_BYTES (the stream is cancelled, not buffered). */
+async function readCapped(response: Response): Promise<string | undefined> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      return undefined;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 function isTimeout(err: unknown): boolean {
   return err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
 }
@@ -72,7 +94,8 @@ export function createPairClient(connection: PairConnection, options: ClientOpti
           body: JSON.stringify(body),
         });
         // The body read is inside the same abort signal, so a stalled body also times out.
-        const text = await response.text();
+        const text = await readCapped(response);
+        if (text === undefined) return { ok: false, kind: "malformed", status: response.status };
         let parsed: unknown;
         try {
           parsed = JSON.parse(text);

@@ -5,6 +5,7 @@ export type ToolCallEvent = {
   readonly toolName: string;
   readonly params: Readonly<Record<string, unknown>>;
   readonly runId?: string;
+  readonly toolCallId?: string;
 };
 
 export type GateResult =

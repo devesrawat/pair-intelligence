@@ -1,5 +1,7 @@
 #![allow(dead_code, clippy::unwrap_used)]
 //! Per-test throwaway database: pair_t_jobs_<uuid>, migrated from the repo's migrations dir.
+pub mod crash;
+
 use pair_jobs::{JobConfig, JobStore};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{Connection, PgConnection, PgPool};

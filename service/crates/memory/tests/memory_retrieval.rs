@@ -604,3 +604,60 @@ async fn coverage_counts_across_chunks() {
         .unwrap();
     assert!(weak.is_empty());
 }
+
+#[tokio::test]
+async fn conflict_partner_beyond_limit_still_labels_conflicting() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let s1 = source(&mem, "adr-3", TrustClass::Owner).await;
+    let s2 = source(&mem, "adr-4", TrustClass::Owner).await;
+    let first = propose_verified(
+        &mem,
+        candidate(
+            "decision",
+            "Auth mode: JWT bearer",
+            Some("pair"),
+            s1.id,
+            "jwt",
+        ),
+    )
+    .await
+    .unwrap();
+    let jwt = mem.accept(first, "owner").await.unwrap();
+    let second = propose_verified(
+        &mem,
+        candidate(
+            "decision",
+            "Auth mode: server sessions",
+            Some("pair"),
+            s2.id,
+            "sessions",
+        ),
+    )
+    .await
+    .unwrap();
+    let sess = mem
+        .accept_with(
+            second,
+            "owner",
+            AcceptMode {
+                keep_both: true,
+                ..AcceptMode::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Only one slot: the partner is cut by the limit but is still a valid, visible conflict.
+    let mut q = query("auth mode", Some("pair"));
+    q.limit = 1;
+    let hits = mem.retrieve_detailed(q).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    let other = if hits[0].item.memory == jwt {
+        sess
+    } else {
+        jwt
+    };
+    assert_eq!(hits[0].item.status, EvidenceStatus::Conflicting);
+    assert_eq!(hits[0].item.conflicts_with, vec![other]);
+}

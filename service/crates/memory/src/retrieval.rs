@@ -151,7 +151,7 @@ impl PgMemory {
             limit,
         )
         .await?;
-        decorate(&mut conn, emitted, q.as_of).await
+        decorate(&mut conn, emitted, q.as_of, q.project.as_deref()).await
     }
 }
 
@@ -370,6 +370,7 @@ async fn decorate(
     conn: &mut PgConnection,
     emitted: Vec<Emitted>,
     as_of: DateTime<Utc>,
+    project: Option<&str>,
 ) -> Result<Vec<RetrievedMemory>> {
     let ids: Vec<Uuid> = emitted.iter().map(|e| e.row.id).collect();
     let ev_rows = sqlx::query(
@@ -402,10 +403,20 @@ async fn decorate(
         );
     }
     let conflicts = conflict_partners(conn, &ids).await?;
-    let current_ids: HashSet<Uuid> = emitted
-        .iter()
-        .filter(|e| e.row.valid_at(as_of))
-        .map(|e| e.row.id)
+    // Conflict labels come from every valid, visible partner, not only the ones that survived the
+    // output limit: a partner cut by the limit is still a competing current memory.
+    let partner_ids: Vec<Uuid> = conflicts
+        .values()
+        .flatten()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let valid_partners: HashSet<Uuid> = load_visible(conn, &partner_ids, project)
+        .await?
+        .into_iter()
+        .filter(|p| p.valid_at(as_of))
+        .map(|p| p.id)
         .collect();
 
     Ok(emitted
@@ -416,7 +427,7 @@ async fn decorate(
                 .get(&id)
                 .into_iter()
                 .flatten()
-                .filter(|p| current_ids.contains(p))
+                .filter(|p| valid_partners.contains(p))
                 .map(|p| MemoryId(*p))
                 .collect();
             partners.sort_by_key(|p| p.0);

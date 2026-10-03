@@ -68,103 +68,151 @@ fn non_empty(v: Option<String>) -> Option<String> {
     v.filter(|s| !s.trim().is_empty())
 }
 
+fn invalid(message: impl Into<String>) -> PairError {
+    PairError::new(ErrorCode::InvalidInput, message)
+}
+
+fn service_token<F: Fn(&str) -> Option<String>>(get: &F) -> Result<String, PairError> {
+    let token =
+        get("PAIR_SERVICE_TOKEN").ok_or_else(|| invalid("PAIR_SERVICE_TOKEN is required"))?;
+    if token.len() < MIN_TOKEN_LEN {
+        return Err(invalid(format!(
+            "PAIR_SERVICE_TOKEN must be at least {MIN_TOKEN_LEN} characters"
+        )));
+    }
+    Ok(token)
+}
+
+fn approver_token<F: Fn(&str) -> Option<String>>(
+    get: &F,
+    service_token: &str,
+) -> Result<Option<String>, PairError> {
+    let Some(token) = non_empty(get("PAIR_APPROVER_TOKEN")) else {
+        return Ok(None);
+    };
+    if token.len() < MIN_TOKEN_LEN {
+        return Err(invalid(format!(
+            "PAIR_APPROVER_TOKEN must be at least {MIN_TOKEN_LEN} characters"
+        )));
+    }
+    if token == service_token {
+        return Err(invalid(
+            "PAIR_APPROVER_TOKEN must differ from PAIR_SERVICE_TOKEN",
+        ));
+    }
+    Ok(Some(token))
+}
+
+fn secs<F: Fn(&str) -> Option<String>>(
+    get: &F,
+    (name, default, min): (&str, u64, u64),
+) -> Result<Duration, PairError> {
+    let value = match non_empty(get(name)) {
+        None => default,
+        Some(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| invalid(format!("{name} must be an integer")))?,
+    };
+    if value < min {
+        return Err(invalid(format!("{name} must be at least {min}")));
+    }
+    Ok(Duration::from_secs(value))
+}
+
+/// Every seconds-valued setting, in `SECS_SETTINGS` order.
+struct Intervals {
+    sweep: Duration,
+    orphan: Duration,
+    worker: Duration,
+    drain: Duration,
+    turn_budget: Duration,
+}
+
+fn intervals<F: Fn(&str) -> Option<String>>(get: &F) -> Result<Intervals, PairError> {
+    let [sweep, orphan, worker, drain, turn] = SECS_SETTINGS.map(|s| secs(get, s));
+    let turn_budget = turn?;
+    if turn_budget.as_secs() > MAX_TURN_BUDGET_SECS {
+        return Err(invalid(format!(
+            "PAIR_TURN_BUDGET_SECS must be at most {MAX_TURN_BUDGET_SECS}"
+        )));
+    }
+    Ok(Intervals {
+        sweep: sweep?,
+        orphan: orphan?,
+        worker: worker?,
+        drain: drain?,
+        turn_budget,
+    })
+}
+
+/// A path setting: the configured value (or the default) and whether it was set explicitly.
+fn path_setting<F: Fn(&str) -> Option<String>>(
+    get: &F,
+    name: &str,
+    default: &str,
+) -> (PathBuf, bool) {
+    let value = get(name);
+    let explicit = value.is_some();
+    (
+        value.map_or_else(|| PathBuf::from(default), PathBuf::from),
+        explicit,
+    )
+}
+
+fn secret<F: Fn(&str) -> Option<String>>(get: &F, name: &str) -> Option<Secret> {
+    non_empty(get(name)).map(Secret::new)
+}
+
 impl Config {
     /// Build from an arbitrary lookup (injectable for tests).
     pub fn from_lookup<F>(get: F) -> Result<Self, PairError>
     where
         F: Fn(&str) -> Option<String>,
     {
-        let token = get("PAIR_SERVICE_TOKEN").ok_or_else(|| {
-            PairError::new(ErrorCode::InvalidInput, "PAIR_SERVICE_TOKEN is required")
-        })?;
-        if token.len() < MIN_TOKEN_LEN {
-            return Err(PairError::new(
-                ErrorCode::InvalidInput,
-                format!("PAIR_SERVICE_TOKEN must be at least {MIN_TOKEN_LEN} characters"),
-            ));
-        }
-        let migrations_dir = get("PAIR_MIGRATIONS_DIR");
-        let models_config = get("PAIR_MODELS_CONFIG");
-        let budget_config = get("PAIR_BUDGET_CONFIG");
-        let policy_config = get("PAIR_POLICY_CONFIG");
-        let context_config = get("PAIR_CONTEXT_CONFIG");
-        let approver_token = non_empty(get("PAIR_APPROVER_TOKEN"));
-        if approver_token
-            .as_deref()
-            .is_some_and(|t| t.len() < MIN_TOKEN_LEN)
-        {
-            return Err(PairError::new(
-                ErrorCode::InvalidInput,
-                format!("PAIR_APPROVER_TOKEN must be at least {MIN_TOKEN_LEN} characters"),
-            ));
-        }
-        if approver_token.as_deref() == Some(token.as_str()) {
-            return Err(PairError::new(
-                ErrorCode::InvalidInput,
-                "PAIR_APPROVER_TOKEN must differ from PAIR_SERVICE_TOKEN",
-            ));
-        }
-        let secs = |name: &str, default: u64, min: u64| -> Result<Duration, PairError> {
-            let value = match non_empty(get(name)) {
-                None => default,
-                Some(raw) => raw.trim().parse::<u64>().map_err(|_| {
-                    PairError::new(
-                        ErrorCode::InvalidInput,
-                        format!("{name} must be an integer"),
-                    )
-                })?,
-            };
-            if value < min {
-                return Err(PairError::new(
-                    ErrorCode::InvalidInput,
-                    format!("{name} must be at least {min}"),
-                ));
-            }
-            Ok(Duration::from_secs(value))
-        };
-        let [sweep, orphan, worker, drain, turn] = SECS_SETTINGS.map(|(n, d, m)| secs(n, d, m));
-        let turn_budget = turn?;
-        if turn_budget.as_secs() > MAX_TURN_BUDGET_SECS {
-            return Err(PairError::new(
-                ErrorCode::InvalidInput,
-                format!("PAIR_TURN_BUDGET_SECS must be at most {MAX_TURN_BUDGET_SECS}"),
-            ));
-        }
+        let token = service_token(&get)?;
+        let approver = approver_token(&get, &token)?;
+        let timing = intervals(&get)?;
+        let (migrations_dir, migrations_dir_explicit) =
+            path_setting(&get, "PAIR_MIGRATIONS_DIR", "migrations");
+        let (models_config, models_config_explicit) =
+            path_setting(&get, "PAIR_MODELS_CONFIG", DEFAULT_MODELS_CONFIG);
+        let (budget_config, budget_config_explicit) =
+            path_setting(&get, "PAIR_BUDGET_CONFIG", DEFAULT_BUDGET_CONFIG);
+        let (policy_config, policy_config_explicit) =
+            path_setting(&get, "PAIR_POLICY_CONFIG", DEFAULT_POLICY_CONFIG);
+        let (context_config, context_config_explicit) =
+            path_setting(&get, "PAIR_CONTEXT_CONFIG", DEFAULT_CONTEXT_CONFIG);
         Ok(Self {
             bind: get("PAIR_BIND").unwrap_or_else(|| DEFAULT_BIND.to_owned()),
             database_url: Secret::new(
                 get("DATABASE_URL").unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned()),
             ),
             service_token: Secret::new(token),
-            migrations_dir_explicit: migrations_dir.is_some(),
-            migrations_dir: migrations_dir
-                .map_or_else(|| PathBuf::from("migrations"), PathBuf::from),
+            migrations_dir,
+            migrations_dir_explicit,
             data_dir: get("PAIR_DATA_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from),
-            models_config_explicit: models_config.is_some(),
-            models_config: models_config
-                .map_or_else(|| PathBuf::from(DEFAULT_MODELS_CONFIG), PathBuf::from),
-            budget_config_explicit: budget_config.is_some(),
-            budget_config: budget_config
-                .map_or_else(|| PathBuf::from(DEFAULT_BUDGET_CONFIG), PathBuf::from),
-            policy_config_explicit: policy_config.is_some(),
-            policy_config: policy_config
-                .map_or_else(|| PathBuf::from(DEFAULT_POLICY_CONFIG), PathBuf::from),
-            context_config_explicit: context_config.is_some(),
-            context_config: context_config
-                .map_or_else(|| PathBuf::from(DEFAULT_CONTEXT_CONFIG), PathBuf::from),
+            models_config,
+            models_config_explicit,
+            budget_config,
+            budget_config_explicit,
+            policy_config,
+            policy_config_explicit,
+            context_config,
+            context_config_explicit,
             workspace_root: non_empty(get("PAIR_WORKSPACE_ROOT")).map(PathBuf::from),
-            approver_token: approver_token.map(Secret::new),
-            anthropic_api_key: non_empty(get("ANTHROPIC_API_KEY")).map(Secret::new),
-            ollama_api_key: non_empty(get("OLLAMA_API_KEY")).map(Secret::new),
-            typesafe_api_key: non_empty(get("TYPESAFE_API_KEY")).map(Secret::new),
+            approver_token: approver.map(Secret::new),
+            anthropic_api_key: secret(&get, "ANTHROPIC_API_KEY"),
+            ollama_api_key: secret(&get, "OLLAMA_API_KEY"),
+            typesafe_api_key: secret(&get, "TYPESAFE_API_KEY"),
             allow_unverified_model_ids: get("PAIR_ALLOW_UNVERIFIED_MODEL_IDS")
                 .is_some_and(|v| v == ENABLED_FLAG),
             home: non_empty(get("HOME")).map(PathBuf::from),
-            sweep_interval: sweep?,
-            orphan_interval: orphan?,
-            worker_interval: worker?,
-            shutdown_drain: drain?,
-            turn_budget,
+            sweep_interval: timing.sweep,
+            orphan_interval: timing.orphan,
+            worker_interval: timing.worker,
+            shutdown_drain: timing.drain,
+            turn_budget: timing.turn_budget,
         })
     }
 

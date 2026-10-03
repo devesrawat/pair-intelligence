@@ -12,8 +12,8 @@ use pair_core::ids::{ConversationId, TraceId};
 use pair_core::money::Micros;
 use pair_core::traits::{BudgetEx, ContextCompiler};
 use pair_core::types::{
-    ClassificationInput, ModelLimits, ModelMessage, ModelRequest, TaskContext, TaskProfile,
-    TrustClass,
+    ClassificationInput, ModelLimits, ModelMessage, ModelRequest, ModelResponse, TaskContext,
+    TaskProfile, TrustClass,
 };
 use pair_models::classification::pipeline::{PipelineOutcome, PipelineRequest};
 use pair_models::provider::store::{NewMessage, StoredMessage};
@@ -57,6 +57,21 @@ impl ModelPlanner for FixedPlan {
     }
 }
 
+/// Everything fixed before the first provider call: the request, the vetted model order and why.
+struct Prepared {
+    request: ModelRequest,
+    plan: Vec<String>,
+    route_reason: String,
+}
+
+/// Identity of one turn, shared by the stages that follow the provider call.
+struct TurnIds {
+    task: pair_core::ids::TaskId,
+    trace: TraceId,
+    conversation: ConversationId,
+    user_client_id: String,
+}
+
 pub async fn run_turn(
     svc: &Services,
     actor: &str,
@@ -70,14 +85,34 @@ pub async fn run_turn(
 
     let outcome = route(svc, &turn, task, &recent).await?;
     record_shadow(svc, actor, trace, task, &outcome).await;
+    let prepared = prepare(svc, &turn, task, trace, &recent, &outcome)?;
+
+    let attempt_trace = TurnTrace::default();
+    let generated = generate(svc, &turn, &prepared, &attempt_trace).await;
+    let ids = TurnIds {
+        task,
+        trace,
+        conversation,
+        user_client_id,
+    };
+    finish(svc, &ids, &prepared, &attempt_trace, generated).await
+}
+
+fn prepare(
+    svc: &Services,
+    turn: &ValidTurn,
+    task: pair_core::ids::TaskId,
+    trace: TraceId,
+    recent: &[ModelMessage],
+    outcome: &PipelineOutcome,
+) -> Result<Prepared> {
     let plan = vet_plan(svc, outcome.plan.attempt_order())?;
     let route_reason = format!(
         "{}; classifier: {}",
         outcome.plan.decision.reason, outcome.classifier_note
     );
-
     let limits_model = model_limits(svc, &plan)?;
-    let compiled = compile(svc, &turn, &recent, &limits_model)?;
+    let compiled = compile(svc, turn, recent, &limits_model)?;
     let request = ModelRequest {
         model_id: String::new(),
         messages: compiled.messages,
@@ -87,8 +122,19 @@ pub async fn run_turn(
         task,
         trace,
     };
+    Ok(Prepared {
+        request,
+        plan,
+        route_reason,
+    })
+}
 
-    let attempt_trace = TurnTrace::default();
+async fn generate(
+    svc: &Services,
+    turn: &ValidTurn,
+    prepared: &Prepared,
+    attempt_trace: &TurnTrace,
+) -> Result<ModelResponse> {
     let budget = TracedBudget {
         inner: &svc.budget,
         attempts: &svc.attempts,
@@ -99,7 +145,7 @@ pub async fn run_turn(
         trace: attempt_trace.clone(),
     };
     let run_limits = RunLimits::with_deadline(MAX_TOOL_CALLS, Instant::now() + svc.turn_budget);
-    let planner = FixedPlan(plan);
+    let planner = FixedPlan(prepared.plan.clone());
     let caller = ModelCaller {
         provider: &provider,
         budget: &budget,
@@ -109,20 +155,29 @@ pub async fn run_turn(
         kind: turn.kind,
         intent: TURN_INTENT,
     };
-    let generated = caller.generate(request.clone()).await;
+    caller.generate(prepared.request.clone()).await
+}
 
+/// Persist every attempt, then turn the provider result into the response.
+async fn finish(
+    svc: &Services,
+    ids: &TurnIds,
+    prepared: &Prepared,
+    attempt_trace: &TurnTrace,
+    generated: Result<ModelResponse>,
+) -> Result<TurnResponse> {
     let call_ctx = CallContext {
         store: &svc.store,
         registry: &svc.registry,
-        conversation,
-        trace,
-        route_reason: &route_reason,
-        assistant_client_id: format!("{user_client_id}:assistant"),
+        conversation: ids.conversation,
+        trace: ids.trace,
+        route_reason: &prepared.route_reason,
+        assistant_client_id: format!("{}:assistant", ids.user_client_id),
     };
     let attempts = attempt_trace.snapshot();
-    let persisted = persist_attempts(&call_ctx, &request, &attempts).await?;
+    let persisted = persist_attempts(&call_ctx, &prepared.request, &attempts).await?;
     let response = generated.map_err(|e| {
-        tracing::warn!(%task, %trace, code = ?e.code, "turn ended without a response");
+        tracing::warn!(task = %ids.task, trace = %ids.trace, code = ?e.code, "turn ended without a response");
         root_cause(e, &attempts)
     })?;
     let persisted = persisted.ok_or_else(|| {
@@ -134,14 +189,14 @@ pub async fn run_turn(
     Ok(TurnResponse {
         text: response.text,
         resolved_model: response.resolved_model,
-        route_reason,
+        route_reason: prepared.route_reason.clone(),
         cost_state: if persisted.reconciled {
             COST_RECONCILED
         } else {
             COST_UNRESOLVED
         },
-        trace_id: trace.0.to_string(),
-        conversation_id: conversation.to_string(),
+        trace_id: ids.trace.0.to_string(),
+        conversation_id: ids.conversation.to_string(),
         message_id: persisted.message_id.to_string(),
     })
 }

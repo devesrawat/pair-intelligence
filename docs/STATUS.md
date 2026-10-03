@@ -2,7 +2,7 @@
 
 Honest, tracked snapshot of what exists, what is tested, and what is not. Written for branch `feat/phase-0-audit` after the four-reviewer pass in [review-findings.md](review-findings.md). It replaces ad hoc claims in the working ledger (which is git-ignored and therefore not reproducible). If this file and a runbook or commit message disagree, this file was written last; if it disagrees with the code, the code wins and this file is a bug.
 
-"Tested" means the automated suite passes. Per spec section 2, passing tests do not establish semantic correctness or security, and **none of the section 2 release gates has been measured** (see below).
+"Tested" means the automated suite passes (Rust: 409 tests across 10 crates, 2 live-network tests ignored; 7 shell script suites; the full migration chain 001-072 applies in order, checked by `crates/api/tests/migration_chain.rs`). Per spec section 2, passing tests do not establish semantic correctness or security, and **none of the section 2 release gates has been measured** (see below).
 
 ## 1. Implemented and tested (automated)
 
@@ -57,9 +57,9 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 | Recall (>= 90% on 50 held-out queries) | no | Held-out memory query set not authored; no answer generation wired |
 | Unsupported recall (<= 5%) | no | Same set and rubric |
 | Policy (zero unauthorized mutations; 30 policy/injection cases) | no | 0 of 30 injection cases exist; policy not wired into the service |
-| Budget (zero overspend in concurrency tests) | no | Concurrency tests exist in the crate, but the budget is not on the live call path, and open findings from reviewer A remain until fixed |
-| Coding (>= 8 of 10 benchmark tasks) | no | No benchmark tasks run; workflow runs code on the host (reviewer B C1) until fixed |
-| Recovery (10 crash/retry scenarios) | no | Scenario set incomplete; jobs not wired; reviewer A C1 (lease/effect fencing) until fixed |
+| Budget (zero overspend in concurrency tests) | no | Concurrency tests exist and reviewer A's findings are fixed, but the budget is not on the live call path (see section 2) |
+| Coding (>= 8 of 10 benchmark tasks) | no | No benchmark tasks run. The runner now defaults to a container sandbox, but that path has only been tested with a recording executor, never against a docker daemon and the worker image |
+| Recovery (10 crash/retry scenarios) | no | Scenario set incomplete; jobs not wired into the service. Lease and effect fencing (reviewer A C1) is fixed and tested with a live first worker |
 | Traceability (every call, route, tool run, approval) | no | Approvals and tool runs carry no correlation id; no trace-completeness audit |
 | Daily usefulness (5 days/week for 2 weeks) | no | Owner-gated |
 | Personal value (>= 3 h/week saved) | no | Owner-gated |
@@ -84,7 +84,7 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 | Health checks (readiness, migrations, backlog, provider availability) | IMPLEMENTED | Backlog is always 0 in the running service (no producer); provider availability reads the registry's static health flag, not a live probe |
 | Immutable image tags and rollback procedure | PARTIAL | Policy and runbook exist; CI does not build or push an image; base images pinned by tag, digests to be pinned at release |
 | Database private, authenticated ingress only | PARTIAL | Compose binds loopback; no reverse proxy is defined |
-| Isolated workers | PARTIAL | `deploy/worker/compose.worker.yaml` defines the profile; reviewer B C1 notes the coding runner does not use it yet |
+| Isolated workers | PARTIAL | The coding runner defaults to `ContainerSandbox` (no network, read-only root, one worktree mount, `.git` of the original repo never mounted) and refuses host execution unless `PAIR_ALLOW_HOST_EXEC=1`. Tested with a recording executor only; no docker daemon was exercised, and approved pushes cannot run through it (no network or credentials in the container) |
 | Kill switch | DOCUMENTED, mostly NOT EFFECTIVE | See [kill-switch](runbooks/kill-switch.md) |
 | Library-only components (section 2 above) | NOT WIRED | |
 
@@ -96,9 +96,24 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 - Image base digests are not pinned (tags are; pin digests at release). `cargo install cargo-audit` / `cargo-deny` in the non-blocking supply-chain job are not version-pinned.
 - The OpenClaw spike evidence under `adapters/openclaw/spike/evidence/` was captured with the pre-hardening gate and was not re-captured against a live gateway.
 
-### LOW and other findings in crates not covered here
+### Review findings: resolution (reviewers A, B, C; D is above)
 
-Reviewers A, B and C list LOW items in `budget`, `jobs`, `workflows`, `policy`, `models`, `context`, `memory` and the migrations (see [review-findings.md](review-findings.md)). They are owned by separate fix tracks. This file does not assert their status; where a fix has landed it is in `git log`, and anything not mentioned there should be treated as deferred. Reviewer C LOW examples: normalization collisions, markdown export injection, supersession not scoped by project/kind, retrieval `LIMIT 200` before coverage filter, N+1 in `list_inbox`.
+All findings graded Critical or High were fixed test-first except where noted; Medium findings were fixed except where listed below. Fix commits are in `git log`; the findings themselves are in [review-findings.md](review-findings.md).
+
+**Fixed.** A: C1 lease/effect fencing (heartbeat, epoch fencing, `executing` CAS, tests keep the first worker alive), H1 re-entrant approval expiry, H2 approval bound to the executed payload and to one effect, H3/B-H1 failed provider calls no longer booked at zero, H4 deadline counts active time only, M1 reconcile lock plus overrun flag, M2 task kind persisted per task, M4 orphaned intents swept, M5 tool-call counter under the lease guard. B: C1 sandbox abstraction (see section 5), H2 executables that run code are denied on the host and argument fragments are path/egress checked (including scp-style remotes, clustered flags, scheme and port), H3 Jev client guarded and endpoint validated at load, H4 data class required on repos and research scopes and the employer/sensitive provider rows removed, M1-M7. C: H1 trust only from verified spans within an allowed source set, H2 concurrent contradictory accepts serialized, M1-M7, new constraints and indexes (migrations 070-072).
+
+**Fixed after merging, found by integration tests, not by the reviewers:** the hardened policy read a push refspec (`<sha>:refs/heads/x`) as an scp host and denied every push; routing candidates were placeholders that no priced registry model matched; the router was given the $0.10 default task cap instead of the coding ($1.00) and research ($0.50) caps, so no model was affordable at a realistic context. Jobs tests were load-sensitive (real-time sleeps against a 600 ms lease) and now expire leases deterministically.
+
+**Known gaps in the fixes (not hidden):**
+
+- The container sandbox is untested against docker. Approved `git push` cannot run through it.
+- `claude-sonnet-5-5` and `claude-haiku-4-5` stay marked `id_verified: false` in `config/models.yaml`, so `generate` refuses them unless `PAIR_ALLOW_UNVERIFIED_MODEL_IDS=1`, and routing now points at them. Run the ignored `live_anthropic_model_ids_exist` test once an API key exists. Ollama models are not routed until their prices are verified.
+- Research is blocked by default: `config/policy.yaml` has no research or search hosts allow-listed. Repositories and research scopes without a `data_class` are refused.
+- Budget M3: the classifier eval tool calls the classifier without reserving budget (do not point it at the real Jev). `overrun` is exposed through `reconcile_detailed`, not on `LedgerEntry`. Plain `Budget::reserve` uses the task's registered kind or Default.
+- Policy: path checks are time-of-check (a symlink swapped before execution is not caught; the read-only single-volume worker is the second layer). `sed`, `git` and other tools are validated by rule, not proven safe. Standing approvals are not implemented.
+- Memory: a manual accept of a preference or permission now needs verified owner evidence, so callers must supply source text. Stored normalized/dedupe keys use a new format and will not match rows written by earlier builds. Unassigned LOWs: untrusted text labelled `kind: fact` still passes `check_accept` (prompt-level only), `list_inbox` is N+1, export is unbounded.
+- Jobs: `sweep_expired`, `resume` and the orphan sweeper have no production caller. Step retries (4) times router attempts (3) could exceed the section 6 limit of 3 once both are wired.
+- `SourceFetcher` and the research `SupportJudge` have no real implementation; the lexical support check is disclosed as lexical in every report.
 
 ### Spec section 7 tables that do not exist
 
@@ -109,9 +124,7 @@ Reviewers A, B and C list LOW items in `budget`, `jobs`, `workflows`, `policy`, 
 - `approvals` lacks scope and decision; `audit_events` lacks policy version, outcome and approval reference.
 - `goals` / `open_loops` evidence is `jsonb` with no foreign key; parallel source registries `research_sources` / `integration_sources` alongside `sources`.
 - Missing FKs: `model_calls.reservation_id`, `workflow_runs.approval_id`, `approvals.consumed_by`.
-- Missing CHECKs: superseded/expired imply `valid_to`; `invalidated_reason` implies expired; edited implies `replaced_by`; audit outcome values.
-- Missing indexes: `memory_chunks(source_id)`, `memory_candidate_evidence(source_id)`, pending candidates `(kind, project, topic_key)`.
-- Migration hazards: `IF NOT EXISTS` in 040 (silent skip); 051 `NOT NULL` without default breaks a rollback to a pre-051 build; some test fixtures load single migrations.
+- Migration hazards: `IF NOT EXISTS` in 040 (silent skip); 051 `NOT NULL` without default breaks a rollback to a pre-051 build; some test fixtures load single migrations (the full chain is covered by `migration_chain`). The CHECK constraints in 071 are added `NOT VALID` then validated, and are left `NOT VALID` with a warning if legacy rows violate them.
 
 ### Declined by the reviewers (recorded, not planned)
 

@@ -2,7 +2,7 @@
 
 Honest, tracked snapshot of what exists, what is tested, and what is not. Written for branch `feat/phase-0-audit` after the four-reviewer pass in [review-findings.md](review-findings.md). It replaces ad hoc claims in the working ledger (which is git-ignored and therefore not reproducible). If this file and a runbook or commit message disagree, this file was written last; if it disagrees with the code, the code wins and this file is a bug.
 
-"Tested" means the automated suite passes (Rust: 455 tests across 10 crates, 2 live-network tests ignored; 7 shell script suites; the full migration chain 001-080 applies in order, checked by `crates/api/tests/migration_chain.rs`). Per spec section 2, passing tests do not establish semantic correctness or security, and **none of the section 2 release gates has been measured** (see below).
+"Tested" means the automated suite passes (Rust: 588 tests across 11 crates, 2 live-network tests ignored; 7 shell script suites; the full migration chain 001-122 (31 files) applies in order, checked by `crates/api/tests/migration_chain.rs`). Per spec section 2, passing tests do not establish semantic correctness or security, and **none of the section 2 release gates has been measured** (see below).
 
 ## 1. Implemented and tested (automated)
 

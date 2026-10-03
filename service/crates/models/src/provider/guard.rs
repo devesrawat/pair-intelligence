@@ -92,27 +92,47 @@ pub fn check_ip(ip: IpAddr) -> Result<()> {
 
 fn check_v4(ip: Ipv4Addr) -> Result<()> {
     let [a, b, ..] = ip.octets();
+    let this_network = a == 0;
     let cgnat = a == 100 && (64..128).contains(&b);
+    let benchmarking = a == 198 && (18..20).contains(&b);
+    let reserved_or_multicast = a >= 224;
     if ip.is_loopback()
         || ip.is_private()
         || ip.is_link_local()
-        || ip.is_unspecified()
-        || ip.is_broadcast()
+        || this_network
         || cgnat
+        || benchmarking
+        || reserved_or_multicast
     {
         return Err(disallowed(format!("address {ip} is local or private")));
     }
     Ok(())
 }
 
+/// NAT64 well-known prefix 64:ff9b::/96 embeds an IPv4 address in the low 32 bits.
+fn nat64_embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    let is_nat64 = s[..6] == [0x64, 0xff9b, 0, 0, 0, 0];
+    is_nat64.then(|| Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8))
+}
+
 fn check_v6(ip: Ipv6Addr) -> Result<()> {
-    if let Some(v4) = ip.to_ipv4_mapped() {
+    if let Some(v4) = ip.to_ipv4_mapped().or_else(|| nat64_embedded_v4(ip)) {
         return check_v4(v4);
     }
     let seg0 = ip.segments()[0];
     let unique_local = seg0 & 0xfe00 == 0xfc00;
     let link_local = seg0 & 0xffc0 == 0xfe80;
-    if ip.is_loopback() || ip.is_unspecified() || unique_local || link_local {
+    let site_local = seg0 & 0xffc0 == 0xfec0;
+    let ipv4_compatible = ip.segments()[..6] == [0; 6];
+    if ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || unique_local
+        || link_local
+        || site_local
+        || ipv4_compatible
+    {
         return Err(disallowed(format!("address {ip} is local or private")));
     }
     Ok(())
@@ -311,5 +331,56 @@ mod tests {
             "https://api.anthropic.com/v1/messages"
         );
         assert!(Endpoint::parse("https://ollama.com").is_ok());
+    }
+
+    fn assert_forbidden(ip: &str) {
+        let parsed: IpAddr = ip.parse().expect("ip literal");
+        let err = check_ip(parsed).expect_err(ip);
+        assert_eq!(err.code, ErrorCode::ProviderDisallowed, "{ip}");
+    }
+
+    #[test]
+    fn nat64_embedded_private_v4_rejected() {
+        assert_forbidden("64:ff9b::a00:1");
+        assert_forbidden("64:ff9b::7f00:1");
+        assert!(check_ip("64:ff9b::808:808".parse().expect("ip")).is_ok());
+    }
+
+    #[test]
+    fn ipv4_compatible_v6_rejected() {
+        assert_forbidden("::7f00:1");
+        assert_forbidden("::a00:1");
+        assert_forbidden("::808:808");
+    }
+
+    #[test]
+    fn site_local_fec0_rejected() {
+        assert_forbidden("fec0::1");
+        assert_forbidden("feff::1");
+    }
+
+    #[test]
+    fn multicast_rejected() {
+        assert_forbidden("ff02::1");
+        assert_forbidden("ff00::1");
+        assert_forbidden("224.0.0.1");
+    }
+
+    #[test]
+    fn zero_slash_8_rejected() {
+        assert_forbidden("0.1.2.3");
+    }
+
+    #[test]
+    fn benchmarking_198_18_rejected() {
+        assert_forbidden("198.18.0.1");
+        assert_forbidden("198.19.255.255");
+        assert!(check_ip("198.20.0.1".parse().expect("ip")).is_ok());
+    }
+
+    #[test]
+    fn reserved_240_slash_4_rejected() {
+        assert_forbidden("240.0.0.1");
+        assert_forbidden("255.255.255.254");
     }
 }

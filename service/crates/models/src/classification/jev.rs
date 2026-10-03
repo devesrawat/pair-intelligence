@@ -4,6 +4,7 @@
 use super::jev_wire::{parse_response, validate_choice, ValidatedChoice};
 use super::questions::{QuestionSet, DIFFICULTY_ID, INTENT_ID};
 use super::state::{build_state, estimate_tokens, sha256_hex};
+use crate::provider::guard::{guarded_client, GuardedResolver};
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::TaskId;
@@ -81,9 +82,7 @@ pub struct JevClassifier {
 
 impl JevClassifier {
     pub fn new(settings: JevSettings, key: ApiKey, questions: QuestionSet) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|e| PairError::new(ErrorCode::Internal, format!("http client: {e}")))?;
+        let http = guarded_client(GuardedResolver::system())?;
         Ok(Self {
             http,
             settings,
@@ -114,7 +113,7 @@ impl JevClassifier {
             .map_err(|e| {
                 PairError::new(
                     ErrorCode::ProviderUnavailable,
-                    format!("jev transport: {e}"),
+                    format!("jev transport failed ({})", transport_kind(&e)),
                 )
             })?;
         let status = resp.status();
@@ -136,7 +135,10 @@ impl JevClassifier {
             ));
         }
         let text = resp.text().await.map_err(|e| {
-            PairError::new(ErrorCode::ProviderUnavailable, format!("jev body: {e}"))
+            PairError::new(
+                ErrorCode::ProviderUnavailable,
+                format!("jev body unreadable ({})", transport_kind(&e)),
+            )
         })?;
         Ok((text, request_id))
     }
@@ -169,6 +171,22 @@ impl JevClassifier {
             latency_ms,
             request_id: request_id.unwrap_or_else(|| format!("local-{}", Uuid::now_v7())),
         })
+    }
+}
+
+/// Coarse failure class for error messages. `reqwest::Error` text embeds the request URL
+/// (and its query), so it is never forwarded.
+fn transport_kind(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "connect"
+    } else if e.is_redirect() {
+        "redirect"
+    } else if e.is_decode() || e.is_body() {
+        "body"
+    } else {
+        "request"
     }
 }
 
@@ -346,6 +364,40 @@ mod tests {
             "credentials must be excluded"
         );
         assert!(sent.contains("\"criteria\""));
+    }
+
+    #[tokio::test]
+    async fn jev_client_does_not_follow_redirects() {
+        let target = spawn(Behavior::Reply(ok_body("coding", "routine", 0.9))).await;
+        let redirector = spawn(Behavior::Redirect(target.url.clone())).await;
+        let err = classifier(&redirector.url, 1000)
+            .classify(input("secret request body", ""))
+            .await
+            .expect_err("307 is an error, not followed");
+        assert_eq!(err.code, ErrorCode::ProviderUnavailable);
+        assert_eq!(redirector.hits(), 1);
+        assert_eq!(
+            target.hits(),
+            0,
+            "body must not be re-sent to the redirect target"
+        );
+    }
+
+    #[tokio::test]
+    async fn jev_error_redacts_url_and_key() {
+        const KEY: &str = "sk-very-secret-key";
+        let url = "http://127.0.0.1:1/private-path?token=URLSECRET";
+        let settings = JevSettings {
+            endpoint: url.into(),
+            model: "jev-1.13.0".into(),
+            deadline: Duration::from_millis(1000),
+        };
+        let c = JevClassifier::new(settings, ApiKey::new(KEY), test_questions()).expect("client");
+        let err = c.classify(input("x", "")).await.expect_err("refused");
+        let text = format!("{err} {err:?}");
+        for leaked in [KEY, "private-path", "URLSECRET", "127.0.0.1"] {
+            assert!(!text.contains(leaked), "{leaked} leaked in {text}");
+        }
     }
 
     #[test]

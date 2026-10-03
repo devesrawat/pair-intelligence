@@ -112,6 +112,7 @@ impl RoutingConfig {
             && self.baseline.by_intent.values().all(|t| known(t))
             && self.tier_by_difficulty.values().all(|t| known(t))
             && self.candidates.iter().all(|c| known(&c.tier));
+        crate::provider::guard::Endpoint::parse(&self.classifier.endpoint)?;
         if !tiers_ok || self.max_model_attempts == 0 {
             return Err(PairError::new(
                 ErrorCode::InvalidInput,
@@ -167,5 +168,24 @@ mod tests {
         .expect("read")
         .replace("default_tier: strong", "default_tier: bogus");
         assert!(RoutingConfig::from_yaml(&bad).is_err());
+    }
+
+    #[test]
+    fn jev_endpoint_http_localhost_rejected_at_load() {
+        let yaml = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml"),
+        )
+        .expect("read");
+        for bad in [
+            "http://127.0.0.1:11434",
+            "http://localhost:8080/v1",
+            "https://localhost/v1",
+            "https://10.0.0.5/v1",
+            "http://api.typesafe.ai/v1/systemone",
+        ] {
+            let edited = yaml.replace("https://api.typesafe.ai/v1/systemone", bad);
+            let err = RoutingConfig::from_yaml(&edited).expect_err(bad);
+            assert_eq!(err.code, ErrorCode::ProviderDisallowed, "{bad}");
+        }
     }
 }

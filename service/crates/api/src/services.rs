@@ -13,6 +13,7 @@ use pair_models::provider::store::ConversationStore;
 use pair_models::provider::ProviderRegistry;
 use pair_policy::PolicyEngine;
 
+use crate::adapter_budget::AdapterBudget;
 use crate::attempts::AttemptStore;
 
 /// Total wall-clock a turn may spend on provider attempts. Below the 30 s HTTP request timeout so
@@ -38,4 +39,6 @@ pub struct Services {
     /// Same decision the provider adapters were built with (`PAIR_ALLOW_UNVERIFIED_MODEL_IDS`).
     pub allow_unverified_ids: bool,
     pub turn_budget: Duration,
+    /// Server-side cost rules for the adapter routes `/v1/budget/*`.
+    pub adapter_budget: AdapterBudget,
 }

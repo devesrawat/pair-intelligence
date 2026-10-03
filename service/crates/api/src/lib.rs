@@ -1,6 +1,7 @@
 //! pair-api: HTTP surface. `/healthz` is open; everything else needs the service
 //! token and an `X-Actor`. Every response carries `X-Trace-Id`.
 
+pub mod adapter_budget;
 pub mod attempts;
 pub mod auth;
 pub mod background;

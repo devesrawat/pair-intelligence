@@ -64,6 +64,21 @@ env:
     default: 25
     doc: Wall-clock a turn may spend on provider attempts; at most 28 (the HTTP timeout is 30).
 
+  PAIR_BUDGET_OVERRUN_FACTOR:
+    default: 4
+    doc: >
+      OVERRUN_FACTOR for POST /v1/budget/reconcile: a settlement (the larger of the reported cost and
+      tokens x registry price) may claim at most reserved x this factor. Anything above is refused
+      with 400 and the reservation stays held; report a null cost to leave it unresolved instead.
+      At least 1. A hard ceiling of 1000000000000 micro-USD per amount applies regardless.
+  PAIR_RESERVE_FLOOR_INPUT_TOKENS:
+    default: 20000
+    doc: >
+      Input tokens the server assumes for one model call when sizing a /v1/budget/reserve hold:
+      hold = max(max_cost_micros, registry price x (min(this, context_tokens) input + the model's
+      max_output_tokens output)). The adapter's max_cost_micros can raise the hold, never lower it.
+      At least 1.
+
   # ---- provider credentials (new; each optional) ----
   ANTHROPIC_API_KEY:
     secret: true
@@ -104,10 +119,24 @@ endpoints:
       Pass conversation_id + client_message_id to make retries share one task id, one attempt
       counter and one task budget.
   "POST /v1/budget/reserve":
-    body: "{task_id?, kind, category: metered|classifier, max_cost_micros, price_version}"
+    body: "{task_id, model_id?, kind: default|research|coding, category: metered|classifier, max_cost_micros, price_version}"
+    notes: >
+      REQUIRED: task_id (UUID; the identity a later reconcile must present), kind, category,
+      max_cost_micros (> 0), price_version. NEW and recommended: model_id, a registry model id.
+      The server sizes the hold from that model's registry price (see PAIR_RESERVE_FLOOR_INPUT_TOKENS)
+      and holds max(max_cost_micros, that worst case): the client figure can only RAISE the hold.
+      model_id unknown, unpriced, or not priced under price_version is 422 budget_unknown_price.
+      Without model_id the hold is sized for the dearest registry model priced under price_version
+      (422 if none), so omit it only if that is acceptable. The response carries the hold actually
+      taken in max_cost_micros plus model_id.
   "POST /v1/budget/reconcile":
-    body: "{reservation_id, input_tokens, output_tokens, actual_cost_micros|null, price_version}"
-    notes: A null cost leaves the reservation unresolved and counted in full.
+    body: "{reservation_id, task_id, input_tokens, output_tokens, actual_cost_micros|null, price_version}"
+    notes: >
+      REQUIRED: task_id, which must equal the reservation's task_id (otherwise 403). A reported cost
+      is counted as max(actual_cost_micros, input/output tokens x the reserved model's registry
+      price); a value above reserved x PAIR_BUDGET_OVERRUN_FACTOR (or the hard ceiling) is refused
+      with 400 and the reservation stays held. A null cost leaves the reservation unresolved and
+      counted in full. price_version must be the reservation's own.
   "POST /v1/policy/authorize":
     body: "{tool, executable?, args, paths, destination?, data_class, task_id?, approvals?, policy_version?}"
     notes: >

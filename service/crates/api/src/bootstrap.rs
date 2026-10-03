@@ -143,5 +143,6 @@ pub fn load_services(
         allow_unverified_ids: cfg.allow_unverified_model_ids,
     })?;
     services.turn_budget = cfg.turn_budget;
+    services.adapter_budget = cfg.adapter_budget;
     Ok(Some(services))
 }

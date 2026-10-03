@@ -14,7 +14,7 @@ pub use ledger::PgBudget;
 pub use pair_core::types::{BudgetCategory, ReserveRequest, TaskKind};
 pub use pricebook::PriceBook;
 pub use reconcile::Reconciled;
-pub use reserve::RESERVE_LOCK_KEY;
+pub use reserve::{ReservationBinding, MAX_COST_MICROS, RESERVE_LOCK_KEY};
 
 /// Migrations shared by the whole workspace (`migrations/` at the repo root).
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../../migrations");

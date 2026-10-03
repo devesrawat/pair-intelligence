@@ -7,6 +7,10 @@ use std::time::Duration;
 use pair_core::error::{ErrorCode, PairError};
 use pair_telemetry::Secret;
 
+use crate::adapter_budget::{
+    AdapterBudget, DEFAULT_OVERRUN_FACTOR, DEFAULT_RESERVE_FLOOR_INPUT_TOKENS,
+};
+
 pub const MIN_TOKEN_LEN: usize = 16;
 pub const DEFAULT_BIND: &str = "127.0.0.1:8080";
 pub const DEFAULT_MODELS_CONFIG: &str = "config/models.yaml";
@@ -61,6 +65,8 @@ pub struct Config {
     pub worker_interval: Duration,
     pub shutdown_drain: Duration,
     pub turn_budget: Duration,
+    /// Server-side cost rules for the adapter routes `/v1/budget/*`.
+    pub adapter_budget: AdapterBudget,
 }
 
 /// Empty counts as unset, so compose can pass `${VAR:-}` through.
@@ -164,6 +170,38 @@ fn secret<F: Fn(&str) -> Option<String>>(get: &F, name: &str) -> Option<Secret> 
     non_empty(get(name)).map(Secret::new)
 }
 
+/// A positive integer setting; every value is validated, never clamped.
+fn positive<F: Fn(&str) -> Option<String>>(
+    get: &F,
+    name: &str,
+    default: u64,
+) -> Result<u64, PairError> {
+    let Some(raw) = non_empty(get(name)) else {
+        return Ok(default);
+    };
+    match raw.trim().parse::<u64>() {
+        Ok(v) if v >= 1 => Ok(v),
+        _ => Err(invalid(format!("{name} must be an integer of at least 1"))),
+    }
+}
+
+fn adapter_budget<F: Fn(&str) -> Option<String>>(get: &F) -> Result<AdapterBudget, PairError> {
+    let factor = positive(
+        get,
+        "PAIR_BUDGET_OVERRUN_FACTOR",
+        u64::from(DEFAULT_OVERRUN_FACTOR),
+    )?;
+    Ok(AdapterBudget {
+        overrun_factor: u32::try_from(factor)
+            .map_err(|_| invalid("PAIR_BUDGET_OVERRUN_FACTOR is too large"))?,
+        reserve_floor_input_tokens: positive(
+            get,
+            "PAIR_RESERVE_FLOOR_INPUT_TOKENS",
+            DEFAULT_RESERVE_FLOOR_INPUT_TOKENS,
+        )?,
+    })
+}
+
 impl Config {
     /// Build from an arbitrary lookup (injectable for tests).
     pub fn from_lookup<F>(get: F) -> Result<Self, PairError>
@@ -213,6 +251,7 @@ impl Config {
             worker_interval: timing.worker,
             shutdown_drain: timing.drain,
             turn_budget: timing.turn_budget,
+            adapter_budget: adapter_budget(&get)?,
         })
     }
 
@@ -394,6 +433,32 @@ mod tests {
             ("PAIR_SWEEP_INTERVAL_SECS", "0"),
             ("PAIR_SWEEP_INTERVAL_SECS", "soon"),
             ("PAIR_TURN_BUDGET_SECS", "300"),
+        ] {
+            assert!(
+                Config::from_lookup(with(name, bad)).is_err(),
+                "{name}={bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn adapter_budget_settings_default_parse_and_reject_bad_values() {
+        let d = Config::from_lookup(lookup(&[])).expect("valid");
+        assert_eq!(d.adapter_budget, AdapterBudget::default());
+        assert_eq!(d.adapter_budget.overrun_factor, 4);
+        let custom = Config::from_lookup(|k| match k {
+            "PAIR_SERVICE_TOKEN" => Some(GOOD_TOKEN.to_owned()),
+            "PAIR_BUDGET_OVERRUN_FACTOR" => Some("2".to_owned()),
+            "PAIR_RESERVE_FLOOR_INPUT_TOKENS" => Some("5000".to_owned()),
+            _ => None,
+        })
+        .expect("valid");
+        assert_eq!(custom.adapter_budget.overrun_factor, 2);
+        assert_eq!(custom.adapter_budget.reserve_floor_input_tokens, 5_000);
+        for (name, bad) in [
+            ("PAIR_BUDGET_OVERRUN_FACTOR", "0"),
+            ("PAIR_BUDGET_OVERRUN_FACTOR", "many"),
+            ("PAIR_RESERVE_FLOOR_INPUT_TOKENS", "0"),
         ] {
             assert!(
                 Config::from_lookup(with(name, bad)).is_err(),

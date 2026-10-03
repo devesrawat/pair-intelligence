@@ -211,8 +211,15 @@ phase_normal() { # (iv) plus allow positive control
   dbq "SELECT reservation_id, settled, input_tokens, output_tokens, amount_micros, price_version FROM budget_ledger WHERE reservation_id='$rid'" > "$SPIKE_DIR/db-ledger.txt"
   check "DB: reservation row is settled" test "$(dbq "SELECT state FROM budget_reservations WHERE id='$rid'")" = settled
   check "DB: one settled ledger row for the reservation" test "$(dbq "SELECT count(*) FROM budget_ledger WHERE reservation_id='$rid' AND settled")" = 1
-  check "DB: ledger amount equals the adapter's computed actual cost" \
-    test "$(dbq "SELECT amount_micros FROM budget_ledger WHERE reservation_id='$rid'")" = "$(hooks '.hook=="llm_output" and .phase=="reconciled"' | jq -r .costMicros | head -1)"
+  # The server never trusts the adapter's figure: it books max(reported, tokens x registry price),
+  # rounding each of input and output up (test registry: 200000 / 600000 micros per Mtok).
+  adapter_cost="$(hooks '.hook=="llm_output" and .phase=="reconciled"' | jq -r .costMicros | head -1)"
+  in_tok="$(dbq "SELECT input_tokens FROM budget_ledger WHERE reservation_id='$rid'")"
+  out_tok="$(dbq "SELECT output_tokens FROM budget_ledger WHERE reservation_id='$rid'")"
+  server_cost=$(( (in_tok * 200000 + 999999) / 1000000 + (out_tok * 600000 + 999999) / 1000000 ))
+  expected_cost=$(( adapter_cost > server_cost ? adapter_cost : server_cost ))
+  check "DB: ledger amount is max(adapter cost, server tokens x registry price)" \
+    test "$(dbq "SELECT amount_micros FROM budget_ledger WHERE reservation_id='$rid'")" = "$expected_cost"
   check "DB: reservation uses the explicit kind and price version" \
     test "$(dbq "SELECT task_kind||','||price_version FROM budget_reservations WHERE id='$rid'")" = "default,mock-2026-10-03"
   hooks '.hook=="before_model_resolve" and .phase=="reserve-attempt"' | jq -c '{promptChars, maxCostMicros}' > "$SPIKE_DIR/db-estimate.txt"

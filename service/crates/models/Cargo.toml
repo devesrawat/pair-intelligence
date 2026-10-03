@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 pair-core = { path = "../core" }
+pair-budget = { path = "../budget" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -28,4 +29,4 @@ workspace = true
 
 [dev-dependencies]
 axum = "0.8"
-pair-budget = { path = "../budget" }
+

@@ -3,11 +3,16 @@
 //! routing quality: downstream task acceptance requires real workflow runs and owner-reviewed labels.
 use super::baseline::classify_by_rules;
 use super::config::{ClassifierMode, RoutingConfig};
+use super::jev::estimate_input_tokens;
+use super::questions::QuestionSet;
 use crate::router::ConfigRouter;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::ids::TaskId;
-use pair_core::traits::Classifier;
-use pair_core::types::{ClassificationInput, DataClass, TaskProfile};
+use pair_core::money::{Micros, Price};
+use pair_core::traits::{BudgetEx, Classifier};
+use pair_core::types::{
+    ClassificationInput, DataClass, ReserveRequest, TaskClassification, TaskProfile, UsageReport,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -206,13 +211,24 @@ pub fn run_rules(cases: &[&EvalCase], router: &ConfigRouter, split: &str) -> Str
 
 /// Strategy 3: a classifier recommends the tier (applied as if every category were approved, which is the
 /// hypothetical being evaluated). Classifier failures fall back to the baseline and are counted.
+///
+/// Every classifier call is reserved through `budget` first and reconciled with the observed usage
+/// afterwards, exactly like the production pipeline (spec 6: no unmetered spend). A refused reservation skips
+/// the call (counted as a failure); a failed call leaves its reservation unresolved at the reserved amount.
 pub async fn run_classifier_assisted(
     cases: &[&EvalCase],
     classifier: &dyn Classifier,
     router: &ConfigRouter,
-    input_price_micros_per_mtok: i64,
+    budget: &dyn BudgetEx,
+    questions: &QuestionSet,
     split: &str,
 ) -> StrategyReport {
+    let cfg = &router.config().classifier;
+    let price = Price {
+        version: cfg.price_version.clone(),
+        input_per_mtok: Micros(cfg.input_price_micros_per_mtok),
+        output_per_mtok: Micros::ZERO,
+    };
     let mut r = StrategyReport {
         name: "classifier-assisted".into(),
         split: split.into(),
@@ -231,8 +247,9 @@ pub async fn run_classifier_assisted(
             task: TaskId::new(),
         };
         let started = Instant::now();
-        let c = classifier.classify(input).await.ok();
+        let (c, charged) = classify_reserved(classifier, budget, &price, questions, &input).await;
         lat.push(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
+        r.classifier_cost_micros = r.classifier_cost_micros.saturating_add(charged.0);
         if c.is_none() {
             r.failures += 1;
         }
@@ -243,13 +260,6 @@ pub async fn run_classifier_assisted(
                 .map_or(rules.difficulty, |c| c.difficulty.as_str())
                 == case.expected_difficulty,
         );
-        if let Some(c) = &c {
-            let spent = (c
-                .input_tokens
-                .saturating_mul(input_price_micros_per_mtok as u64))
-            .div_ceil(1_000_000);
-            r.classifier_cost_micros += i64::try_from(spent).unwrap_or(i64::MAX);
-        }
         let profile = profile_for(rules.intent, rules.difficulty, case);
         match router.select_hypothetical_active(&profile, c.as_ref()) {
             Ok(d) => r.modeled_cost_micros += modeled_cost(router, &d.model_id, est_tokens(case)),
@@ -259,6 +269,84 @@ pub async fn run_classifier_assisted(
     r.intent_correct = Some(ic);
     r.difficulty_correct = Some(dc);
     finish(r, lat)
+}
+
+/// Reserve, call, reconcile. Returns the classification (if any) and the amount charged to the budget.
+async fn classify_reserved(
+    classifier: &dyn Classifier,
+    budget: &dyn BudgetEx,
+    price: &Price,
+    questions: &QuestionSet,
+    input: &ClassificationInput,
+) -> (Option<TaskClassification>, Micros) {
+    let est_tokens = estimate_input_tokens(input, questions);
+    let Some(max_cost) = price.max_cost(est_tokens, 0) else {
+        tracing::warn!("classifier eval call skipped: cost estimate overflow");
+        return (None, Micros::ZERO);
+    };
+    let reservation = match budget
+        .reserve_with(ReserveRequest::classifier(
+            input.task,
+            max_cost,
+            price.version.clone(),
+        ))
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(code = ?e.code, "classifier eval call skipped: reservation refused");
+            return (None, Micros::ZERO);
+        }
+    };
+    match classifier.classify(input.clone()).await {
+        Ok(c) => {
+            let actual = price.max_cost(c.input_tokens, 0).unwrap_or(max_cost);
+            let usage = UsageReport {
+                input_tokens: c.input_tokens,
+                output_tokens: 0,
+                actual_cost: Some(actual),
+                price_version: price.version.clone(),
+            };
+            if let Err(e) = budget.reconcile(reservation, usage).await {
+                tracing::error!(code = ?e.code, %reservation, "classifier eval reconcile failed; reservation stays held");
+                return (Some(c), max_cost);
+            }
+            (Some(c), actual)
+        }
+        Err(e) => {
+            // Unknown charge: the reservation stays unresolved (spec 6: never assume zero cost).
+            tracing::warn!(code = ?e.code, %reservation, "classifier eval call failed; reservation left unresolved");
+            (None, max_cost)
+        }
+    }
+}
+
+/// Refuses to evaluate against a classifier endpoint that can spend real money when no budget is
+/// available to meter it. Loopback endpoints (local mocks) need no budget.
+pub fn require_budget_for_real_endpoint(endpoint: &str, budget_available: bool) -> Result<()> {
+    if budget_available || endpoint_is_loopback(endpoint) {
+        return Ok(());
+    }
+    Err(PairError::new(
+        ErrorCode::BudgetExceeded,
+        format!(
+            "refusing to call classifier endpoint {endpoint}: it is not loopback and no budget was supplied \
+             (set DATABASE_URL so classifier calls are reserved and reconciled)"
+        ),
+    ))
+}
+
+fn endpoint_is_loopback(endpoint: &str) -> bool {
+    use url::Host;
+    match url::Url::parse(endpoint)
+        .ok()
+        .and_then(|u| u.host().map(|h| h.to_owned()))
+    {
+        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 fn pct(n: Option<usize>, total: usize) -> String {
@@ -297,9 +385,13 @@ pub fn load_router(config: &Path) -> Result<ConfigRouter> {
 mod tests {
     use super::*;
     use crate::classification::config::test_config;
+    use crate::classification::questions::test_questions;
     use crate::classification::questions::{DIFFICULTY_LABELS, INTENT_LABELS};
     use async_trait::async_trait;
-    use pair_core::types::TaskClassification;
+    use pair_core::ids::{LedgerEntryId, ReservationId};
+    use pair_core::traits::Budget;
+    use pair_core::types::{BudgetCategory, LedgerEntry, TaskKind};
+    use std::sync::Mutex;
 
     const DATASET: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -390,21 +482,173 @@ mod tests {
         }
     }
 
+    struct OkClassifier;
+    #[async_trait]
+    impl Classifier for OkClassifier {
+        async fn classify(&self, _i: ClassificationInput) -> Result<TaskClassification> {
+            Ok(TaskClassification {
+                model_version: "jev-test".into(),
+                question_version: "q1".into(),
+                intent: "coding".into(),
+                difficulty: "substantial".into(),
+                intent_probabilities: Default::default(),
+                difficulty_probabilities: Default::default(),
+                intent_confidence: 0.9,
+                difficulty_confidence: 0.9,
+                input_tokens: 1_000,
+                latency_ms: 1,
+                request_id: "r".into(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeBudget {
+        reserved: Mutex<Vec<ReserveRequest>>,
+        reconciled: Mutex<Vec<UsageReport>>,
+        refuse: bool,
+    }
+
+    #[async_trait]
+    impl Budget for FakeBudget {
+        async fn reserve(&self, _t: TaskId, _m: Micros) -> Result<ReservationId> {
+            Err(PairError::new(ErrorCode::Internal, "must use reserve_with"))
+        }
+        async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
+            let amount = usage.actual_cost.unwrap_or(Micros::ZERO);
+            self.reconciled.lock().expect("lock").push(usage);
+            Ok(LedgerEntry {
+                id: LedgerEntryId::new(),
+                reservation: id,
+                amount,
+                settled: true,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl BudgetEx for FakeBudget {
+        async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
+            if self.refuse {
+                return Err(PairError::new(
+                    ErrorCode::BudgetExceeded,
+                    "sub-cap exhausted",
+                ));
+            }
+            self.reserved.lock().expect("lock").push(req);
+            Ok(ReservationId::new())
+        }
+        fn task_cap(&self, _kind: TaskKind) -> Micros {
+            Micros(1_000_000_000)
+        }
+    }
+
+    fn public_cases(d: &Dataset, n: usize) -> Vec<&EvalCase> {
+        d.split(Split::Dev)
+            .into_iter()
+            .filter(|c| c.data_class == pair_core::types::DataClass::Public)
+            .take(n)
+            .collect()
+    }
+
     #[tokio::test]
     async fn test_run_classifier_assisted_failures_counted_and_baseline_used() {
         let d = dataset();
         let router = ConfigRouter::new(test_config());
-        let dev = d.split(Split::Dev);
         // Sensitive/employer cases have no provider (by design) and would add routing failures.
-        let public: Vec<_> = dev
-            .iter()
-            .copied()
-            .filter(|c| c.data_class == pair_core::types::DataClass::Public)
-            .take(5)
-            .collect();
+        let public = public_cases(&d, 5);
         assert_eq!(public.len(), 5);
-        let r = run_classifier_assisted(&public, &Scripted, &router, 42_000, "dev").await;
+        let budget = FakeBudget::default();
+        let r = run_classifier_assisted(
+            &public,
+            &Scripted,
+            &router,
+            &budget,
+            &test_questions(),
+            "dev",
+        )
+        .await;
         assert_eq!(r.failures, 5);
         assert!(r.modeled_cost_micros > 0, "baseline still routed");
+        assert!(
+            r.classifier_cost_micros > 0,
+            "a failed call is charged at the reserved amount"
+        );
+        assert!(
+            budget.reconciled.lock().expect("lock").is_empty(),
+            "failed calls stay unresolved, never reconciled at zero"
+        );
+    }
+
+    #[tokio::test]
+    async fn classifier_eval_reserves_per_call() {
+        let d = dataset();
+        let router = ConfigRouter::new(test_config());
+        let cases = public_cases(&d, 4);
+        let budget = FakeBudget::default();
+        let r = run_classifier_assisted(
+            &cases,
+            &OkClassifier,
+            &router,
+            &budget,
+            &test_questions(),
+            "dev",
+        )
+        .await;
+        let reserved = budget.reserved.lock().expect("lock");
+        assert_eq!(reserved.len(), 4, "one reservation per classifier call");
+        assert!(reserved
+            .iter()
+            .all(|q| q.category == BudgetCategory::Classifier && q.max_cost.0 > 0));
+        let tasks: std::collections::HashSet<_> = reserved.iter().map(|q| q.task).collect();
+        assert_eq!(tasks.len(), 4, "each call is its own task");
+        let reconciled = budget.reconciled.lock().expect("lock");
+        assert_eq!(reconciled.len(), 4);
+        assert!(reconciled.iter().all(|u| u.actual_cost.is_some()));
+        assert!(r.classifier_cost_micros > 0);
+        assert_eq!(r.failures, 0);
+    }
+
+    #[tokio::test]
+    async fn classifier_eval_refused_reservation_skips_the_call() {
+        let d = dataset();
+        let router = ConfigRouter::new(test_config());
+        let cases = public_cases(&d, 3);
+        let budget = FakeBudget {
+            refuse: true,
+            ..Default::default()
+        };
+        let r = run_classifier_assisted(
+            &cases,
+            &OkClassifier,
+            &router,
+            &budget,
+            &test_questions(),
+            "dev",
+        )
+        .await;
+        assert_eq!(r.failures, 3);
+        assert_eq!(r.classifier_cost_micros, 0);
+        assert!(budget.reconciled.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn classifier_eval_refuses_real_endpoint_without_budget() {
+        let real = "https://api.typesafe.ai/v1/systemone";
+        let err = require_budget_for_real_endpoint(real, false).expect_err("refused");
+        assert_eq!(err.code, ErrorCode::BudgetExceeded);
+        assert!(require_budget_for_real_endpoint(real, true).is_ok());
+        for local in [
+            "http://127.0.0.1:9/x",
+            "http://localhost:9",
+            "http://[::1]:9/x",
+        ] {
+            assert!(
+                require_budget_for_real_endpoint(local, false).is_ok(),
+                "{local}"
+            );
+        }
+        assert!(require_budget_for_real_endpoint("http://127.0.0.1.evil.com/x", false).is_err());
+        assert!(require_budget_for_real_endpoint("not a url", false).is_err());
     }
 }

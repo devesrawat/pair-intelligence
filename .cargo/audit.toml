@@ -1,0 +1,9 @@
+# cargo audit configuration (read from the repo root, where CI runs `cargo audit --file service/Cargo.lock`).
+[advisories]
+ignore = [
+  # rsa 0.9.10, Marvin timing side channel, no fixed version exists. It is only in the lockfile via
+  # sqlx-macros-core -> sqlx-mysql (a compile-time macro dependency). PAIR enables only sqlx's
+  # `postgres` driver, and `cargo tree -p pair-api -e normal -i rsa` is empty: no RSA code is
+  # linked into any PAIR binary. Re-check when sqlx is upgraded; remove this entry once rsa is fixed.
+  "RUSTSEC-2023-0071",
+]

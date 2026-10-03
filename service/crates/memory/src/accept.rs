@@ -110,7 +110,15 @@ pub(crate) async fn accept_in_tx(
     let valid_from = cand.valid_from.unwrap_or(observed_at);
     let memory_id = MemoryId::new();
     if let Some(old) = mode.supersedes {
-        close_superseded(conn, old, valid_from, actor).await?;
+        close_superseded(
+            conn,
+            old,
+            valid_from,
+            actor,
+            &cand.kind,
+            cand.project.as_deref(),
+        )
+        .await?;
     }
     sqlx::query(
         "INSERT INTO memories (id, kind, status, content, normalized_content, topic_key, project, valid_from, valid_to, \
@@ -222,15 +230,25 @@ async fn live_evidence(
     Ok((live, trusts))
 }
 
-async fn record_conflict(conn: &mut PgConnection, a: Uuid, b: Uuid, actor: &str) -> Result<()> {
+/// Record that two memories are deliberately kept side by side. Idempotent.
+pub(crate) async fn record_conflict(
+    conn: &mut PgConnection,
+    a: Uuid,
+    b: Uuid,
+    actor: &str,
+) -> Result<()> {
     let (low, high) = if a < b { (a, b) } else { (b, a) };
-    sqlx::query("INSERT INTO memory_conflicts (memory_a, memory_b, resolved_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
+    let inserted = sqlx::query("INSERT INTO memory_conflicts (memory_a, memory_b, resolved_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING")
         .bind(low)
         .bind(high)
         .bind(actor)
         .execute(&mut *conn)
         .await
-        .map_err(db_err)?;
+        .map_err(db_err)?
+        .rows_affected();
+    if inserted == 0 {
+        return Ok(());
+    }
     audit::record(
         conn,
         actor,
@@ -247,15 +265,20 @@ async fn close_superseded(
     old: MemoryId,
     new_valid_from: DateTime<Utc>,
     actor: &str,
+    kind: &str,
+    project: Option<&str>,
 ) -> Result<()> {
     let updated = sqlx::query(
         "UPDATE memories SET status = 'superseded', \
                 valid_to = GREATEST(valid_from, LEAST(COALESCE(valid_to, $2), $2)) \
          WHERE id = $1 AND status = 'accepted' AND invalidated_reason IS NULL \
+           AND kind = $3 AND project IS NOT DISTINCT FROM $4 \
            AND NOT EXISTS (SELECT 1 FROM memories n WHERE n.supersedes_id = $1)",
     )
     .bind(old.0)
     .bind(new_valid_from)
+    .bind(kind)
+    .bind(project)
     .execute(&mut *conn)
     .await
     .map_err(db_err)?
@@ -263,7 +286,7 @@ async fn close_superseded(
     if updated == 0 {
         return Err(PairError::new(
             ErrorCode::Conflict,
-            format!("memory {old} cannot be superseded (not an active accepted memory)"),
+            format!("memory {old} cannot be superseded (not an active accepted memory of the same kind and project)"),
         ));
     }
     audit::record(

@@ -1,6 +1,6 @@
 //! Inbox review flows: reject, edit (replacement candidate) and correct (supersede accepted).
 use crate::{
-    accept::accept_in_tx,
+    accept::{accept_in_tx, record_conflict},
     audit,
     contradiction::find_links,
     error::{db_err, invalid, not_found},
@@ -35,6 +35,9 @@ pub struct EditPatch {
 pub struct CorrectionPatch {
     pub content: String,
     pub extra_evidence: Vec<EvidenceRef>,
+    /// Keep the original accepted beside the correction (recorded as a conflict) instead of
+    /// superseding it.
+    pub keep_both: bool,
 }
 
 struct OriginalCandidate {
@@ -321,11 +324,14 @@ impl PgMemory {
             candidate,
             actor,
             AcceptMode {
-                supersedes: Some(id),
-                keep_both: false,
+                supersedes: (!patch.keep_both).then_some(id),
+                keep_both: patch.keep_both,
             },
         )
         .await?;
+        if patch.keep_both {
+            record_conflict(&mut tx, id.0, new_id.0, actor).await?;
+        }
         audit::record(
             &mut tx,
             actor,

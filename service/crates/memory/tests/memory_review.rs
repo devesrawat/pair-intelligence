@@ -5,7 +5,10 @@ mod common;
 use common::{candidate, source, verified, TestDb};
 use pair_core::types::{EvidenceRef, MemoryCandidate};
 use pair_core::{error::ErrorCode, ids::SourceId, traits::Memory, types::TrustClass};
-use pair_memory::{inbox::EditPatch, CandidateDraft};
+use pair_memory::{
+    inbox::{CorrectionPatch, EditPatch},
+    CandidateDraft,
+};
 
 fn draft(
     kind: &str,
@@ -225,4 +228,135 @@ async fn restated_statement_does_not_collapse_onto_a_superseded_memory() {
     assert_ne!(restated.id, first.id);
     assert_eq!(restated.contradicts_memories, vec![current]);
     assert!(restated.needs_review);
+}
+
+#[tokio::test]
+async fn supersession_is_scoped_to_same_kind_and_project() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let s1 = source(&mem, "note-1", TrustClass::Owner).await;
+    let s2 = source(&mem, "note-2", TrustClass::Owner).await;
+    let old = mem
+        .accept(
+            mem.propose_with_outcome(draft(
+                "fact",
+                "Deploy day: Friday",
+                Some("alpha"),
+                s1.id,
+                "friday",
+            ))
+            .await
+            .unwrap()
+            .id,
+            "owner",
+        )
+        .await
+        .unwrap();
+
+    // A different project's statement cannot close alpha's memory.
+    let other_project = mem
+        .propose_with_outcome(draft(
+            "fact",
+            "Deploy day: Monday",
+            Some("beta"),
+            s2.id,
+            "monday",
+        ))
+        .await
+        .unwrap();
+    let err = mem
+        .accept_superseding(other_project.id, "owner", old)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+
+    // Nor can a different kind.
+    let other_kind = mem
+        .propose_with_outcome(draft(
+            "decision",
+            "Deploy day: Monday",
+            Some("alpha"),
+            s2.id,
+            "monday",
+        ))
+        .await
+        .unwrap();
+    let err = mem
+        .accept_superseding(other_kind.id, "owner", old)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Conflict);
+    assert_eq!(
+        mem.get_memory(old).await.unwrap().status,
+        pair_memory::MemoryStatus::Accepted
+    );
+
+    // Same kind and project still works.
+    let same = mem
+        .propose_with_outcome(draft(
+            "fact",
+            "Deploy day: Tuesday",
+            Some("alpha"),
+            s2.id,
+            "tuesday",
+        ))
+        .await
+        .unwrap();
+    assert!(mem.accept_superseding(same.id, "owner", old).await.is_ok());
+}
+
+#[tokio::test]
+async fn correct_memory_supports_keep_both() {
+    let db = TestDb::new().await;
+    let mem = db.memory();
+    let src = source(&mem, "note-1", TrustClass::Owner).await;
+    let original = mem
+        .accept(
+            mem.propose_with_outcome(draft(
+                "fact",
+                "Server region: eu-west",
+                Some("alpha"),
+                src.id,
+                "eu-west",
+            ))
+            .await
+            .unwrap()
+            .id,
+            "owner",
+        )
+        .await
+        .unwrap();
+
+    let replacement = mem
+        .correct_memory(
+            original,
+            "owner",
+            CorrectionPatch {
+                content: "Server region: us-east".into(),
+                extra_evidence: vec![],
+                keep_both: true,
+            },
+        )
+        .await
+        .unwrap();
+
+    let old = mem.get_memory(original).await.unwrap();
+    let new = mem.get_memory(replacement).await.unwrap();
+    assert_eq!(old.status, pair_memory::MemoryStatus::Accepted);
+    assert_eq!(new.status, pair_memory::MemoryStatus::Accepted);
+    assert_eq!(new.supersedes, None);
+    let (low, high) = if original.0 < replacement.0 {
+        (original.0, replacement.0)
+    } else {
+        (replacement.0, original.0)
+    };
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_conflicts WHERE memory_a = $1 AND memory_b = $2",
+    )
+    .bind(low)
+    .bind(high)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded, 1);
 }

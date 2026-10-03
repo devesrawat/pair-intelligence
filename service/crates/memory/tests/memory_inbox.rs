@@ -432,6 +432,7 @@ async fn edit_and_correction_preserve_evidence_and_show_replacement() {
             CorrectionPatch {
                 content: "Launch date is 5 March".into(),
                 extra_evidence: vec![],
+                keep_both: false,
             },
         )
         .await

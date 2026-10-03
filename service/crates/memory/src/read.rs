@@ -75,7 +75,8 @@ pub(crate) async fn load_memories(
                 ev.span = None;
                 ev.uri = None;
             }
-            let redacted = !evidence.is_empty() && evidence.iter().all(|e| e.source_deleted);
+            // No evidence at all (possible only through a bypassed invariant) is treated as redacted.
+            let redacted = evidence.iter().all(|e| e.source_deleted);
             Ok(MemoryRecord {
                 id: MemoryId(id),
                 kind: row.try_get("kind").map_err(db_err)?,
@@ -85,7 +86,11 @@ pub(crate) async fn load_memories(
                 } else {
                     row.try_get("content").map_err(db_err)?
                 },
-                topic_key: row.try_get("topic_key").map_err(db_err)?,
+                topic_key: if redacted {
+                    None
+                } else {
+                    row.try_get("topic_key").map_err(db_err)?
+                },
                 project: row.try_get("project").map_err(db_err)?,
                 valid_from: row.try_get("valid_from").map_err(db_err)?,
                 valid_to: row.try_get("valid_to").map_err(db_err)?,

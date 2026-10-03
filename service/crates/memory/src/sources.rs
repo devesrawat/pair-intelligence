@@ -6,6 +6,7 @@ use crate::{
         data_class_str, parse_data_class, parse_trust, trust_str, NewSource, SourceRecord,
         Visibility,
     },
+    read::REDACTED_CONTENT,
     store::PgMemory,
 };
 use pair_core::{
@@ -207,17 +208,23 @@ impl PgMemory {
         .await
         .map_err(db_err)?;
 
+        // Erase, not mask: overwrite the text itself so it is gone from the tables and backups
+        // taken from now on, not merely hidden by the read path.
         sqlx::query(
             "UPDATE memories SET status = 'expired', invalidated_reason = $2, \
-                    valid_to = GREATEST(valid_from, LEAST(COALESCE(valid_to, $3), $3)) \
+                    valid_to = GREATEST(valid_from, LEAST(COALESCE(valid_to, $3), $3)), \
+                    content = $4, normalized_content = '', topic_key = NULL \
              WHERE id = ANY($1)",
         )
         .bind(&doomed)
         .bind(SOURCE_DELETED_REASON)
         .bind(now)
+        .bind(REDACTED_CONTENT)
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+        erase_candidates(&mut tx, &src.kind, &src.external_id).await?;
+        erase_spans(&mut tx, &src.kind, &src.external_id).await?;
         sqlx::query(
             "DELETE FROM memory_chunks WHERE memory_id = ANY($1) \
              OR source_id IN (SELECT id FROM sources WHERE kind = $2 AND external_id = $3)",
@@ -256,4 +263,56 @@ impl PgMemory {
             invalidated: doomed.into_iter().map(MemoryId).collect(),
         })
     }
+}
+
+/// Overwrite candidates whose every evidence source is deleted (and that touch this identity).
+async fn erase_candidates(
+    conn: &mut sqlx::PgConnection,
+    kind: &str,
+    external_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE memory_candidates c SET content = $3, normalized_content = '', topic_key = NULL, \
+                reason = NULL, dedupe_key = 'erased:' || c.id::text \
+         WHERE EXISTS (SELECT 1 FROM memory_candidate_evidence ce JOIN sources s ON s.id = ce.source_id \
+                       WHERE ce.candidate_id = c.id AND s.kind = $1 AND s.external_id = $2) \
+           AND NOT EXISTS (SELECT 1 FROM memory_candidate_evidence ce JOIN sources s ON s.id = ce.source_id \
+                           WHERE ce.candidate_id = c.id AND s.deletion_state = 'active')",
+    )
+    .bind(kind)
+    .bind(external_id)
+    .bind(REDACTED_CONTENT)
+    .execute(conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Null the spans quoted from the deleted source. Several spans of one (record, source) pair would
+/// collide on the unique index once NULL, so a single provenance row per pair is kept.
+async fn erase_spans(conn: &mut sqlx::PgConnection, kind: &str, external_id: &str) -> Result<()> {
+    for (table, owner) in [
+        ("memory_evidence", "memory_id"),
+        ("memory_candidate_evidence", "candidate_id"),
+    ] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} e USING sources s WHERE s.id = e.source_id AND s.kind = $1 AND s.external_id = $2 \
+               AND e.id <> (SELECT min(e2.id) FROM {table} e2 WHERE e2.{owner} = e.{owner} AND e2.source_id = e.source_id)"
+        ))
+        .bind(kind)
+        .bind(external_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        sqlx::query(&format!(
+            "UPDATE {table} e SET span = NULL FROM sources s \
+             WHERE s.id = e.source_id AND s.kind = $1 AND s.external_id = $2"
+        ))
+        .bind(kind)
+        .bind(external_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(db_err)?;
+    }
+    Ok(())
 }

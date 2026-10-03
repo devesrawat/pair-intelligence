@@ -207,6 +207,32 @@ fn credential_file_names_denied() {
     assert!(is_deny(&f.engine.authorize(&r, &f.ctx).decision));
 }
 
+#[test]
+fn dotenv_and_private_key_files_denied_but_templates_allowed() {
+    let f = fixture();
+    for name in [
+        ".env",
+        ".env.local",
+        ".env.production",
+        "sub/.ENV",
+        "keys/id_rsa",
+        "keys/id_ed25519",
+    ] {
+        let mut r = request("fs.read");
+        r.paths = vec![name.into()];
+        assert!(is_deny(&f.engine.authorize(&r, &f.ctx).decision), "{name}");
+    }
+    for name in [".env.example", "env.rs", "src/environment.rs"] {
+        let mut r = request("fs.read");
+        r.paths = vec![name.into()];
+        assert_eq!(
+            f.engine.authorize(&r, &f.ctx).decision,
+            Decision::Allow,
+            "{name}"
+        );
+    }
+}
+
 const GIT_PUSH_POLICY: &str = r#"
 version: "t1"
 tools: { git.push: external_write }

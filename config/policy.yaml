@@ -1,7 +1,7 @@
 # PAIR tool policy (spec section 9). Parsed by pair_policy::PolicyConfig; any parse or
 # validation error means no policy engine exists, so every action is refused (fail closed).
 # Unknown keys are rejected. Bump `version` whenever this file changes.
-version: "2026-10-03.3"
+version: "2026-10-03.4"
 
 # Risk class per registered tool. A tool that is not listed here is denied.
 # read | local_edit | local_commit run unprompted inside the workspace;
@@ -52,7 +52,22 @@ denied_paths:
   - /run/docker.sock
 
 # Credential file names denied wherever they appear (case-insensitive; `*.ext` matches a suffix).
-denied_names: [".envrc", ".git-credentials", id_ecdsa, id_dsa, kubeconfig, "*.tfvars", "*.jks"]
+denied_names:
+  - ".envrc"
+  - ".env"
+  - ".env.local"
+  - ".env.development"
+  - ".env.staging"
+  - ".env.production"
+  - ".env.test"
+  - ".git-credentials"
+  - id_rsa
+  - id_ed25519
+  - id_ecdsa
+  - id_dsa
+  - kubeconfig
+  - "*.tfvars"
+  - "*.jks"
 
 # Default-deny egress: a destination passes only if a rule names its host, data class, scheme
 # and port. Hosts are exact lowercase, or `*.example.com` for subdomains only. `schemes`

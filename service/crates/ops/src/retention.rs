@@ -18,6 +18,9 @@ const DEFAULT_MAX_BATCHES: u32 = 100;
 /// Payload-like columns of `tool_executions`, erased when present. The table is owned by another
 /// migration, so its shape is detected rather than assumed.
 const TOOL_PAYLOAD_COLUMNS: &[&str] = &[
+    // The real table (migration 090) keeps only an args hash; `destination` is stored verbatim and
+    // can carry a token in a URL, so it is the one content-like column to erase.
+    "destination",
     "request",
     "args",
     "arguments",

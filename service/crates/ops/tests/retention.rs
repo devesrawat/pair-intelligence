@@ -281,34 +281,65 @@ async fn purge_never_touches_unresolved_budget_reservations() {
 }
 
 #[tokio::test]
-async fn purge_detects_and_erases_tool_executions_when_table_exists() {
+async fn purge_skips_tool_executions_when_table_absent() {
     let db = TestDb::create().await;
-    let absent = purge(&db.pool, Utc::now(), &policy())
+    sqlx::query("DROP TABLE tool_executions")
+        .execute(&db.pool)
+        .await
+        .expect("drop");
+    let report = purge(&db.pool, Utc::now(), &policy())
         .await
         .expect("purge without table");
-    assert!(absent
+    assert!(report
         .skipped
         .contains(&"tool_executions.payloads".to_owned()));
+    db.drop_db().await;
+}
 
-    sqlx::query("CREATE TABLE tool_executions (id uuid PRIMARY KEY, tool text NOT NULL, args jsonb NOT NULL, stdout text, created_at timestamptz NOT NULL)")
-        .execute(&db.pool)
-        .await
-        .expect("create table");
-    sqlx::query("INSERT INTO tool_executions VALUES ($1, 'git', '{\"x\":1}', 'out', now() - interval '45 days'), ($2, 'git', '{\"x\":2}', 'out', now())")
-        .bind(uuid::Uuid::new_v4())
-        .bind(uuid::Uuid::new_v4())
-        .execute(&db.pool)
-        .await
-        .expect("rows");
+/// The REAL `tool_executions` (migration 090) stores only an args hash, so its one content-like
+/// column is `destination`, which is verbatim and can carry a token in a URL.
+#[tokio::test]
+async fn purge_erases_destinations_of_old_tool_executions_on_the_real_schema() {
+    let db = TestDb::create().await;
+    let insert = |age: &'static str, dest: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO tool_executions (id, task_id, trace_id, tool, args_hash, destination, data_class, policy_version, decision, outcome, started_at, finished_at) \
+                 VALUES ($1, $2, $3, 'web.fetch', repeat('a', 64), $4, 'public', 'v1', 'allow', 'ok', now() - $5::interval, now() - $5::interval)",
+            )
+            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::new_v4())
+            .bind(uuid::Uuid::new_v4())
+            .bind(dest)
+            .bind(age)
+            .execute(&pool)
+            .await
+            .expect("insert");
+        }
+    };
+    insert("45 days", "https://example.org/a?token=SECRET").await;
+    insert("1 day", "https://example.org/b").await;
+
     let report = purge(&db.pool, Utc::now(), &policy()).await.expect("purge");
     assert_eq!(report.erased("tool_executions.payloads"), 1);
-    let (erased, kept): (i64, i64) = sqlx::query_as(
-        "SELECT count(*) FILTER (WHERE stdout IS NULL AND args = 'null'::jsonb), count(*) FILTER (WHERE stdout = 'out') FROM tool_executions",
+    let (erased, kept, total): (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE destination IS NULL), \
+                count(*) FILTER (WHERE destination = 'https://example.org/b'), count(*) \
+         FROM tool_executions",
     )
     .fetch_one(&db.pool)
     .await
     .expect("counts");
-    assert_eq!((erased, kept), (1, 1));
+    // The audit row itself survives; only the verbatim destination is erased.
+    assert_eq!((erased, kept, total), (1, 1, 2));
+    let secret_left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tool_executions WHERE destination LIKE '%SECRET%'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .expect("secret scan");
+    assert_eq!(secret_left, 0);
     let again = purge(&db.pool, Utc::now(), &policy()).await.expect("again");
     assert_eq!(again.erased("tool_executions.payloads"), 0);
     db.drop_db().await;

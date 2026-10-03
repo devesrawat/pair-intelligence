@@ -124,6 +124,45 @@ async fn close_claim(svc: &Services, task: TaskId, done: bool) {
         .await;
 }
 
+/// The stored answer of an already-stored user message, if there is one. Different text under the
+/// same identity is refused.
+async fn replayed_answer(
+    svc: &Services,
+    conversation: ConversationId,
+    stored: &StoredMessage,
+    turn: &ValidTurn,
+) -> Result<Option<TurnResponse>> {
+    if stored.content != turn.message {
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            "this client_message_id was already used with different content",
+        ));
+    }
+    let answer = svc
+        .store
+        .find_message(conversation, &assistant_id(&stored.client_message_id))
+        .await?;
+    match answer {
+        Some(answer) => Ok(Some(stored_answer(svc, conversation, &answer).await?)),
+        None => Ok(None),
+    }
+}
+
+/// The last messages before this turn's own, oldest first (a bounded read).
+async fn recent_history(
+    svc: &Services,
+    conversation: ConversationId,
+    own: &StoredMessage,
+) -> Result<Vec<StoredMessage>> {
+    // One extra row: this turn's own message is among the newest and is dropped below.
+    let limit = u32::try_from(RECENT_MESSAGES + 1).unwrap_or(u32::MAX);
+    let mut history = svc.store.recent_messages(conversation, limit).await?;
+    history.retain(|m| m.id != own.id);
+    let excess = history.len().saturating_sub(RECENT_MESSAGES);
+    history.drain(..excess);
+    Ok(history)
+}
+
 /// Store the user message and read the history. A message that already exists means a replay:
 /// different text is refused, and a stored answer is returned as it is.
 async fn read_turn(
@@ -150,20 +189,8 @@ async fn read_turn(
         })
         .await?;
     if !inserted {
-        if stored.content != turn.message {
-            return Err(PairError::new(
-                ErrorCode::Conflict,
-                "this client_message_id was already used with different content",
-            ));
-        }
-        let answer = svc
-            .store
-            .find_message(conversation, &assistant_id(&user_client_id))
-            .await?;
-        if let Some(answer) = answer {
-            return Ok(Opened::Answered(
-                stored_answer(svc, conversation, &answer).await?,
-            ));
+        if let Some(answer) = replayed_answer(svc, conversation, &stored, turn).await? {
+            return Ok(Opened::Answered(answer));
         }
     }
     if finished {
@@ -172,12 +199,8 @@ async fn read_turn(
             "this turn is recorded as finished but its answer is missing; read the conversation",
         ));
     }
-    // One extra row: this turn's own message is among the newest and is dropped below.
-    let limit = u32::try_from(RECENT_MESSAGES + 1).unwrap_or(u32::MAX);
-    let mut history = svc.store.recent_messages(conversation, limit).await?;
-    history.retain(|m| m.id != stored.id);
-    let excess = history.len().saturating_sub(RECENT_MESSAGES);
-    history.drain(..excess);
+    let history = recent_history(svc, conversation, &stored).await?;
+    // Read last: the class only rises, so it covers every message the history read can have seen.
     let class = svc.store.conversation_data_class(conversation).await?;
     Ok(Opened::Fresh(Fresh {
         conversation,

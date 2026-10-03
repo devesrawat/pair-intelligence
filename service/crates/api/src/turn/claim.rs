@@ -71,35 +71,10 @@ impl ClaimStore {
         .await
         .map_err(|e| db_err(&e))?
         .rows_affected();
-        if inserted == 1 {
-            tx.commit().await.map_err(|e| db_err(&e))?;
-            return Ok(Claim::Acquired);
-        }
-        let (stored_hash, state, stale): (String, String, bool) = sqlx::query_as(
-            "SELECT content_sha256, state, claimed_at < now() - make_interval(secs => $2) \
-             FROM turn_claims WHERE task_id = $1 FOR UPDATE",
-        )
-        .bind(task.0)
-        .bind(lease.as_secs_f64())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| db_err(&e))?;
-        let outcome = if stored_hash != content_sha256 {
-            Claim::ContentMismatch
-        } else if state == "done" {
-            Claim::Done
-        } else if state == "failed" || stale {
-            sqlx::query(
-                "UPDATE turn_claims SET state = 'in_progress', claimed_at = now(), finished_at = NULL \
-                 WHERE task_id = $1",
-            )
-            .bind(task.0)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_err(&e))?;
+        let outcome = if inserted == 1 {
             Claim::Acquired
         } else {
-            Claim::InProgress
+            judge_existing(&mut tx, task, content_sha256, lease).await?
         };
         tx.commit().await.map_err(|e| db_err(&e))?;
         Ok(outcome)
@@ -120,4 +95,41 @@ impl ClaimStore {
             tracing::warn!(error = %e, %task, state, "could not record the end of a turn claim");
         }
     }
+}
+
+/// Lock the existing claim row and decide: a different content hash is a mismatch, a finished
+/// turn is done, a failed (or expired in-progress) one is taken over, anything else is running.
+async fn judge_existing(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: TaskId,
+    content_sha256: &str,
+    lease: Duration,
+) -> Result<Claim> {
+    let (stored_hash, state, stale): (String, String, bool) = sqlx::query_as(
+        "SELECT content_sha256, state, claimed_at < now() - make_interval(secs => $2) \
+         FROM turn_claims WHERE task_id = $1 FOR UPDATE",
+    )
+    .bind(task.0)
+    .bind(lease.as_secs_f64())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| db_err(&e))?;
+    if stored_hash != content_sha256 {
+        return Ok(Claim::ContentMismatch);
+    }
+    if state == "done" {
+        return Ok(Claim::Done);
+    }
+    if state != "failed" && !stale {
+        return Ok(Claim::InProgress);
+    }
+    sqlx::query(
+        "UPDATE turn_claims SET state = 'in_progress', claimed_at = now(), finished_at = NULL \
+         WHERE task_id = $1",
+    )
+    .bind(task.0)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_err(&e))?;
+    Ok(Claim::Acquired)
 }

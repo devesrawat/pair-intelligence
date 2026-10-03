@@ -130,6 +130,15 @@ fn secs<F: Fn(&str) -> Option<String>>(
     Ok(Duration::from_secs(value))
 }
 
+/// Path settings: (name, default), in the order `from_lookup` destructures them.
+const PATH_SETTINGS: [(&str, &str); 5] = [
+    ("PAIR_MIGRATIONS_DIR", "migrations"),
+    ("PAIR_MODELS_CONFIG", DEFAULT_MODELS_CONFIG),
+    ("PAIR_BUDGET_CONFIG", DEFAULT_BUDGET_CONFIG),
+    ("PAIR_POLICY_CONFIG", DEFAULT_POLICY_CONFIG),
+    ("PAIR_CONTEXT_CONFIG", DEFAULT_CONTEXT_CONFIG),
+];
+
 /// Every seconds-valued setting, in `SECS_SETTINGS` order.
 struct Intervals {
     sweep: Duration,
@@ -215,33 +224,25 @@ impl Config {
         let token = service_token(&get)?;
         let approver = approver_token(&get, &token)?;
         let timing = intervals(&get)?;
-        let (migrations_dir, migrations_dir_explicit) =
-            path_setting(&get, "PAIR_MIGRATIONS_DIR", "migrations");
-        let (models_config, models_config_explicit) =
-            path_setting(&get, "PAIR_MODELS_CONFIG", DEFAULT_MODELS_CONFIG);
-        let (budget_config, budget_config_explicit) =
-            path_setting(&get, "PAIR_BUDGET_CONFIG", DEFAULT_BUDGET_CONFIG);
-        let (policy_config, policy_config_explicit) =
-            path_setting(&get, "PAIR_POLICY_CONFIG", DEFAULT_POLICY_CONFIG);
-        let (context_config, context_config_explicit) =
-            path_setting(&get, "PAIR_CONTEXT_CONFIG", DEFAULT_CONTEXT_CONFIG);
+        let [migrations, models, budget, policy, context] =
+            PATH_SETTINGS.map(|(name, default)| path_setting(&get, name, default));
         Ok(Self {
             bind: get("PAIR_BIND").unwrap_or_else(|| DEFAULT_BIND.to_owned()),
             database_url: Secret::new(
                 get("DATABASE_URL").unwrap_or_else(|| DEFAULT_DATABASE_URL.to_owned()),
             ),
             service_token: Secret::new(token),
-            migrations_dir,
-            migrations_dir_explicit,
+            migrations_dir: migrations.0,
+            migrations_dir_explicit: migrations.1,
             data_dir: get("PAIR_DATA_DIR").map_or_else(|| PathBuf::from("."), PathBuf::from),
-            models_config,
-            models_config_explicit,
-            budget_config,
-            budget_config_explicit,
-            policy_config,
-            policy_config_explicit,
-            context_config,
-            context_config_explicit,
+            models_config: models.0,
+            models_config_explicit: models.1,
+            budget_config: budget.0,
+            budget_config_explicit: budget.1,
+            policy_config: policy.0,
+            policy_config_explicit: policy.1,
+            context_config: context.0,
+            context_config_explicit: context.1,
             workspace_root: non_empty(get("PAIR_WORKSPACE_ROOT")).map(PathBuf::from),
             approver_token: approver.map(Secret::new),
             anthropic_api_key: secret(&get, "ANTHROPIC_API_KEY"),

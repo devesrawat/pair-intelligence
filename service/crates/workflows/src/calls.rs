@@ -3,13 +3,28 @@
 //! The reservation is derived from the registry price and the request itself, never from a
 //! caller-supplied figure. A failed provider call leaves its reservation UNRESOLVED (actual
 //! cost unknown, full reservation stays counted); it is never reconciled at zero cost.
+use pair_context::wrap_external;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     money::{Micros, Price},
     traits::{BudgetEx, Provider},
-    types::{DataClass, ModelRequest, ModelResponse, ReserveRequest, TaskKind, UsageReport},
+    types::{
+        DataClass, ModelMessage, ModelRequest, ModelResponse, ReserveRequest, TaskKind, TrustClass,
+        UsageReport,
+    },
 };
 use pair_models::provider::ProviderRegistry;
+
+/// Content from anyone but the owner (page text, model output, diffs, tool output) reaches a
+/// model only as a delimited, labelled data block that cannot forge its own delimiters.
+/// `TrustClass::Owner` content is not external and must not go through here.
+pub fn data_message(source: &str, trust: TrustClass, content: &str) -> ModelMessage {
+    ModelMessage {
+        role: "user".into(),
+        content: wrap_external(source, trust, content),
+        trust,
+    }
+}
 
 /// What the workflows need to know about a model before spending money on it.
 #[derive(Debug, Clone)]

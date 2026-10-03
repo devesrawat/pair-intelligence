@@ -7,7 +7,7 @@ use super::{
     scope::Scope,
     worktree,
 };
-use crate::calls::{budgeted_generate, PriceSource};
+use crate::calls::{budgeted_generate, data_message, PriceSource};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
@@ -145,12 +145,9 @@ impl Ctx<'_, '_> {
     }
 }
 
-fn tool_message(content: String) -> ModelMessage {
-    ModelMessage {
-        role: "user".into(),
-        content,
-        trust: TrustClass::Tool,
-    }
+/// Model output, diffs and command output are not owner instructions: wrapped as data.
+fn tool_message(source: &str, content: &str) -> ModelMessage {
+    data_message(source, TrustClass::Tool, content)
 }
 
 async fn verify(
@@ -239,7 +236,10 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
 
     // edit: model proposes a structured edit set; the whole set must be in scope.
     let mut edit_msgs = compiled.messages.clone();
-    edit_msgs.push(tool_message(format!("Approved plan:\n{plan}")));
+    edit_msgs.push(tool_message(
+        "coding:plan",
+        &format!("Approved plan:\n{plan}"),
+    ));
     let edit_text = ctx
         .ask(
             edit_msgs,
@@ -273,7 +273,10 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         )
     } else {
         let mut msgs = compiled.messages.clone();
-        msgs.push(tool_message(format!("Diff under review:\n{diff}")));
+        msgs.push(tool_message(
+            "coding:diff",
+            &format!("Diff under review:\n{diff}"),
+        ));
         let review = ctx
             .ask(msgs, "Step: review this diff for defects and scope creep.")
             .await?;

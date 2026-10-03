@@ -384,6 +384,36 @@ async fn injected_webpage_instruction_ignored() {
 }
 
 #[tokio::test]
+async fn page_text_is_wrapped_as_untrusted_data() {
+    let fx = load("injected_webpage_instruction.json");
+    let marker = fx.injection_marker.clone().unwrap();
+    let h = run_fixture("injected_webpage_instruction.json", None).await;
+    let seen = h.provider.seen.lock().unwrap();
+    let carrying: Vec<_> = seen
+        .iter()
+        .flat_map(|r| r.messages.iter())
+        .filter(|m| m.content.contains(&marker))
+        .collect();
+    assert!(!carrying.is_empty());
+    for m in carrying {
+        assert_eq!(m.trust, TrustClass::Untrusted);
+        assert!(
+            m.content.starts_with(pair_context::DATA_OPEN),
+            "{}",
+            m.content
+        );
+        assert!(m.content.contains("trust=untrusted"));
+        assert!(m.content.trim_end().ends_with(">>>"));
+    }
+    // owner instructions stay unwrapped, and no non-owner message is ever unwrapped
+    for m in seen.iter().flat_map(|r| r.messages.iter()) {
+        if m.trust != TrustClass::Owner {
+            assert!(m.content.starts_with(pair_context::DATA_OPEN));
+        }
+    }
+}
+
+#[tokio::test]
 async fn invented_url_rejected() {
     let h = run_fixture("invented_url.json", None).await;
     let r = &h.out.report;

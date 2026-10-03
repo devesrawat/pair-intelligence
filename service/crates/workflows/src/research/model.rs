@@ -1,6 +1,6 @@
 //! Budgeted model calls for the research stages. Page-derived content is always sent as
 //! `TrustClass::Untrusted`; instructions come only from this module (`TrustClass::Owner`).
-use crate::calls::{budgeted_generate, PriceSource};
+use crate::calls::{budgeted_generate, data_message, PriceSource};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
@@ -29,12 +29,10 @@ pub fn owner_msg(content: impl Into<String>) -> ModelMessage {
     }
 }
 
-pub fn untrusted_msg(content: impl Into<String>) -> ModelMessage {
-    ModelMessage {
-        role: "user".into(),
-        content: content.into(),
-        trust: TrustClass::Untrusted,
-    }
+/// Page-derived content, wrapped as inert untrusted data (`source` is a fixed label, never
+/// page text).
+pub fn untrusted_msg(source: &str, content: &str) -> ModelMessage {
+    data_message(source, TrustClass::Untrusted, content)
 }
 
 impl ResearchLlm<'_> {

@@ -140,6 +140,34 @@ async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
 }
 
 #[tokio::test]
+async fn coding_plan_and_diff_are_wrapped_as_data() {
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    run(&task, &provider, &Arc::new(FakePolicy::default()))
+        .await
+        .unwrap();
+    let seen = provider.seen.lock().unwrap();
+    let non_owner: Vec<_> = seen
+        .iter()
+        .flat_map(|r| r.messages.iter())
+        .filter(|m| m.trust != pair_core::types::TrustClass::Owner)
+        .collect();
+    assert_eq!(
+        non_owner.len(),
+        2,
+        "plan (edit step) and diff (review step)"
+    );
+    for m in non_owner {
+        assert!(
+            m.content.starts_with(pair_context::DATA_OPEN),
+            "{}",
+            m.content
+        );
+    }
+}
+
+#[tokio::test]
 async fn repository_mutation_during_run_stops_task() {
     let fx = Fixture::new(PASS_ACCEPTANCE);
     let task = fx.task(&["src/"]);

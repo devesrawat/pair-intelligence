@@ -7,7 +7,7 @@ use super::jev::estimate_input_tokens;
 use super::questions::QuestionSet;
 use crate::router::ConfigRouter;
 use pair_core::error::{ErrorCode, PairError, Result};
-use pair_core::ids::TaskId;
+use pair_core::ids::{ReservationId, TaskId};
 use pair_core::money::{Micros, Price};
 use pair_core::traits::{BudgetEx, Classifier};
 use pair_core::types::{
@@ -308,16 +308,33 @@ async fn classify_reserved(
                 price_version: price.version.clone(),
             };
             if let Err(e) = budget.reconcile(reservation, usage).await {
-                tracing::error!(code = ?e.code, %reservation, "classifier eval reconcile failed; reservation stays held");
+                tracing::error!(code = ?e.code, %reservation, "classifier eval reconcile failed; marking the reservation unresolved");
+                leave_unresolved(budget, reservation, price).await;
                 return (Some(c), max_cost);
             }
             (Some(c), actual)
         }
         Err(e) => {
-            // Unknown charge: the reservation stays unresolved (spec 6: never assume zero cost).
+            // Unknown charge: record it as unresolved so the full reservation stays counted AND
+            // visible to the unresolved-reservation alert (spec 6: never assume zero cost).
             tracing::warn!(code = ?e.code, %reservation, "classifier eval call failed; reservation left unresolved");
+            leave_unresolved(budget, reservation, price).await;
             (None, max_cost)
         }
+    }
+}
+
+/// Reconcile with an unknown actual cost (`actual_cost: None`), exactly like `pipeline.rs`: the
+/// reservation becomes `unresolved` instead of staying `held` forever.
+async fn leave_unresolved(budget: &dyn BudgetEx, reservation: ReservationId, price: &Price) {
+    let unknown = UsageReport {
+        input_tokens: 0,
+        output_tokens: 0,
+        actual_cost: None,
+        price_version: price.version.clone(),
+    };
+    if let Err(e) = budget.reconcile(reservation, unknown).await {
+        tracing::error!(code = ?e.code, %reservation, "could not mark the classifier reservation unresolved");
     }
 }
 
@@ -388,9 +405,14 @@ mod tests {
     use crate::classification::questions::test_questions;
     use crate::classification::questions::{DIFFICULTY_LABELS, INTENT_LABELS};
     use async_trait::async_trait;
+    use pair_budget::{BudgetConfig, PgBudget, PriceBook};
     use pair_core::ids::{LedgerEntryId, ReservationId};
     use pair_core::traits::Budget;
     use pair_core::types::{BudgetCategory, LedgerEntry, TaskKind};
+    use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+    use sqlx::{ConnectOptions, PgPool};
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
     const DATASET: &str = concat!(
@@ -507,6 +529,8 @@ mod tests {
         reserved: Mutex<Vec<ReserveRequest>>,
         reconciled: Mutex<Vec<UsageReport>>,
         refuse: bool,
+        /// Fail the next `reconcile` call (it records nothing), then behave normally.
+        fail_next_reconcile: AtomicBool,
     }
 
     #[async_trait]
@@ -515,6 +539,9 @@ mod tests {
             Err(PairError::new(ErrorCode::Internal, "must use reserve_with"))
         }
         async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
+            if self.fail_next_reconcile.swap(false, Ordering::SeqCst) {
+                return Err(PairError::new(ErrorCode::Internal, "reconcile failed"));
+            }
             let amount = usage.actual_cost.unwrap_or(Micros::ZERO);
             self.reconciled.lock().expect("lock").push(usage);
             Ok(LedgerEntry {
@@ -574,9 +601,142 @@ mod tests {
             r.classifier_cost_micros > 0,
             "a failed call is charged at the reserved amount"
         );
+        let reconciled = budget.reconciled.lock().expect("lock");
+        assert_eq!(reconciled.len(), 5, "every failed call is recorded");
         assert!(
-            budget.reconciled.lock().expect("lock").is_empty(),
-            "failed calls stay unresolved, never reconciled at zero"
+            reconciled.iter().all(|u| u.actual_cost.is_none()),
+            "failed calls are reconciled as unresolved, never at zero"
+        );
+    }
+
+    #[tokio::test]
+    async fn classifier_eval_reconcile_failure_falls_back_to_unresolved() {
+        let d = dataset();
+        let router = ConfigRouter::new(test_config());
+        let cases = public_cases(&d, 1);
+        let budget = FakeBudget::default();
+        budget.fail_next_reconcile.store(true, Ordering::SeqCst);
+        let r = run_classifier_assisted(
+            &cases,
+            &OkClassifier,
+            &router,
+            &budget,
+            &test_questions(),
+            "dev",
+        )
+        .await;
+        let reconciled = budget.reconciled.lock().expect("lock");
+        assert_eq!(reconciled.len(), 1, "a second, unresolved report was made");
+        assert_eq!(reconciled[0].actual_cost, None, "never assume the charge");
+        assert!(
+            r.classifier_cost_micros > 0,
+            "charged at the reserved amount"
+        );
+    }
+
+    const BUDGET_YAML: &str = "budget:\n  currency: USD\n  metered_monthly_cap: 20.00\n  \
+        metered_daily_cap: 5.00\n  classifier_monthly_subcap: 1.00\n  default_task_cap: 0.10\n  \
+        research_task_cap: 0.10\n  coding_task_cap: 1.00\n  auto_top_up: false\n\
+        schedule:\n  timezone: Asia/Kolkata\n";
+
+    /// One uniquely named, fully migrated scratch database per test; dropped afterwards.
+    struct ScratchDb {
+        pool: PgPool,
+        name: String,
+        admin_url: String,
+    }
+
+    impl ScratchDb {
+        async fn create() -> Self {
+            let admin_url = std::env::var("DATABASE_URL")
+                .unwrap_or_else(|_| "postgres://pair:pair@127.0.0.1:55432/pair".to_owned());
+            let name = format!("pair_t_models_{}", uuid::Uuid::new_v4().simple());
+            let mut admin = PgConnectOptions::from_str(&admin_url)
+                .expect("url")
+                .connect()
+                .await
+                .expect("admin connect");
+            sqlx::query(&format!("CREATE DATABASE {name}"))
+                .execute(&mut admin)
+                .await
+                .expect("create scratch db");
+            let opts = PgConnectOptions::from_str(&admin_url)
+                .expect("url")
+                .database(&name);
+            let pool = PgPoolOptions::new()
+                .max_connections(4)
+                .connect_with(opts)
+                .await
+                .expect("scratch connect");
+            pair_budget::MIGRATOR.run(&pool).await.expect("migrate");
+            Self {
+                pool,
+                name,
+                admin_url,
+            }
+        }
+    }
+
+    impl Drop for ScratchDb {
+        fn drop(&mut self) {
+            let (url, name) = (self.admin_url.clone(), self.name.clone());
+            let cleanup = std::thread::spawn(move || {
+                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
+                };
+                rt.block_on(async {
+                    let Ok(opts) = PgConnectOptions::from_str(&url) else {
+                        return;
+                    };
+                    if let Ok(mut admin) = opts.connect().await {
+                        let _ =
+                            sqlx::query(&format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+                                .execute(&mut admin)
+                                .await;
+                    }
+                });
+            });
+            let _ = cleanup.join();
+        }
+    }
+
+    #[tokio::test]
+    async fn classifier_eval_failed_call_leaves_reservation_unresolved() {
+        let db = ScratchDb::create().await;
+        let d = dataset();
+        let router = ConfigRouter::new(test_config());
+        let cases = public_cases(&d, 3);
+        let version = router.config().classifier.price_version.clone();
+        let budget = PgBudget::new(
+            db.pool.clone(),
+            BudgetConfig::from_yaml(BUDGET_YAML).expect("budget config"),
+            PriceBook::new(Some(version), []),
+        );
+
+        let r = run_classifier_assisted(
+            &cases,
+            &Scripted,
+            &router,
+            &budget,
+            &test_questions(),
+            "dev",
+        )
+        .await;
+
+        assert_eq!(r.failures, 3);
+        let states: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT state, count(*) FROM budget_reservations GROUP BY state ORDER BY state",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .expect("states");
+        assert_eq!(
+            states,
+            vec![("unresolved".to_owned(), 3)],
+            "a failed classifier call must surface as unresolved, not sit `held` forever"
         );
     }
 

@@ -117,6 +117,8 @@ async fn run(
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
         policy: fake_ctx(&fx_task.workspaces_root),
+        sandbox: host_sandbox(),
+        limits: Arc::new(crate::limits::RunLimits::interactive()),
     };
     run_coding_task(&deps, fx_task).await
 }
@@ -218,6 +220,147 @@ async fn repository_mutation_during_run_stops_task() {
         .join("src/lib.txt");
     assert_eq!(std::fs::read_to_string(wt_file).unwrap(), "old\n");
     assert_eq!(provider.call_count(), 2);
+}
+
+/// Each mutation happens "underneath" the task while the model call for the edit step runs.
+#[tokio::test]
+async fn hooks_or_config_change_in_original_repo_stops_task() {
+    type Mutation = fn(&Path);
+    let mutations: [(&str, Mutation); 4] = [
+        ("hook", |repo| {
+            let hooks = repo.join(".git/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            std::fs::write(hooks.join("post-checkout"), "#!/bin/sh\ntouch /tmp/pwn\n").unwrap();
+        }),
+        ("config", |repo| {
+            let mut cfg = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            cfg.push_str("[core]\n\tfsmonitor = /tmp/pwn\n");
+            std::fs::write(repo.join(".git/config"), cfg).unwrap();
+        }),
+        ("ref", |repo| {
+            std::fs::write(
+                repo.join(".git/refs/heads/planted"),
+                std::fs::read_to_string(repo.join(".git/refs/heads/main")).unwrap(),
+            )
+            .unwrap();
+        }),
+        ("hook content", |repo| {
+            let hooks = repo.join(".git/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            std::fs::write(hooks.join("pre-push.sample"), "changed\n").unwrap();
+        }),
+    ];
+    for (name, mutate) in mutations {
+        let fx = Fixture::new(PASS_ACCEPTANCE);
+        let repo = fx.repo();
+        let provider = FnProvider::new(Box::new(move |i, _| {
+            if i == 1 {
+                mutate(&repo);
+            }
+            Ok(if i == 1 {
+                edit_json(&[("src/lib.txt", "new\n")])
+            } else {
+                "text".into()
+            })
+        }));
+        let task = fx.task(&["src/"]);
+        let err = run(&task, &provider, &Arc::new(FakePolicy::default()))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict, "{name}: {}", err.message);
+        // stopped before the edit was applied or anything ran
+        let wt_file = fx
+            .root
+            .join("ws")
+            .join(task.id.to_string())
+            .join("src/lib.txt");
+        assert_eq!(std::fs::read_to_string(wt_file).unwrap(), "old\n", "{name}");
+    }
+}
+
+#[tokio::test]
+async fn untouched_original_repo_passes_the_integrity_check_with_its_own_branch() {
+    // creating the task worktree adds refs/heads/pair/<id>, which must not look like tampering
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let res = run(
+        &fx.task(&["src/"]),
+        &provider,
+        &Arc::new(FakePolicy::default()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(res.status, CodingStatus::Succeeded);
+}
+
+#[tokio::test]
+async fn forged_git_pointer_in_worktree_is_never_followed() {
+    let marker =
+        std::env::temp_dir().join(format!("pair_t_fsmon_{}", uuid::Uuid::new_v4().simple()));
+    let hook =
+        std::env::temp_dir().join(format!("pair_t_hook_{}.sh", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // the verify command (sandboxed code) swaps the worktree's .git pointer for a repo of its
+    // own whose config defines a clean filter that would run a program on every host-side `git add`
+    let acceptance = format!(
+        r#"["sh","-c","git init -q --bare evil.git && git -C evil.git config filter.x.clean {hook} && git -C evil.git config core.bare false && rm .git && printf 'gitdir: %s\n' \"$PWD/evil.git\" > .git && echo '* filter=x' > .gitattributes; grep -q new src/lib.txt"]"#,
+        hook = hook.display()
+    );
+    let fx = Fixture::new(&acceptance);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let res = run(&task, &provider, &Arc::new(FakePolicy::default())).await;
+    let _ = std::fs::remove_file(&hook);
+    let ran = marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    assert!(
+        !ran,
+        "host git followed the forged .git pointer and ran its clean filter"
+    );
+    // evil.git is untracked output of the verify command and so out of scope; either way the
+    // patch is computed from the real repository, not the forged one
+    match res {
+        Ok(r) => assert!(r.diff.contains("+new")),
+        Err(e) => assert!(
+            matches!(e.code, ErrorCode::PolicyDenied | ErrorCode::Internal),
+            "{}",
+            e.message
+        ),
+    }
+}
+
+#[tokio::test]
+async fn container_sandbox_without_image_never_runs_acceptance_on_the_host() {
+    use crate::coding::{ContainerSandbox, ProcessExecutor};
+    let fx = Fixture::new(r#"["sh","-c","touch ran.marker"]"#);
+    let task = fx.task(&["src/"]);
+    let provider = provider_with_edit(edit_json(&[("src/lib.txt", "new\n")]));
+    let policy = Arc::new(FakePolicy::default());
+    let budget = FakeBudget::default();
+    let gate = Gate::new(policy, None);
+    let deps = CodingDeps {
+        provider: &provider,
+        gate: &gate,
+        budget: &budget,
+        prices: &FixedPrices::standard(),
+        memory: &EmptyMemory,
+        compiler: &PlainCompiler,
+        policy: fake_ctx(&task.workspaces_root),
+        sandbox: Arc::new(ContainerSandbox::new(Arc::new(ProcessExecutor), None)),
+        limits: Arc::new(crate::limits::RunLimits::interactive()),
+    };
+    let err = run_coding_task(&deps, &task).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    assert!(!fx
+        .root
+        .join("ws")
+        .join(task.id.to_string())
+        .join("ran.marker")
+        .exists());
 }
 
 #[tokio::test]
@@ -392,6 +535,7 @@ fn test_runner<'a>(gate: &'a Gate, dir: &Path) -> Runner<'a> {
             data_class: pair_core::types::DataClass::Personal,
         },
     )
+    .with_sandbox(host_sandbox())
 }
 
 #[tokio::test]

@@ -108,6 +108,7 @@ impl World {
                 data_class: DataClass::Personal,
             },
         )
+        .with_sandbox(crate::coding::testkit::host_sandbox())
     }
 
     fn has_remote_branch(&self, branch: &str) -> bool {
@@ -241,7 +242,8 @@ async fn real_engine_denies_stale_policy_version() {
             passthrough: Vec::new(),
             data_class: DataClass::Personal,
         },
-    );
+    )
+    .with_sandbox(crate::coding::testkit::host_sandbox());
     let err = runner
         .run(&argv(&["git", "status"]), &world.repo)
         .await

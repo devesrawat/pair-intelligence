@@ -2,6 +2,7 @@
 //! memory store, context compiler). Test-only.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use crate::calls::{ModelTerms, PriceSource};
+use crate::coding::{CommandExecutor, ExecOutput, ExecSpec, HostSandbox, ProcessExecutor, Sandbox};
 use crate::tools::{GIT_PUSH, PR_CREATE};
 use async_trait::async_trait;
 use pair_core::{
@@ -13,7 +14,7 @@ use pair_core::{
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Mutex,
+    Arc, Mutex,
 };
 
 pub type Responder = Box<dyn Fn(usize, &ModelRequest) -> Result<String> + Send + Sync>;
@@ -238,5 +239,45 @@ pub fn fake_ctx(workspace_root: &std::path::Path) -> PolicyContext {
         workspace_root: workspace_root.display().to_string(),
         approvals: Vec::new(),
         policy_version: "fake-1".into(),
+    }
+}
+
+/// Host execution for tests, enabled through an injected env lookup (never `set_var`).
+pub fn host_sandbox() -> Arc<dyn Sandbox> {
+    Arc::new(HostSandbox::with_lookup(Arc::new(ProcessExecutor), |_| Some("1".into())).unwrap())
+}
+
+/// Records every spec and answers with a canned output instead of running anything.
+pub struct RecordingExecutor {
+    pub calls: Mutex<Vec<ExecSpec>>,
+    reply: Mutex<Vec<ExecOutput>>,
+}
+
+impl RecordingExecutor {
+    /// Replies in order; the last reply repeats.
+    pub fn new(reply: Vec<ExecOutput>) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            reply: Mutex::new(reply),
+        }
+    }
+    pub fn ok() -> Self {
+        Self::new(vec![ExecOutput {
+            exit_code: Some(0),
+            ..ExecOutput::default()
+        }])
+    }
+}
+
+#[async_trait]
+impl CommandExecutor for RecordingExecutor {
+    async fn exec(&self, spec: &ExecSpec) -> ExecOutput {
+        self.calls.lock().unwrap().push(spec.clone());
+        let mut r = self.reply.lock().unwrap();
+        if r.len() > 1 {
+            r.remove(0)
+        } else {
+            r.first().cloned().unwrap_or_default()
+        }
     }
 }

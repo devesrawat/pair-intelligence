@@ -3,11 +3,16 @@ use super::{
     classify::{classify_failure, FailureClass},
     config::RepoConfig,
     edits::{apply_edits, parse_edit_set},
+    integrity,
     runner::{CmdReport, Runner, RunnerSetup},
+    sandbox::Sandbox,
     scope::Scope,
     worktree,
 };
-use crate::calls::{budgeted_generate, data_message, PriceSource};
+use crate::{
+    calls::{budgeted_generate, data_message, PriceSource},
+    limits::RunLimits,
+};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
@@ -20,7 +25,7 @@ use pair_core::{
 };
 use pair_policy::Gate;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 const DISCARD_TIMEOUT_SECS: u64 = 60;
 const MEMORY_LIMIT: usize = 5;
@@ -64,6 +69,10 @@ pub struct CodingDeps<'a> {
     /// the workspace root the policy confines paths to (must contain the repo and the
     /// worktrees), and the approval ids offered to the Gate (default empty).
     pub policy: PolicyContext,
+    /// Where build/test/acceptance commands run. Production: `ContainerSandbox`.
+    pub sandbox: Arc<dyn Sandbox>,
+    /// Tool-call and wall-clock limits of this task (`RunLimits::interactive()`).
+    pub limits: Arc<RunLimits>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,23 +107,26 @@ struct Ctx<'a, 'd> {
     deps: &'d CodingDeps<'a>,
     task: &'d CodingTask,
     runner: &'d Runner<'a>,
-    base_head: String,
     data_class: DataClass,
+    /// Fingerprint of the original repo's git state when the task started.
+    repo_fingerprint: String,
+    /// The task's own branch ref, which the fingerprint leaves out.
+    own_ref: String,
 }
 
 impl Ctx<'_, '_> {
-    /// Stops the task if the original checkout moved since the task started.
-    async fn assert_unchanged(&self, stage: Stage) -> Result<()> {
-        let now = worktree::head(self.runner, &self.task.repo).await?;
-        if now == self.base_head {
+    /// Stops the task if the original repository changed since it started: HEAD, refs,
+    /// `.git/config` or hooks. Compared by content hash, without running git.
+    fn assert_unchanged(&self, stage: Stage) -> Result<()> {
+        let now = integrity::fingerprint(&self.task.repo, &self.own_ref)?;
+        if now == self.repo_fingerprint {
             return Ok(());
         }
-        tracing::error!(task = %self.task.id, ?stage, "repository HEAD changed during task");
+        tracing::error!(task = %self.task.id, ?stage, "original repository changed during task");
         Err(PairError::new(
             ErrorCode::Conflict,
             format!(
-                "repository HEAD moved from {} to {now} during {stage:?}; task stopped",
-                self.base_head
+                "original repository (HEAD, refs, .git/config or hooks) changed during {stage:?}; task stopped"
             ),
         ))
     }
@@ -188,14 +200,19 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
             passthrough: cfg.env_passthrough.clone(),
             data_class: cfg.data_class,
         },
-    );
+    )
+    .with_sandbox(deps.sandbox.clone())
+    .with_limits(deps.limits.clone());
+    let own_ref = format!("refs/heads/{}{}", worktree::BRANCH_PREFIX, task.id);
+    let repo_fingerprint = integrity::fingerprint(&task.repo, &own_ref)?;
     let base_head = worktree::head(&runner, &task.repo).await?;
     let ctx = Ctx {
         deps,
         task,
         runner: &runner,
-        base_head: base_head.clone(),
         data_class: cfg.data_class,
+        repo_fingerprint,
+        own_ref,
     };
     tracing::info!(task = %task.id, base = %base_head, "coding task started");
 
@@ -222,7 +239,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     };
     let compiled = deps.compiler.compile(&task_ctx, &limits, &evidence)?;
     stages.push(Stage::Context);
-    ctx.assert_unchanged(Stage::Context).await?;
+    ctx.assert_unchanged(Stage::Context)?;
 
     // plan
     let plan = ctx
@@ -232,12 +249,12 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         )
         .await?;
     stages.push(Stage::Plan);
-    ctx.assert_unchanged(Stage::Plan).await?;
+    ctx.assert_unchanged(Stage::Plan)?;
 
     // worktree
     let wt = worktree::create(&runner, &task.repo, &task.workspaces_root, task.id).await?;
     stages.push(Stage::Worktree);
-    ctx.assert_unchanged(Stage::Worktree).await?;
+    ctx.assert_unchanged(Stage::Worktree)?;
 
     // edit: model proposes a structured edit set; the whole set must be in scope.
     let mut edit_msgs = compiled.messages.clone();
@@ -251,20 +268,20 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
             "Step: output JSON {\"edits\":[{\"path\":...,\"content\":...}]} implementing the plan.",
         )
         .await?;
-    ctx.assert_unchanged(Stage::Edit).await?;
+    ctx.assert_unchanged(Stage::Edit)?;
     let edits = parse_edit_set(&edit_text)?;
     apply_edits(&wt.path, &task.scope, &edits)?;
-    let changed = worktree::changed_files(&runner, &wt.path).await?;
+    let changed = worktree::changed_files(&runner, &wt).await?;
     task.scope.check_all(changed.iter().map(String::as_str))?;
     stages.push(Stage::Edit);
 
     // verify
     let (commands, failure) = verify(&ctx, &cfg, &wt.path).await?;
     stages.push(Stage::Verify);
-    ctx.assert_unchanged(Stage::Verify).await?;
-    let changed = worktree::changed_files(&runner, &wt.path).await?;
+    ctx.assert_unchanged(Stage::Verify)?;
+    let changed = worktree::changed_files(&runner, &wt).await?;
     task.scope.check_all(changed.iter().map(String::as_str))?;
-    let diff = worktree::diff(&runner, &wt.path).await?;
+    let diff = worktree::diff(&runner, &wt).await?;
 
     let (status, review, summary) = if let Some(class) = failure {
         let last = commands
@@ -286,7 +303,7 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
             .ask(msgs, "Step: review this diff for defects and scope creep.")
             .await?;
         stages.push(Stage::Review);
-        ctx.assert_unchanged(Stage::Review).await?;
+        ctx.assert_unchanged(Stage::Review)?;
         (
             CodingStatus::Succeeded,
             Some(review),

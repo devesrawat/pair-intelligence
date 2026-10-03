@@ -7,14 +7,38 @@ decision was wrong.
 | Control | Setting |
 |---|---|
 | Root filesystem | `read_only: true`; `/tmp` is a 128 MB `noexec` tmpfs |
-| Host mounts | None. One named volume at `/workspace`, one volume per task |
+| Host mounts | None in the compose profile (one named volume at `/workspace`). `pair-workflows` mounts only the task worktree, see below |
 | Docker socket | Never mounted. Do not add it, and do not add `privileged`, `pid: host`, or `network_mode: host` |
 | Network | `network_mode: none` |
 | Privileges | `cap_drop: [ALL]`, `no-new-privileges`, non-root uid 10001 |
 | Resources | 256 pids, 1 GiB memory (swap equal), 1 CPU, 1 GiB max file size |
 | Environment | Fixed two variables. No `env_file`, no pass-through, no cloud admin credentials |
 
-The workspace root passed in `PolicyContext.workspace_root` must be `/workspace`.
+## How `pair-workflows` uses this profile
+
+`ContainerSandbox` (the default for `Runner`) runs every build/test/acceptance command with
+`docker run --rm` on `$PAIR_WORKER_IMAGE`, using exactly the settings above (network none,
+read-only root, `cap-drop ALL`, `no-new-privileges`, pid/memory/ulimit limits, uid 10001,
+128 MB noexec tmpfs at `/tmp`, `HOME=/tmp/home`). The `compose_profile_matches_sandbox_args`
+test fails if this file and the generated arguments drift apart.
+
+Differences from `compose run`, all deliberate:
+
+- The task worktree is bind-mounted read-write at **its own host path** (so argv and cwd are
+  identical inside and outside), and it is the ONLY mount. The original repository, its `.git`
+  and its object store are never mounted, so code in the container cannot read history
+  (`git show HEAD:.env`) or write hooks/config. The worktree's `.git` is only a pointer file
+  that dangles inside the container; git-dependent build steps there will fail by design.
+  Orchestrator git (diff, add, ls-files) runs on the host, pinned to the git directory resolved
+  at worktree creation, with hooks/fsmonitor disabled.
+- On Linux the bind-mounted worktree must be writable by uid 10001 (chown it or use a userns
+  mapping); on Docker Desktop this is handled by the VM.
+- A timed-out or abandoned command is stopped with `docker kill <name>`; docker daemon errors
+  (exit 125) surface as environment failures, never as test failures.
+- With `PAIR_WORKER_IMAGE` unset, commands are refused (fail closed). Host execution exists
+  only as `HostSandbox`, refused unless `PAIR_ALLOW_HOST_EXEC=1`, and is meant for tests.
+- `PolicyContext.workspace_root` is the host directory that contains the repo and the task
+  worktrees (the policy runs on the orchestrator host, not inside the container).
 
 ## Process lifetime
 

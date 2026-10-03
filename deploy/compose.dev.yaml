@@ -12,6 +12,9 @@ name: deploy
 services:
   postgres:
     image: postgres:17.11
+    # Every DB test creates its own database and pool; several test binaries at once exhaust the
+    # default of 100. Dev only: production keeps the default.
+    command: ["postgres", "-c", "max_connections=300"]
     environment:
       POSTGRES_USER: pair
       POSTGRES_PASSWORD: pair   # dev-only password

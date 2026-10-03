@@ -74,7 +74,7 @@ pub fn sweeper(store: JobStore, interval: Duration) -> TaskSpec {
             let store = store.clone();
             async move {
                 store.sweep_expired().await?;
-                store.requeue_interrupted().await?;
+                store.requeue_sweep().await?;
                 Ok(())
             }
         }),

@@ -27,6 +27,7 @@ pub use executions::PgExecutionRecorder;
 pub use hash::{action_hash, sha256_hex};
 pub use orphans::{IntentReconciler, OrphanSweep, UNRECONCILED_EFFECT};
 pub use records::{RunRecord, StepRecord};
+pub use requeue::{RequeueSweep, MAX_INTERRUPTS};
 pub use step::{StepCtx, StepHandler, StepOutcome};
 pub use store::JobStore;
 pub use worker::Worker;

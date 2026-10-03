@@ -10,6 +10,8 @@ use pair_core::traits::Approvals;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
+const COMPLETED_STATUS: &str = "completed";
+
 /// Hash-bound, expiring, single-use approvals.
 #[derive(Clone)]
 pub struct PgApprovals {
@@ -76,31 +78,100 @@ pub(crate) async fn validate_grant(
     check_live(&row)
 }
 
-/// Check and consume. With `run`, consumption is re-entrant for the same run so a run resumed
-/// after a crash between consume and effect completion is not stuck; effects stay exactly-once via
-/// their intents. Any other caller sees single-use semantics. Rejections never consume.
-pub(crate) async fn consume_inner(
-    pool: &PgPool,
-    id: ApprovalId,
-    action_hash: &str,
-    run: Option<RunId>,
-) -> Result<()> {
+/// Plain single-use consume for callers outside a run. Rejections never consume.
+pub(crate) async fn consume_inner(pool: &PgPool, id: ApprovalId, action_hash: &str) -> Result<()> {
     let mut tx = pool.begin().await.map_err(db_err)?;
     let row = lock_approval(&mut tx, id).await?;
     check_hash(&row, action_hash)?;
-    if row.consumed && run.is_some() && row.consumed_by == run.map(|r| r.0) {
-        return Ok(());
-    }
     check_live(&row)?;
-    sqlx::query("UPDATE approvals SET consumed_at = now(), consumed_by = $2 WHERE id = $1")
+    sqlx::query("UPDATE approvals SET consumed_at = now(), consumed_by = NULL WHERE id = $1")
         .bind(id.0)
-        .bind(run.map(|r| r.0))
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
     tracing::info!(approval_id = %id, "approval consumed");
     Ok(())
+}
+
+/// Authorize exactly one effect intent `(run, key)` with approval `id`, inside the caller's
+/// transaction (which has already passed the lease guard, so lock order is run -> approval).
+///
+/// The approval must hash-match the payload, is bound to one intent via
+/// `effect_intents.approval_id` (UNIQUE) and can be re-entered only for that same intent, e.g.
+/// after a crash or an ambiguous failure. Re-entry for an intent that is not yet completed
+/// re-checks expiry; a completed intent is just replayed from storage. Rejections never consume.
+pub(crate) async fn authorize_effect(
+    tx: &mut Transaction<'_, Postgres>,
+    id: ApprovalId,
+    action_hash: &str,
+    run: RunId,
+    key: &str,
+) -> Result<()> {
+    let row = lock_approval(tx, id).await?;
+    check_hash(&row, action_hash)?;
+    let existing: Option<(String, Option<Uuid>)> = sqlx::query_as(
+        "SELECT status, approval_id FROM effect_intents WHERE run_id = $1 AND effect_key = $2 FOR UPDATE",
+    )
+    .bind(run.0)
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    let bound_elsewhere: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM effect_intents WHERE approval_id = $1 \
+           AND NOT (run_id = $2 AND effect_key = $3))",
+    )
+    .bind(id.0)
+    .bind(run.0)
+    .bind(key)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    if bound_elsewhere {
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            "approval already authorizes a different effect",
+        ));
+    }
+    match existing {
+        Some((status, Some(bound))) if bound == id.0 => {
+            if status != COMPLETED_STATUS && row.expires_at <= Utc::now() {
+                return Err(expired());
+            }
+            return Ok(());
+        }
+        Some((_, Some(_))) => {
+            return Err(PairError::new(
+                ErrorCode::Conflict,
+                "effect is bound to a different approval",
+            ));
+        }
+        _ => {}
+    }
+    if row.consumed && row.consumed_by != Some(run.0) {
+        return Err(PairError::new(
+            ErrorCode::Conflict,
+            "approval already consumed",
+        ));
+    }
+    if row.expires_at <= Utc::now() {
+        return Err(expired());
+    }
+    if !row.consumed {
+        sqlx::query("UPDATE approvals SET consumed_at = now(), consumed_by = $2 WHERE id = $1")
+            .bind(id.0)
+            .bind(run.0)
+            .execute(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        tracing::info!(approval_id = %id, run_id = %run, effect = key, "approval consumed");
+    }
+    Ok(())
+}
+
+fn expired() -> PairError {
+    PairError::new(ErrorCode::ApprovalExpired, "approval expired")
 }
 
 impl PgApprovals {
@@ -156,6 +227,6 @@ impl Approvals for PgApprovals {
     }
 
     async fn consume(&self, id: ApprovalId, action_hash: &str) -> Result<()> {
-        consume_inner(&self.pool, id, action_hash, None).await
+        consume_inner(&self.pool, id, action_hash).await
     }
 }

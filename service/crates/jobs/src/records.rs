@@ -9,7 +9,7 @@ use sqlx::{postgres::PgRow, Row};
 use uuid::Uuid;
 
 pub(crate) const RUN_COLS: &str = "id, kind, input, run_class, state, next_step, tool_calls, \
-     deadline_at, approval_id, pending_action_hash";
+     deadline_at, approval_id, pending_action_hash, lease_epoch";
 
 #[derive(Debug, Clone)]
 pub struct RunRecord {
@@ -23,6 +23,8 @@ pub struct RunRecord {
     pub deadline_at: DateTime<Utc>,
     pub approval_id: Option<ApprovalId>,
     pub pending_action_hash: Option<String>,
+    /// Fencing token of the claim that produced this record; bumped on every claim.
+    pub lease_epoch: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +55,7 @@ pub(crate) fn map_run(row: &PgRow) -> Result<RunRecord> {
         deadline_at: row.try_get("deadline_at").map_err(db_err)?,
         approval_id: approval.map(ApprovalId),
         pending_action_hash: row.try_get("pending_action_hash").map_err(db_err)?,
+        lease_epoch: row.try_get("lease_epoch").map_err(db_err)?,
     })
 }
 

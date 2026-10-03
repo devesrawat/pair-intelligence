@@ -22,10 +22,14 @@ pub enum StepError {
     /// Safe to retry; the worker retries with capped exponential backoff.
     #[error("transient: {0}")]
     Transient(String),
-    /// Not retryable; the run fails.
+    /// Not retryable; the run fails. Run limits (tool calls) arrive as `ErrorCode::LimitExceeded`.
     #[error("{0}")]
     Fatal(#[from] PairError),
-    /// A run limit (tool calls) was hit; the run fails.
-    #[error("limit exceeded: {0}")]
-    LimitExceeded(String),
+}
+
+impl StepError {
+    /// A run limit (tool calls) was hit; the run fails with `ErrorCode::LimitExceeded`.
+    pub fn limit_exceeded(msg: impl Into<String>) -> Self {
+        Self::Fatal(PairError::new(ErrorCode::LimitExceeded, msg))
+    }
 }

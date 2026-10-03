@@ -16,7 +16,7 @@ mod worktree;
 
 pub use classify::{classify_failure, FailureClass};
 pub use config::RepoConfig;
-pub use edits::{apply_edits, parse_edit_set, FileEdit};
+pub use edits::{apply_edits, parse_edit_set, EditContext, FileEdit};
 pub use exec::{CommandExecutor, ExecOutput, ExecSpec, ProcessExecutor};
 pub use remote::{request_remote_write, RemoteAction, RemoteKind, RemoteOutcome};
 pub use runner::{CmdReport, Runner, RunnerSetup};

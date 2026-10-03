@@ -71,6 +71,7 @@ impl Provider for FnProvider {
 pub struct FakePolicy {
     pub denied_exes: Vec<String>,
     pub denied_destinations: Vec<String>,
+    pub denied_tools: Vec<String>,
     pub allow_remote_writes: bool,
     pub seen: Mutex<Vec<ActionRequest>>,
 }
@@ -83,10 +84,11 @@ impl Policy for FakePolicy {
                 Decision::NeedsApproval {
                     payload_hash: "hash".into(),
                 }
-            } else if req
-                .executable
-                .as_ref()
-                .is_some_and(|e| self.denied_exes.contains(e))
+            } else if self.denied_tools.contains(&req.tool)
+                || req
+                    .executable
+                    .as_ref()
+                    .is_some_and(|e| self.denied_exes.contains(e))
                 || req
                     .destination
                     .as_ref()

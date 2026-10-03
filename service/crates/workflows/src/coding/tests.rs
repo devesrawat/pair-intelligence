@@ -138,7 +138,10 @@ async fn coding_task_happy_path_yields_scoped_reviewed_patch() {
     assert!(res.branch.starts_with("pair/"));
     // every executed command went through policy, and none was a remote write
     let seen = policy.seen.lock().unwrap();
-    assert!(seen.iter().all(|r| r.tool == crate::tools::SHELL_EXEC));
+    assert!(seen.iter().all(|r| matches!(
+        r.tool.as_str(),
+        crate::tools::SHELL_EXEC | crate::tools::FS_WRITE
+    )));
     assert!(seen.iter().all(|r| !r.args.iter().any(|a| a == "push")));
     // original checkout untouched
     assert_eq!(
@@ -361,6 +364,43 @@ async fn container_sandbox_without_image_never_runs_acceptance_on_the_host() {
         .join(task.id.to_string())
         .join("ran.marker")
         .exists());
+}
+
+#[tokio::test]
+async fn edit_write_denied_by_gate_leaves_file_untouched() {
+    let fx = Fixture::new(PASS_ACCEPTANCE);
+    let task = fx.task(&["src/"]);
+    let policy = Arc::new(FakePolicy {
+        denied_tools: vec![crate::tools::FS_WRITE.into()],
+        ..FakePolicy::default()
+    });
+    let provider = provider_with_edit(edit_json(&[
+        ("src/lib.txt", "new\n"),
+        ("src/other.txt", "also new\n"),
+    ]));
+    let err = run(&task, &provider, &policy).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied);
+    let wt = fx.root.join("ws").join(task.id.to_string());
+    assert_eq!(
+        std::fs::read_to_string(wt.join("src/lib.txt")).unwrap(),
+        "old\n"
+    );
+    assert!(
+        !wt.join("src/other.txt").exists(),
+        "a denied batch writes nothing"
+    );
+    // the write was offered to policy as one fs.write request naming every target path
+    let seen = policy.seen.lock().unwrap();
+    let writes: Vec<_> = seen
+        .iter()
+        .filter(|r| r.tool == crate::tools::FS_WRITE)
+        .collect();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].paths.len(), 2);
+    assert!(writes[0]
+        .paths
+        .iter()
+        .all(|p| p.starts_with(wt.to_str().unwrap())));
 }
 
 #[tokio::test]

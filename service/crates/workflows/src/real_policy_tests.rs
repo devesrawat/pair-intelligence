@@ -251,6 +251,43 @@ async fn real_engine_denies_stale_policy_version() {
     assert_eq!(err.code, ErrorCode::PolicyDenied);
 }
 
+#[tokio::test]
+async fn real_engine_gates_edit_writes_by_workspace_and_denied_paths() {
+    use crate::coding::{apply_edits, EditContext, FileEdit, Scope};
+    let world = World::new();
+    let gate = engine_gate(&world, None);
+    let limits = crate::limits::RunLimits::interactive();
+    let ctx = world.ctx(Vec::new());
+    let cx = EditContext {
+        gate: &gate,
+        policy: &ctx,
+        task: TaskId::new(),
+        trace: TraceId::new(),
+        data_class: DataClass::Personal,
+        limits: &limits,
+    };
+    let scope = Scope::new(vec!["src/".into()]);
+    let edit = vec![FileEdit {
+        path: "src/a.txt".into(),
+        content: "x".into(),
+    }];
+    // inside the policy workspace: allowed and written
+    let inside = world.repo.clone();
+    apply_edits(&cx, &inside, &scope, &edit).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(inside.join("src/a.txt")).unwrap(),
+        "x"
+    );
+    // a root outside the policy workspace is refused by the engine and nothing is written
+    let outside = std::env::temp_dir()
+        .join(format!("pair_t_outside_{}", uuid::Uuid::new_v4().simple()))
+        .canonicalize_or_create();
+    let err = apply_edits(&cx, &outside, &scope, &edit).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
+    assert!(!outside.join("src/a.txt").exists());
+    std::fs::remove_dir_all(&outside).unwrap();
+}
+
 // ---- research -------------------------------------------------------------------------
 
 #[derive(Default)]

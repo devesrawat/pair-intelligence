@@ -2,7 +2,7 @@
 use super::{
     classify::{classify_failure, FailureClass},
     config::RepoConfig,
-    edits::{apply_edits, parse_edit_set},
+    edits::{apply_edits, parse_edit_set, EditContext},
     integrity,
     runner::{CmdReport, Runner, RunnerSetup},
     sandbox::Sandbox,
@@ -270,7 +270,15 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
         .await?;
     ctx.assert_unchanged(Stage::Edit)?;
     let edits = parse_edit_set(&edit_text)?;
-    apply_edits(&wt.path, &task.scope, &edits)?;
+    let edit_cx = EditContext {
+        gate: deps.gate,
+        policy: &deps.policy,
+        task: task.id,
+        trace: task.trace,
+        data_class: cfg.data_class,
+        limits: &deps.limits,
+    };
+    apply_edits(&edit_cx, &wt.path, &task.scope, &edits).await?;
     let changed = worktree::changed_files(&runner, &wt).await?;
     task.scope.check_all(changed.iter().map(String::as_str))?;
     stages.push(Stage::Edit);

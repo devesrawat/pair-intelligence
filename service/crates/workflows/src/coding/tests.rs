@@ -724,6 +724,40 @@ fn scope_permits_only_declared_paths() {
 }
 
 #[test]
+fn dot_git_check_is_case_insensitive_and_more_secret_files_are_withheld() {
+    for p in [".GIT/config", "a/.Git/hooks/x", ".gIt"] {
+        assert!(!Scope::new(vec!["".into()]).permits(p), "{p}");
+        assert_eq!(
+            super::scope::normalize_rel(p).unwrap_err().code,
+            ErrorCode::PolicyDenied
+        );
+    }
+    for secret in [
+        ".envrc",
+        "sub/.git-credentials",
+        "keys/id_ecdsa",
+        "id_dsa",
+        "kubeconfig",
+        "deploy/prod.tfvars",
+        "release.jks",
+        "x/KUBECONFIG",
+    ] {
+        assert!(is_secret_path(secret), "{secret}");
+    }
+    assert!(!is_secret_path("src/environment.rs") && !is_secret_path("docs/envrc.md"));
+}
+
+#[test]
+fn env_passthrough_rejects_host_service_variables() {
+    for name in ["DOCKER_HOST", "KUBECONFIG", "SSH_AUTH_SOCK", "docker_host"] {
+        let json = format!(
+            r#"{{"acceptance":[["true"]],"data_class":"public","env_passthrough":["{name}"]}}"#
+        );
+        assert!(RepoConfig::parse(&json).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn repo_config_requires_acceptance_and_rejects_secret_passthrough() {
     assert!(RepoConfig::parse(r#"{"acceptance":[],"data_class":"public"}"#).is_err());
     assert!(RepoConfig::parse(

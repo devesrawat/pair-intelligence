@@ -8,6 +8,18 @@ use std::path::Path;
 
 pub const REPO_CONFIG_PATH: &str = ".pair/repo.json";
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
+/// Variables that reach host services or agents (docker, kube, ssh, git transports) and so
+/// are never forwarded to commands, even though their names do not look secret.
+const FORBIDDEN_PASSTHROUGH: [&str; 8] = [
+    "DOCKER_HOST",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "KUBECONFIG",
+    "SSH_AUTH_SOCK",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_EXEC_PATH",
+];
 
 fn default_timeout() -> u64 {
     DEFAULT_TIMEOUT_SECS
@@ -91,11 +103,12 @@ impl RepoConfig {
                 "timeout_secs must be positive",
             ));
         }
-        if let Some(bad) = self
-            .env_passthrough
-            .iter()
-            .find(|n| super::runner::looks_secret_name(n))
-        {
+        if let Some(bad) = self.env_passthrough.iter().find(|n| {
+            super::runner::looks_secret_name(n)
+                || FORBIDDEN_PASSTHROUGH
+                    .iter()
+                    .any(|f| n.eq_ignore_ascii_case(f))
+        }) {
             return Err(PairError::new(
                 ErrorCode::PolicyDenied,
                 format!("env passthrough of secret-like name {bad}"),

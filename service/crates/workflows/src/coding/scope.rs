@@ -2,15 +2,20 @@
 use pair_core::error::{ErrorCode, PairError, Result};
 use serde::{Deserialize, Serialize};
 
-const SECRET_FILE_NAMES: [&str; 6] = [
+const SECRET_FILE_NAMES: [&str; 11] = [
     ".netrc",
     "credentials",
     "id_rsa",
     "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
     ".npmrc",
     ".pypirc",
+    ".git-credentials",
+    ".envrc",
+    "kubeconfig",
 ];
-const SECRET_EXTENSIONS: [&str; 5] = ["pem", "key", "p12", "pfx", "keystore"];
+const SECRET_EXTENSIONS: [&str; 7] = ["pem", "key", "p12", "pfx", "keystore", "jks", "tfvars"];
 
 /// Allowed paths: an entry ending in `/` is a directory prefix, anything else an exact file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,7 +45,9 @@ pub fn normalize_rel(path: &str) -> Result<String> {
         || trimmed.starts_with('/')
         || trimmed.contains('\\')
         || trimmed.contains('\0')
-        || trimmed.split('/').any(|s| s == ".." || s == ".git");
+        || trimmed
+            .split('/')
+            .any(|s| s == ".." || s.eq_ignore_ascii_case(".git"));
     if bad {
         return Err(PairError::new(
             ErrorCode::PolicyDenied,

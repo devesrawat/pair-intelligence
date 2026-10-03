@@ -1,2 +1,2 @@
-{"ts":"2026-10-03T13:18:09.239Z","hook":"before_model_resolve","phase":"reserve-attempt","runId":"d02cef8a-be1a-49cf-aeef-95d29abcda41","taskId":"8e8428d5-8226-5c61-a9e5-a8dfdcd184c1","promptChars":21,"attachmentCount":0,"maxCostMicros":17720}
-{"ts":"2026-10-03T13:18:09.251Z","hook":"before_model_resolve","phase":"refused","runId":"d02cef8a-be1a-49cf-aeef-95d29abcda41","taskId":"8e8428d5-8226-5c61-a9e5-a8dfdcd184c1","errorKind":"http","status":402,"errorCode":"budget_exceeded"}
+{"ts":"2026-10-03T13:47:08.767Z","hook":"before_model_resolve","phase":"reserve-attempt","runId":"df28b201-c1c0-491d-b4b9-765c2265193b","taskId":"dfd92943-7802-587a-be8b-4fbbfe4c159e","promptChars":21,"attachmentCount":0,"maxCostMicros":17720}
+{"ts":"2026-10-03T13:47:08.778Z","hook":"before_model_resolve","phase":"refused","runId":"df28b201-c1c0-491d-b4b9-765c2265193b","taskId":"dfd92943-7802-587a-be8b-4fbbfe4c159e","errorKind":"http","status":402,"errorCode":"budget_exceeded"}

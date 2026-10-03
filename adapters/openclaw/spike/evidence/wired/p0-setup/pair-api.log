@@ -1,6 +1,6 @@
-{"timestamp":"2026-10-03T13:16:32.932266Z","level":"INFO","fields":{"message":"trigger \"memory_evidence_keep_one_trg\" for relation \"memory_evidence\" does not exist, skipping"},"target":"sqlx::postgres::notice"}
-{"timestamp":"2026-10-03T13:16:32.996394Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:16:32.998001Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:16:33.000508Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
-{"timestamp":"2026-10-03T13:16:33.000747Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:16:33.001049Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:45:37.525660Z","level":"INFO","fields":{"message":"trigger \"memory_evidence_keep_one_trg\" for relation \"memory_evidence\" does not exist, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T13:45:37.565829Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:45:37.570526Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:45:37.574518Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T13:45:37.575050Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:45:37.576469Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}

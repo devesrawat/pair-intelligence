@@ -1,6 +1,6 @@
-{"timestamp":"2026-10-03T13:17:11.462330Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a101e9-55a4-71e0-be19-81d2e829eed3","task":"8c962b1a-9bfb-5a74-9565-641a3e242809","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"5d9fbb2d-83fb-489e-911f-c08e9e78c00c","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"5d9fbb2d-83fb-489e-911f-c08e9e78c00c","name":"request"}]}
-{"timestamp":"2026-10-03T13:17:12.053929Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
-{"timestamp":"2026-10-03T13:17:12.054016Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:17:12.054032Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:17:12.054274Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:12.054299Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:12.295225Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a10203-e5c5-7166-993b-a1f482a110b6","task":"d5de11a3-1e47-5ad5-be94-6ac9bc1a10bf","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"825c9d26-fe77-44b9-b223-6805d4760107","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"825c9d26-fe77-44b9-b223-6805d4760107","name":"request"}]}
+{"timestamp":"2026-10-03T13:46:12.548863Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T13:46:12.548962Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:46:12.549009Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:46:12.549791Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:12.549826Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}

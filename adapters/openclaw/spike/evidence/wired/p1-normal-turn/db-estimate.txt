@@ -1,2 +1,2 @@
 {"promptChars":24,"maxCostMicros":17720}
-{"bodyBytes":53404,"messageCount":3}
+{"bodyBytes":53151,"messageCount":3}

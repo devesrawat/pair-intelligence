@@ -1,5 +1,5 @@
 {
-  "runId": "93c0f92d-591e-4a67-9f96-acbb48eaa132",
+  "runId": "d078bb27-9d44-430a-b617-10351fb4d348",
   "status": "error",
   "summary": "failed",
   "result": {
@@ -11,9 +11,9 @@
       }
     ],
     "meta": {
-      "durationMs": 1592,
+      "durationMs": 1005,
       "agentMeta": {
-        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
+        "sessionId": "5f736dee-9c57-422b-a8d8-dbd6aff87f6f",
         "sessionFile": "agent:main:w-misconf",
         "provider": "mock",
         "model": "mock-small",
@@ -27,8 +27,8 @@
       },
       "systemPromptReport": {
         "source": "run",
-        "generatedAt": 1791033536037,
-        "sessionId": "840c07aa-6a08-4270-8cb5-e0ada4c2afce",
+        "generatedAt": 1791035273788,
+        "sessionId": "5f736dee-9c57-422b-a8d8-dbd6aff87f6f",
         "sessionKey": "agent:main:w-misconf",
         "provider": "mock",
         "model": "mock-small",
@@ -47,10 +47,10 @@
           "sandboxed": false
         },
         "systemPrompt": {
-          "chars": 42239,
-          "hash": "ea51c591fb7be151a34793c09c763c92e0788bb7ca60372d23360eecbf3f6056",
+          "chars": 41991,
+          "hash": "b396f5f9374626b34aa41550216b1541cf1f452b5bb4ce70310c77bb6bccde76",
           "projectContextChars": 19337,
-          "nonProjectContextChars": 22902
+          "nonProjectContextChars": 22654
         },
         "injectedWorkspaceFiles": [
           {
@@ -95,8 +95,8 @@
           }
         ],
         "skills": {
-          "promptChars": 7623,
-          "hash": "aa84084f9e16e8a931d45e23fe6a3186234356dbfd4601f47179915916eac211",
+          "promptChars": 7375,
+          "hash": "6226bcc30c5db21d43aebea819f3f4cb952206d164b8f039754ce36c152c218d",
           "entries": [
             {
               "name": "acp-router",
@@ -161,10 +161,6 @@
             {
               "name": "healthcheck",
               "blockChars": 251
-            },
-            {
-              "name": "mcporter",
-              "blockChars": 245
             },
             {
               "name": "meme-maker",

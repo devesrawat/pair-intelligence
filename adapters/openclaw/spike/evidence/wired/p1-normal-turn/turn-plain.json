@@ -1,5 +1,5 @@
 {
-  "runId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
+  "runId": "29f02e7b-f365-4176-8415-57cac1bd0c59",
   "status": "ok",
   "summary": "completed",
   "result": {
@@ -10,9 +10,9 @@
       }
     ],
     "meta": {
-      "durationMs": 1690,
+      "durationMs": 1387,
       "agentMeta": {
-        "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
+        "sessionId": "2b8e88ac-666e-4256-a70b-cb722450e1c1",
         "sessionFile": "agent:main:w-plain",
         "provider": "mock",
         "model": "mock-routed",
@@ -48,22 +48,22 @@
         "contextBudgetStatus": {
           "schemaVersion": 1,
           "source": "pre-prompt-estimate",
-          "updatedAt": 1791033422652,
+          "updatedAt": 1791035164120,
           "provider": "mock",
           "model": "mock-routed",
           "route": "fits",
           "shouldCompact": false,
-          "estimatedPromptTokens": 16614,
+          "estimatedPromptTokens": 16540,
           "contextTokenBudget": 32000,
           "promptBudgetBeforeReserve": 24000,
           "reserveTokens": 8000,
           "effectiveReserveTokens": 8000,
-          "remainingPromptBudgetTokens": 7386,
+          "remainingPromptBudgetTokens": 7460,
           "overflowTokens": 0,
           "toolResultReducibleChars": 0,
           "messageCount": 0,
           "unwindowedMessageCount": 0,
-          "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a"
+          "sessionId": "2b8e88ac-666e-4256-a70b-cb722450e1c1"
         },
         "codeModeEngaged": false,
         "assistantTurns": 1,
@@ -74,9 +74,9 @@
         },
         "costUsd": 0,
         "terminalReceipt": {
-          "runId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
-          "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
-          "turnId": "93e9236f-3d0b-43f8-9c71-2d78d173f729",
+          "runId": "29f02e7b-f365-4176-8415-57cac1bd0c59",
+          "sessionId": "2b8e88ac-666e-4256-a70b-cb722450e1c1",
+          "turnId": "29f02e7b-f365-4176-8415-57cac1bd0c59",
           "requested": {
             "provider": "mock",
             "model": "mock-small"
@@ -94,8 +94,8 @@
       "aborted": false,
       "systemPromptReport": {
         "source": "run",
-        "generatedAt": 1791033421877,
-        "sessionId": "06065da1-9a51-41c4-8928-1c5adee22d5a",
+        "generatedAt": 1791035163508,
+        "sessionId": "2b8e88ac-666e-4256-a70b-cb722450e1c1",
         "sessionKey": "agent:main:w-plain",
         "provider": "mock",
         "model": "mock-routed",
@@ -114,10 +114,10 @@
           "sandboxed": false
         },
         "systemPrompt": {
-          "chars": 42239,
-          "hash": "97eb0fff5afdcc8cd8e5f0961ec93e6474281b0f85fbb0f2141aebb3ed4efe70",
+          "chars": 41991,
+          "hash": "c7eb12bd5ec1cad47ca0c1842807eb9587b7dac3385b1ce3373f23c0880841d7",
           "projectContextChars": 19337,
-          "nonProjectContextChars": 22902
+          "nonProjectContextChars": 22654
         },
         "injectedWorkspaceFiles": [
           {
@@ -162,8 +162,8 @@
           }
         ],
         "skills": {
-          "promptChars": 7623,
-          "hash": "aa84084f9e16e8a931d45e23fe6a3186234356dbfd4601f47179915916eac211",
+          "promptChars": 7375,
+          "hash": "6226bcc30c5db21d43aebea819f3f4cb952206d164b8f039754ce36c152c218d",
           "entries": [
             {
               "name": "acp-router",
@@ -228,10 +228,6 @@
             {
               "name": "healthcheck",
               "blockChars": 251
-            },
-            {
-              "name": "mcporter",
-              "blockChars": 245
             },
             {
               "name": "meme-maker",

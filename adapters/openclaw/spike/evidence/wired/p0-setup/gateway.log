@@ -1,21 +1,18 @@
-(node:53600) ExperimentalWarning: SQLite is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created)
-openclaw: Retrying with "<HOME>/.nvm/versions/node/v24.21.0/bin/node" (nvm default; current Node failed runtime admission).
-[90m2026-10-03T18:46:43.646+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
-[90m2026-10-03T18:46:43.667+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
-[90m2026-10-03T18:46:43.669+05:30[39m [36m[gateway][39m [36mstarting...[39m
-[90m2026-10-03T18:46:43.881+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
-[90m2026-10-03T18:46:45.130+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
-[90m2026-10-03T18:46:45.229+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
-[90m2026-10-03T18:46:46.015+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<REPO>/adapters/openclaw/pair-spike/dist/index.js)[39m
-[90m2026-10-03T18:46:46.026+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
-[90m2026-10-03T18:46:46.027+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 2.1s)[39m
-[90m2026-10-03T18:46:46.027+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
-[90m2026-10-03T18:46:46.028+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":53607,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
-[90m2026-10-03T18:46:46.028+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":4,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
-[90m2026-10-03T18:46:46.444+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
-[90m2026-10-03T18:46:46.847+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
-[90m2026-10-03T18:46:46.942+05:30[39m [35m[plugins][39m [36mmemory-core: created managed dreaming cron job.[39m
-[90m2026-10-03T18:46:46.944+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
-[90m2026-10-03T18:46:46.948+05:30[39m [36m[gateway][39m [36mready[39m
-[90m2026-10-03T18:46:46.987+05:30[39m [36m[heartbeat][39m [36mstarted[39m
+[90m2026-10-03T19:15:46.528+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
+[90m2026-10-03T19:15:46.549+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
+[90m2026-10-03T19:15:46.551+05:30[39m [36m[gateway][39m [36mstarting...[39m
+[90m2026-10-03T19:15:46.767+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
+[90m2026-10-03T19:15:48.033+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
+[90m2026-10-03T19:15:48.132+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
+[90m2026-10-03T19:15:48.975+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<REPO>/adapters/openclaw/pair-spike/dist/index.js)[39m
+[90m2026-10-03T19:15:48.986+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
+[90m2026-10-03T19:15:48.986+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 2.2s)[39m
+[90m2026-10-03T19:15:48.987+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
+[90m2026-10-03T19:15:48.987+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":47197,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
+[90m2026-10-03T19:15:48.987+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":4,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
+[90m2026-10-03T19:15:49.383+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
+[90m2026-10-03T19:15:49.780+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
+[90m2026-10-03T19:15:49.870+05:30[39m [35m[plugins][39m [36mmemory-core: created managed dreaming cron job.[39m
+[90m2026-10-03T19:15:49.874+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
+[90m2026-10-03T19:15:49.878+05:30[39m [36m[gateway][39m [36mready[39m
+[90m2026-10-03T19:15:49.920+05:30[39m [36m[heartbeat][39m [36mstarted[39m

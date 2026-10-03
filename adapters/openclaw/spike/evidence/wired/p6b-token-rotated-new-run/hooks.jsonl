@@ -1,2 +1,2 @@
-{"ts":"2026-10-03T13:18:06.699Z","hook":"before_model_resolve","phase":"reserve-attempt","runId":"e3fbe0da-40d6-4418-af73-1557a012fdcc","taskId":"979474d0-7aac-5b92-bfa7-2a0f62376c03","promptChars":21,"attachmentCount":0,"maxCostMicros":17720}
-{"ts":"2026-10-03T13:18:06.701Z","hook":"before_model_resolve","phase":"refused","runId":"e3fbe0da-40d6-4418-af73-1557a012fdcc","taskId":"979474d0-7aac-5b92-bfa7-2a0f62376c03","errorKind":"http","status":401,"errorCode":"unauthenticated"}
+{"ts":"2026-10-03T13:47:06.484Z","hook":"before_model_resolve","phase":"reserve-attempt","runId":"4c6bd40a-db64-41ba-8880-0b40da17ec95","taskId":"c59f4bef-9b7f-543d-a51b-6a590e3b0419","promptChars":21,"attachmentCount":0,"maxCostMicros":17720}
+{"ts":"2026-10-03T13:47:06.486Z","hook":"before_model_resolve","phase":"refused","runId":"4c6bd40a-db64-41ba-8880-0b40da17ec95","taskId":"c59f4bef-9b7f-543d-a51b-6a590e3b0419","errorKind":"http","status":401,"errorCode":"unauthenticated"}

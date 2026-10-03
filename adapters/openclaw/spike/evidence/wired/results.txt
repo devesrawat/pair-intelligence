@@ -1,14 +1,14 @@
-head a3663fd8db6b711e256e694f096f9ce615dac39a
-node v24.12.0
+head 1a95612f8b0cb315043b1942af1915d1cfcfc466
+node v24.21.0
 PASS  plugin source tree is clean (evidence matches HEAD)
-PASS  every migration applied to the scratch database (24 of 24)
+PASS  every migration applied to the scratch database (31 of 31)
 PASS  plain turn exits 0
 PASS  plain turn reached the mock with the routed model (reserve then override)
 PASS  a reservation id was recorded for the turn
 PASS  llm_output reconciled the reservation as settled
 PASS  DB: reservation row is settled
 PASS  DB: one settled ledger row for the reservation
-PASS  DB: ledger amount equals the adapter's computed actual cost
+PASS  DB: ledger amount is max(adapter cost, server tokens x registry price)
 PASS  DB: reservation uses the explicit kind and price version
 PASS  allowed tool: exec reached the service and was allowed
 PASS  allowed tool: the command executed (canary content in the tool result)

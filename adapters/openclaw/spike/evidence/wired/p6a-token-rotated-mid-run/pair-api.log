@@ -1,18 +1,18 @@
-{"timestamp":"2026-10-03T13:17:38.441809Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
-{"timestamp":"2026-10-03T13:17:38.446868Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:38.452548Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:38.459595Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
-{"timestamp":"2026-10-03T13:17:38.461061Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:38.462296Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:39.935305Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a101e9-c4dd-743c-b60e-90143bdf3841","task":"f52f6199-1e3c-5486-b465-484aeacd13e2","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"69608dc5-b3f9-45bb-9872-11d269984d93","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"69608dc5-b3f9-45bb-9872-11d269984d93","name":"request"}]}
-{"timestamp":"2026-10-03T13:17:40.508910Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
-{"timestamp":"2026-10-03T13:17:40.509219Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:17:40.509308Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:17:40.509700Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:40.509886Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:40.587648Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
-{"timestamp":"2026-10-03T13:17:40.591198Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:40.591917Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:40.593506Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
-{"timestamp":"2026-10-03T13:17:40.593573Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:17:40.593681Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:38.802797Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T13:46:38.806731Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:38.811216Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:38.815237Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T13:46:38.815739Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:38.817066Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.079872Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a10204-524e-71c2-9c0f-274f9d36f2ab","task":"f88a6df4-1356-50ed-a5eb-263ff5b8e20d","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"1509e866-e9a6-4e2f-882b-df01b9f728a3","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"1509e866-e9a6-4e2f-882b-df01b9f728a3","name":"request"}]}
+{"timestamp":"2026-10-03T13:46:40.336379Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T13:46:40.336488Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:46:40.336537Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:46:40.336574Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.336604Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.402897Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T13:46:40.407233Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.407964Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.409474Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T13:46:40.409524Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:46:40.409642Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}

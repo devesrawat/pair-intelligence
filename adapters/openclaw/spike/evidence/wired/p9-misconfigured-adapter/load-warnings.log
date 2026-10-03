@@ -1,1 +1,1 @@
-[90m2026-10-03T18:48:21.999+05:30[39m [35m[plugins][39m [31mpair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true: the budget gate cannot run and model calls are NOT gated. Denying every tool call. Set it to true and restart the gateway.[39m
+[90m2026-10-03T19:17:19.206+05:30[39m [35m[plugins][39m [31mpair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true: the budget gate cannot run and model calls are NOT gated. Denying every tool call. Set it to true and restart the gateway.[39m

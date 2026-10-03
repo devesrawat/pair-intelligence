@@ -1,31 +1,28 @@
-(node:56454) ExperimentalWarning: SQLite is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created)
-openclaw: Retrying with "<HOME>/.nvm/versions/node/v24.21.0/bin/node" (nvm default; current Node failed runtime admission).
-[90m2026-10-03T18:48:18.255+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
-[90m2026-10-03T18:48:18.447+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
-[90m2026-10-03T18:48:18.449+05:30[39m [36m[gateway][39m [36mstarting...[39m
-[90m2026-10-03T18:48:18.641+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
-[90m2026-10-03T18:48:20.258+05:30[39m [34m[session-sqlite][39m [36mreclamation worker retired reason=exclusive-handoff kind=canonical-validation ageMs=405 opsServed=2[39m
-[90m2026-10-03T18:48:20.689+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
-[90m2026-10-03T18:48:20.813+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
-[90m2026-10-03T18:48:21.999+05:30[39m [35m[plugins][39m [31mpair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true: the budget gate cannot run and model calls are NOT gated. Denying every tool call. Set it to true and restart the gateway.[39m
-[90m2026-10-03T18:48:22.509+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<REPO>/adapters/openclaw/pair-spike/dist/index.js)[39m
-[90m2026-10-03T18:48:22.518+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
-[90m2026-10-03T18:48:22.518+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 3.9s)[39m
-[90m2026-10-03T18:48:22.518+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
-[90m2026-10-03T18:48:22.518+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":56462,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
-[90m2026-10-03T18:48:22.519+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":6,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"session-accessor.sqlite-archive.worker.js","started":1,"retired":[{"reason":"closed","count":1}]},{"script":"session-transcript.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
-[90m2026-10-03T18:48:22.933+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
-[90m2026-10-03T18:48:23.331+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
-[90m2026-10-03T18:48:23.407+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
-[90m2026-10-03T18:48:23.414+05:30[39m [36m[gateway][39m [36mready[39m
-[90m2026-10-03T18:48:23.450+05:30[39m [36m[heartbeat][39m [36mstarted[39m
-[90m2026-10-03T18:48:23.704+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
-[90m2026-10-03T18:48:32.254+05:30[39m [36m[ws][39m [36m⇄ res ✓ agent 115ms runId=8650bc14-79af-4db5-ae73-1e463fb53807 conn=26459774…0127 id=2:52187f77-7…a1f2[39m
-[90m2026-10-03T18:48:33.184+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
-[90m2026-10-03T18:48:34.233+05:30[39m [31m[memory][39m [33mmemory_index_chunks_vec not updated — semantic vector embeddings unavailable — no vector dimensions resolved. Vector recall degraded. Further duplicate warnings suppressed.[39m
-2026-10-03T18:48:34.322+05:30 MOCK-OK hello from the mock model
-[90m2026-10-03T18:48:34.323+05:30[39m [33m[agents/agent-command][39m [36m[agent] run 8650bc14-79af-4db5-ae73-1e463fb53807 ended with stopReason=stop[39m
-[90m2026-10-03T18:48:35.472+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
-2026-10-03T18:48:35.605+05:30 MOCK-DONE tool-result: pair: adapter is misconfigured, tool calls are denied
-[90m2026-10-03T18:48:35.605+05:30[39m [33m[agents/agent-command][39m [36m[agent] run ec80ebc2-0ad9-4328-9ae5-01d7c65bcef4 ended with stopReason=stop[39m
+[90m2026-10-03T19:17:15.769+05:30[39m [36m[gateway][39m [36mloading configuration…[39m
+[90m2026-10-03T19:17:15.962+05:30[39m [36m[gateway][39m [36mresolving authentication…[39m
+[90m2026-10-03T19:17:15.964+05:30[39m [36m[gateway][39m [36mstarting...[39m
+[90m2026-10-03T19:17:16.167+05:30[39m [36m[gateway][39m [36mshutdown budget at startup: drain=315000ms shutdown=325000ms reserve=10000ms exitMargin=5000ms; source=Gateway stop policy=330000ms[39m
+[90m2026-10-03T19:17:17.718+05:30[39m [34m[session-sqlite][39m [36mreclamation worker retired reason=exclusive-handoff kind=canonical-validation ageMs=394 opsServed=2[39m
+[90m2026-10-03T19:17:18.122+05:30[39m [36m[gateway][39m [36mstarting HTTP server...[39m
+[90m2026-10-03T19:17:18.220+05:30[39m [32m[health-monitor][39m [36mstarted (interval: 300s, startup-grace: 60s, channel-connect-grace: 120s)[39m
+[90m2026-10-03T19:17:19.206+05:30[39m [35m[plugins][39m [31mpair-spike: plugins.entries.pair-spike.hooks.allowConversationAccess is not true: the budget gate cannot run and model calls are NOT gated. Denying every tool call. Set it to true and restart the gateway.[39m
+[90m2026-10-03T19:17:19.709+05:30[39m [36m[gateway][39m [33m[plugins] OpenClaw can't verify where this plugin came from. Review it with 'openclaw plugins inspect pair-spike'. Adding it to plugins.allow lets it load, but does not make it trusted. If it's an official plugin, reinstall it from its official npm package or its official ClawHub listing to enable trusted features. (plugin=pair-spike, source=<REPO>/adapters/openclaw/pair-spike/dist/index.js)[39m
+[90m2026-10-03T19:17:19.718+05:30[39m [36m[gateway][39m [36magent model: mock/mock-small (thinking=off, fast=off)[39m
+[90m2026-10-03T19:17:19.718+05:30[39m [36m[gateway][39m [36mhttp server listening (19 plugins: acpx, anthropic, bonjour, browser, canvas, cua-computer, device-pair, file-transfer, geolocation, github, google-meet, linux-node, memory-core, openai, pair-spike, talk-voice, teams-meetings, xai, zoom-meetings; 3.6s)[39m
+[90m2026-10-03T19:17:19.719+05:30[39m [36m[gateway][39m [36mlog file: /tmp/openclaw/openclaw-2026-10-03.log[39m
+[90m2026-10-03T19:17:19.719+05:30[39m [36m[gateway][39m [36mnative runtime: {"pid":48594,"platform":"darwin","arch":"arm64","node":"24.21.0","v8":"13.6.233.17-node.53","uv":"1.52.1","openssl":"3.5.8","sqlite":"3.53.4"}[39m
+[90m2026-10-03T19:17:19.719+05:30[39m [36m[gateway][39m [36mworker startup state: {"workerCount":6,"workerLifecycle":[{"script":"sqlite-store.worker.js","started":1,"retired":[]},{"script":"openclaw-state-lease-heartbeat.worker.js","started":1,"retired":[]},{"script":"openclaw-state-read.worker.js","started":2,"retired":[]},{"script":"session-accessor.sqlite-archive.worker.js","started":1,"retired":[{"reason":"closed","count":1}]},{"script":"session-transcript.worker.js","started":2,"retired":[]},{"script":"other","started":1,"retired":[{"reason":"exit","count":1}]}],"compute":{"limit":7,"active":0,"waitingPools":0,"pendingTasks":0,"pendingBytes":0}}[39m
+[90m2026-10-03T19:17:20.102+05:30[39m [36m[gateway][39m [36mstarting channels and sidecars...[39m
+[90m2026-10-03T19:17:20.487+05:30[39m [35m[plugins][39m [36membedded acpx runtime backend registered lazily[39m
+[90m2026-10-03T19:17:20.586+05:30[39m [36m[gateway][39m [36mstartup outcomes: internal-hooks=skipped (not-configured); internal-startup-hook=skipped (no-handlers-loaded); gateway-start-hooks=scheduled; gmail-watcher=skipped (hooks-disabled); gmail-model=skipped (not-configured)[39m
+[90m2026-10-03T19:17:20.590+05:30[39m [36m[gateway][39m [36mready[39m
+[90m2026-10-03T19:17:20.627+05:30[39m [36m[heartbeat][39m [36mstarted[39m
+[90m2026-10-03T19:17:20.915+05:30[39m [31m[state/database-verify][39m [36mdatabase integrity verification passed[39m
+[90m2026-10-03T19:17:29.353+05:30[39m [36m[ws][39m [36m⇄ res ✓ agent 88ms runId=a1de092f-4c1a-4770-9fe1-417e2aaf3af2 conn=f6d235b1…861e id=2:f72b8b8a-c…cdb0[39m
+[90m2026-10-03T19:17:30.237+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
+[90m2026-10-03T19:17:31.417+05:30[39m [31m[memory][39m [33mmemory_index_chunks_vec not updated — semantic vector embeddings unavailable — no vector dimensions resolved. Vector recall degraded. Further duplicate warnings suppressed.[39m
+2026-10-03T19:17:31.540+05:30 MOCK-OK hello from the mock model
+[90m2026-10-03T19:17:31.540+05:30[39m [33m[agents/agent-command][39m [36m[agent] run a1de092f-4c1a-4770-9fe1-417e2aaf3af2 ended with stopReason=stop[39m
+[90m2026-10-03T19:17:32.530+05:30[39m [33m[agent/embedded][39m [36mtool-search: cataloged 56 tools behind compact prompt surface[39m
+2026-10-03T19:17:32.709+05:30 MOCK-DONE tool-result: pair: adapter is misconfigured, tool calls are denied
+[90m2026-10-03T19:17:32.709+05:30[39m [33m[agents/agent-command][39m [36m[agent] run c84babfa-8ae7-4aea-8aad-a695d2405eb1 ended with stopReason=stop[39m

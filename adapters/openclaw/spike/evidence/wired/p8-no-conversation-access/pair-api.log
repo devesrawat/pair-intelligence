@@ -1,11 +1,11 @@
-{"timestamp":"2026-10-03T13:18:09.805859Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
-{"timestamp":"2026-10-03T13:18:09.805976Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:18:09.806025Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
-{"timestamp":"2026-10-03T13:18:09.806214Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:18:09.806239Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:18:09.854097Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
-{"timestamp":"2026-10-03T13:18:09.857577Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:18:09.858270Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:18:09.859568Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
-{"timestamp":"2026-10-03T13:18:09.859616Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
-{"timestamp":"2026-10-03T13:18:09.859725Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.240909Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T13:47:09.241010Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:47:09.241053Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T13:47:09.241185Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.241210Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.296842Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T13:47:09.300355Z","level":"INFO","fields":{"message":"migrations applied","dir":"<REPO>/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.301139Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<REPO>/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.302712Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T13:47:09.302765Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T13:47:09.302896Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}

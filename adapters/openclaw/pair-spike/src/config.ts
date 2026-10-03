@@ -42,11 +42,19 @@ export function loadConnection(env: AdapterEnv): ConnectionResult {
   if (url.username !== "" || url.password !== "") {
     return { ok: false, reason: "PAIR_API_URL must not embed credentials" };
   }
-  if (!isLoopbackHost(url.hostname) && env["PAIR_ADAPTER_ALLOW_REMOTE"] !== ALLOW_REMOTE_FLAG) {
-    return {
-      ok: false,
-      reason: "PAIR_API_URL is not loopback; set PAIR_ADAPTER_ALLOW_REMOTE=1 to allow a remote service",
-    };
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
+    return { ok: false, reason: "PAIR_API_URL must be a bare origin (no path, query or fragment)" };
+  }
+  if (!isLoopbackHost(url.hostname)) {
+    if (env["PAIR_ADAPTER_ALLOW_REMOTE"] !== ALLOW_REMOTE_FLAG) {
+      return {
+        ok: false,
+        reason: "PAIR_API_URL is not loopback; set PAIR_ADAPTER_ALLOW_REMOTE=1 to allow a remote https service",
+      };
+    }
+    if (url.protocol !== "https:") {
+      return { ok: false, reason: "PAIR_API_URL is not loopback and must be https (the bearer token would be sent in clear)" };
+    }
   }
   const token = env["PAIR_SERVICE_TOKEN"];
   if (token === undefined || token.length < MIN_TOKEN_CHARS) {

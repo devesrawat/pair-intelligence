@@ -1,5 +1,11 @@
 //! Local mock Jev server for tests. No live network.
-use axum::{extract::State, http::StatusCode, routing::post, Router};
+use axum::{
+    extract::State,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+    Router,
+};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,6 +16,8 @@ pub enum Behavior {
     Reply(Value),
     Status(u16),
     Slow(Duration, Value),
+    /// 307 with this `Location`.
+    Redirect(String),
 }
 
 #[derive(Clone)]
@@ -35,20 +43,26 @@ struct AppState {
     bodies: Arc<Mutex<Vec<String>>>,
 }
 
-async fn handler(State(s): State<AppState>, body: String) -> (StatusCode, String) {
+async fn handler(State(s): State<AppState>, body: String) -> Response {
     s.hits.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut b) = s.bodies.lock() {
         b.push(body);
     }
     match s.behavior {
-        Behavior::Reply(v) => (StatusCode::OK, v.to_string()),
+        Behavior::Reply(v) => (StatusCode::OK, v.to_string()).into_response(),
         Behavior::Status(code) => (
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            "{}".into(),
-        ),
+            "{}",
+        )
+            .into_response(),
+        Behavior::Redirect(location) => (
+            StatusCode::TEMPORARY_REDIRECT,
+            [(header::LOCATION, location)],
+        )
+            .into_response(),
         Behavior::Slow(d, v) => {
             tokio::time::sleep(d).await;
-            (StatusCode::OK, v.to_string())
+            (StatusCode::OK, v.to_string()).into_response()
         }
     }
 }

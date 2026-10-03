@@ -395,7 +395,15 @@ mod tests {
         let d = dataset();
         let router = ConfigRouter::new(test_config());
         let dev = d.split(Split::Dev);
-        let r = run_classifier_assisted(&dev[..5], &Scripted, &router, 42_000, "dev").await;
+        // Sensitive/employer cases have no provider (by design) and would add routing failures.
+        let public: Vec<_> = dev
+            .iter()
+            .copied()
+            .filter(|c| c.data_class == pair_core::types::DataClass::Public)
+            .take(5)
+            .collect();
+        assert_eq!(public.len(), 5);
+        let r = run_classifier_assisted(&public, &Scripted, &router, 42_000, "dev").await;
         assert_eq!(r.failures, 5);
         assert!(r.modeled_cost_micros > 0, "baseline still routed");
     }

@@ -93,8 +93,8 @@ routing:
   data_class_providers:
     public: [ollama_cloud, anthropic, openai]
     personal: [ollama_cloud, anthropic]
-    sensitive: [anthropic]
-    employer: [anthropic]
+    # sensitive and employer are deliberately absent: those classes reach NO provider until the
+    # owner authorizes a specific provider for them (spec). Do not add rows without that decision.
   candidates:
     - {id: "gemma4:31b", provider: ollama_cloud, tier: routine, capabilities: [text], context_tokens: 128000, available: true, input_price_micros_per_mtok: 200000, output_price_micros_per_mtok: 600000}
     - {id: placeholder-strong-a, provider: anthropic, tier: strong, capabilities: [text, tools], context_tokens: 200000, available: true, input_price_micros_per_mtok: 3000000, output_price_micros_per_mtok: 15000000}

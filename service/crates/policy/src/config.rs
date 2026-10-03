@@ -21,7 +21,19 @@ pub struct EgressRule {
     /// Exact lowercase host, or `*.example.com` for subdomains only.
     pub host: String,
     pub data_classes: Vec<DataClass>,
+    /// Allowed URL schemes (`https` unless stated). A destination with no scheme is `https`.
+    #[serde(default = "default_schemes")]
+    pub schemes: Vec<String>,
+    /// Allowed ports. Empty means only the default port of the scheme in use.
+    #[serde(default)]
+    pub ports: Vec<u16>,
 }
+
+fn default_schemes() -> Vec<String> {
+    vec!["https".to_owned()]
+}
+
+pub const KNOWN_SCHEMES: [&str; 3] = ["http", "https", "ssh"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +41,13 @@ pub struct PolicyConfig {
     pub version: String,
     pub tools: BTreeMap<String, ActionClass>,
     pub executables_allow: Vec<String>,
+    /// Subset of `executables_allow` that can run arbitrary code (interpreters, build tools).
+    /// Denied unless the engine runs inside the sandbox.
+    #[serde(default)]
+    pub code_exec: Vec<String>,
+    /// File names (exact, or `*.suffix`) that are credentials wherever they appear.
+    #[serde(default)]
+    pub denied_names: Vec<String>,
     pub denied_paths: Vec<String>,
     pub egress: Vec<EgressRule>,
 }
@@ -54,7 +73,27 @@ impl PolicyConfig {
                 "denied_paths must not be empty".into(),
             ));
         }
+        if let Some(bad) = self
+            .code_exec
+            .iter()
+            .find(|e| !self.executables_allow.contains(e))
+        {
+            return Err(PolicyError::Invalid(format!(
+                "code_exec entry {bad:?} is not in executables_allow"
+            )));
+        }
         for rule in &self.egress {
+            if rule.schemes.is_empty()
+                || rule
+                    .schemes
+                    .iter()
+                    .any(|s| !KNOWN_SCHEMES.contains(&s.as_str()))
+            {
+                return Err(PolicyError::Invalid(format!(
+                    "invalid schemes for egress host {:?}",
+                    rule.host
+                )));
+            }
             let host = rule.host.strip_prefix("*.").unwrap_or(&rule.host);
             if host.is_empty() || host != host.to_ascii_lowercase() || host.contains('*') {
                 return Err(PolicyError::Invalid(format!(

@@ -265,7 +265,13 @@ fn attached_flag_path_is_checked() {
         );
     }
     std::fs::write(f.workspace.join("a.txt"), "x").expect("write");
-    for arg in ["-oa.txt", "-osub/new.txt", "--output=a.txt", "-n", "-5"] {
+    // `-osub/new.txt` is intentionally no longer allowed (see below): it is indistinguishable
+    // from the cluster `-o -s -u -b` followed by `/new.txt`, so the `/new.txt` suffix is checked.
+    assert!(matches!(
+        exec_with(&f, &["-osub/new.txt"]),
+        Decision::Deny { .. }
+    ));
+    for arg in ["-oa.txt", "--output=a.txt", "-n", "-5"] {
         assert_eq!(
             exec_with(&f, &[arg]),
             Decision::Allow,

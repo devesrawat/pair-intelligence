@@ -3,7 +3,7 @@ use super::registry::{Health, ModelEntry, ProviderKind, ProviderRegistry};
 use futures_util::StreamExt;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::money::Price;
-use pair_core::types::{ModelRequest, UsageReport};
+use pair_core::types::{ModelMessage, ModelRequest, TrustClass, UsageReport};
 use pair_telemetry::Redactor;
 use std::future::Future;
 use std::time::Duration;
@@ -83,6 +83,28 @@ pub(crate) fn vet_request(
 }
 
 /// Actual cost from usage, rounded up. `None` when the price overflows.
+/// Role a message may carry on the wire. Only Owner messages keep `system`/`assistant`; Tool and
+/// Untrusted content is always downgraded to `user` so it can never read as instructions or as
+/// prior assistant output.
+pub(crate) fn wire_role(m: &ModelMessage) -> Result<&'static str> {
+    let role = match m.role.as_str() {
+        "system" => "system",
+        "user" => "user",
+        "assistant" => "assistant",
+        other => {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!("unsupported role {other}"),
+            ))
+        }
+    };
+    Ok(if m.trust == TrustClass::Owner {
+        role
+    } else {
+        "user"
+    })
+}
+
 pub(crate) fn usage_report(price: &Price, input_tokens: u64, output_tokens: u64) -> UsageReport {
     UsageReport {
         input_tokens,

@@ -441,31 +441,59 @@ mod tests {
 
     #[test]
     fn private_data_excludes_disallowed_provider() {
+        // Personal data: only the providers listed for it may appear in a plan.
         let r = router(ClassifierMode::Disabled);
         let plan = r
             .plan(
-                &profile("coding", DataClass::Sensitive),
+                &profile("coding", DataClass::Personal),
                 None,
                 &r.default_constraints(),
             )
             .expect("plan");
         let cfg = r.config();
+        let allowed = &cfg.data_class_providers[&DataClass::Personal];
         for id in plan.attempt_order() {
             let c = cfg
                 .candidates
                 .iter()
                 .find(|c| c.id == id)
                 .expect("candidate");
-            assert_eq!(c.provider, "anthropic");
+            assert!(allowed.contains(&c.provider), "{}", c.provider);
         }
         let mut locked = test_config();
         locked
             .data_class_providers
-            .insert(DataClass::Employer, vec![]);
+            .insert(DataClass::Personal, vec![]);
         let err = ConfigRouter::new(locked)
-            .select(&profile("coding", DataClass::Employer), None)
+            .select(&profile("coding", DataClass::Personal), None)
             .expect_err("none allowed");
         assert_eq!(err.code, ErrorCode::ProviderDisallowed);
+    }
+
+    #[test]
+    fn employer_and_sensitive_data_reach_no_provider() {
+        let cfg = test_config();
+        for class in [DataClass::Employer, DataClass::Sensitive] {
+            assert!(
+                cfg.data_class_providers
+                    .get(&class)
+                    .is_none_or(Vec::is_empty),
+                "{class:?} must have no provider rows"
+            );
+            let r = ConfigRouter::new(cfg.clone()).with_mode(ClassifierMode::Disabled);
+            let err = r
+                .plan(&profile("coding", class), None, &r.default_constraints())
+                .expect_err("no provider may receive this class");
+            assert_eq!(err.code, ErrorCode::ProviderDisallowed, "{class:?}");
+            for provider in cfg.candidates.iter().map(|c| c.provider.as_str()) {
+                assert!(
+                    !cfg.data_class_providers
+                        .get(&class)
+                        .is_some_and(|p| p.iter().any(|x| x == provider)),
+                    "{provider} must not receive {class:?}"
+                );
+            }
+        }
     }
 
     #[test]

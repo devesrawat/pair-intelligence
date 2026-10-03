@@ -8,10 +8,11 @@ const DOCKER_SOCKET_NAME: &str = "docker.sock";
 pub struct PathGuard {
     home: PathBuf,
     denied: Vec<PathBuf>,
+    denied_names: Vec<String>,
 }
 
 impl PathGuard {
-    pub fn new(home: &Path, denied_paths: &[String]) -> Self {
+    pub fn new(home: &Path, denied_paths: &[String], denied_names: &[String]) -> Self {
         let mut denied = Vec::with_capacity(denied_paths.len() * 2);
         for raw in denied_paths {
             let expanded = expand_home(home, raw);
@@ -23,6 +24,7 @@ impl PathGuard {
         Self {
             home: home.to_path_buf(),
             denied,
+            denied_names: denied_names.iter().map(|n| n.to_lowercase()).collect(),
         }
     }
 
@@ -48,10 +50,22 @@ impl PathGuard {
 
     fn refuse_credentials(&self, path: &Path) -> Result<(), String> {
         let is_socket = path.file_name().is_some_and(|n| n == DOCKER_SOCKET_NAME);
-        if is_socket || self.denied.iter().any(|d| path.starts_with(d)) {
+        let named = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .is_some_and(|n| self.denied_names.iter().any(|d| name_matches(d, &n)));
+        if is_socket || named || self.denied.iter().any(|d| path.starts_with(d)) {
             return Err(format!("host credential path denied: {}", path.display()));
         }
         Ok(())
+    }
+}
+
+/// `*.ext` matches by suffix, anything else exactly. Both sides are lowercase.
+fn name_matches(pattern: &str, name: &str) -> bool {
+    match pattern.strip_prefix('*') {
+        Some(suffix) => name.ends_with(suffix),
+        None => pattern == name,
     }
 }
 

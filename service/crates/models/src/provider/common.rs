@@ -44,8 +44,10 @@ pub(crate) fn vet_request(
         ));
     }
     if !entry.id_verified && !allow_unverified {
+        // ProviderDisallowed, not ProviderUnavailable: callers fall through to the next model on
+        // "unavailable", so this refusal must stop the call or it would escalate to a pricier tier.
         return Err(PairError::new(
-            ErrorCode::ProviderUnavailable,
+            ErrorCode::ProviderDisallowed,
             format!(
                 "model id {} is unverified against the provider catalog; set {ALLOW_UNVERIFIED_ENV}=1 to override",
                 entry.id

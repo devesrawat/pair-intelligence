@@ -247,6 +247,27 @@ async fn router_plan_drives_model_choice_and_only_unavailability_falls_back() {
     assert_eq!(provider.call_count(), 1);
 }
 
+#[tokio::test]
+async fn a_disallowed_model_does_not_fall_through_to_a_pricier_one() {
+    // e.g. an unverified model id: the refusal must stop the call, not advance to the next tier.
+    let provider = FnProvider::new(Box::new(|_, _| {
+        Err(PairError::new(
+            ErrorCode::ProviderDisallowed,
+            "unverified id",
+        ))
+    }));
+    let budget = FakeBudget::default();
+    let planner = FixedPlanner::new(&["cheap-unverified", "premium"]);
+    let limits = RunLimits::interactive();
+    let prices = FixedPrices::standard();
+    let err = caller(&provider, &budget, &prices, &planner, &limits)
+        .generate(request(DataClass::Public))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderDisallowed);
+    assert_eq!(provider.call_count(), 1, "the next model must not be tried");
+}
+
 #[test]
 fn caller_cannot_raise_tool_call_or_deadline_caps() {
     use crate::limits::{BACKGROUND_WALL, INTERACTIVE_WALL};

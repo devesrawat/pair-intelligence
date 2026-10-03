@@ -265,7 +265,9 @@ async fn unverified_model_id_refused_before_network() {
         .generate(request(MODEL, 5_000))
         .await
         .expect_err("refused");
-    assert_eq!(err.code, ErrorCode::ProviderUnavailable);
+    // Not ProviderUnavailable: callers move on to the next model on that code, which would let a
+    // refused cheap model silently escalate to a pricier one.
+    assert_eq!(err.code, ErrorCode::ProviderDisallowed);
     assert!(err.message.contains("PAIR_ALLOW_UNVERIFIED_MODEL_IDS"));
     assert!(m.captured.lock().expect("lock").is_empty());
 }

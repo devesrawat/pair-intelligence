@@ -1,0 +1,1 @@
+migrations applied=24 files=24

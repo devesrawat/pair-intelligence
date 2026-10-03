@@ -130,4 +130,69 @@ The evidence above was captured with the first version of the gate. After review
 - The `before_tool_call` handler lives in `src/gate.ts`. Its error path never throws (logging is wrapped in its own `try`) and always returns `{block: true}`, including when the hook log path is unwritable.
 - `src/rules.ts` is an allow-list of tool names with default deny (`read`, `sessions_list`, `sessions_history`, `sessions_search`, `image`); `web_search` / `web_fetch` need approval; `exec` is allowed only after command inspection (recursive `rm` in any flag order, `find -delete`, `dd of=`, `mkfs*`, `wipefs`, `shred`, block-device redirects are denied; `curl`/`wget`/`ssh` etc. need approval). The allow-list is a spike-level placeholder, not the spec section 9 policy.
 - Tests: `scripts/tests/test_openclaw_gate.sh` (`node --test`, Node 22.18+). They exercise the pure policy and the gate, not the real OpenClaw host.
-- Known gap (L12, deferred): the hook log still records full tool params.
+- L12 (hook log recorded full tool params) is closed: logs now carry a params hash only. The evidence under `evidence/{final,noconv,errprobe}` predates both the hardening and the pair-api wiring; `evidence/wired/` is the current, live-captured set (see "Wired to pair-api" below).
+
+## Wired to pair-api
+
+The adapter now calls pair-api. Source: `adapters/openclaw/pair-spike/src/` (`pair-gate.ts`, `mapping.ts`, `budget.ts`, `client.ts`, `config.ts`). Tests were written alongside each module (not strictly red-first for every case); the live harness was written last and its first runs exposed two harness bugs (below), not adapter bugs.
+
+### How OpenClaw can and cannot block a model call (read from the pinned source)
+
+| Mechanism | Can it stop the model call? | Evidence |
+|---|---|---|
+| `before_model_resolve` | **No.** It returns `{providerOverride?, modelOverride?}` only. A throw is caught, logged at warn, and the run continues on the default model (fail OPEN). It is skipped entirely when `modelSelectionLocked === true`. | `src/agents/embedded-agent-runner/run/setup.ts:106-141`, `src/plugins/hook-types.ts:971-980` |
+| `before_agent_run` | **Yes, the supported gate.** Returns `{outcome:"block", reason, message?, category?}`; runs after prompt build and before model submission; fail CLOSED on throw or the 15 s timeout. Implemented by the embedded and CLI runners only (not Codex/Copilot harnesses). It is a conversation hook: needs `allowConversationAccess`. | `docs/plugins/hooks/reference.md:93,130`, `docs/plugins/hooks/prompt-and-session.md:149-156`, `src/plugins/hook-runner-global.ts:26`, `src/agents/embedded-agent-runner/run/attempt-before-agent-run.ts`, `attempt-prompt-phase.ts:216-232` |
+| `before_agent_reply` `{handled:true}` | Replies without a model call; not used. | `docs/plugins/hooks.md:161` |
+
+Design: `before_model_resolve` reserves via `POST /v1/budget/reserve` and records the outcome per `ctx.runId`; the override is returned only on success. `before_agent_run` blocks the run unless that run has a successful reservation. A missing record (hook never fired, locked model selection, no run id, any error) means block. `llm_output` reconciles. `ctx.runId` is populated in all three hooks and matches `llm_output.event.runId` (observed live, `evidence/wired/p1-normal-turn/hooks.jsonl`).
+
+Honest limits of the model-call gate:
+
+- It exists only while `allowConversationAccess=true` (all three hooks are conversation hooks). With it off, **model calls are not gated at all** (proven below, phase 8). A startup check on the gateway's WARN lines is still a to-do for PAIR readiness.
+- One reservation covers one run. `before_agent_run` is evaluated before the first model submission of an attempt; follow-up model calls after a tool result in the same run are not separately gated (they spend inside the run's reservation). The reservation is an estimate (`budget.ts`: prompt chars / 4 + 16,000 overhead tokens, times 4 assumed calls, plus 2,048 output tokens per call). The overhead constant was calibrated from one live request (24-char prompt produced a 53 KB request). If real usage exceeds the hold, reconcile reports `overrun`; it cannot be stopped mid-run.
+- Runs skipped by `attempt.operation === "settled-tool-finalization"` do not pass `before_agent_run`.
+- A run whose model call fails before `llm_output` leaves its reservation held (counted in full) until reconciled by hand; there is no `agent_end` reconcile yet.
+- Reconcile uses `llm_output.usage` (per-run aggregate) and the plugin's configured prices; cache read/write tokens are priced as input (upper bound). Missing or malformed usage sends `actual_cost_micros: null` (unresolved, never zero). Only one reconcile per run is sent.
+
+### Tool mapping (`mapping.ts`)
+
+`exec -> shell.exec`, `read -> fs.read`, `ls -> fs.read`, `write -> fs.write`, `edit -> fs.edit`, `web_search -> web.search`, `web_fetch -> web.fetch`. Everything else (`apply_patch`, `process`, `openclaw`, `tool_call`, `sessions_*`, `image`, ...) is denied. `exec` is submitted as `executable` + `args` only when the command is a plain, expansion-free word list: any unquoted `; & | < > ( ) ` $ \ { } * ? [ ] ~ # !` or newline, any `$`/backtick inside double quotes, and any option other than title/timing/pty (`workdir`, `env`, `elevated`, `host`, `security`, `ask`, `node`) is denied. The existing local rules run first and a local deny wins without consulting the service; local approval is kept when the service allows. The local allow-list currently denies `write` and `edit` (spike-level), so those mappings are unit-tested but unreachable live.
+
+### Config
+
+Environment only: `PAIR_API_URL` (loopback unless `PAIR_ADAPTER_ALLOW_REMOTE=1`), `PAIR_SERVICE_TOKEN` (>= 16 chars). Plugin config carries no secrets: log paths, override provider/model, `taskKind`, `priceVersion`, per-Mtok micro prices. Bad config does not unload the gate: `register` installs deny-all `before_tool_call` and `before_agent_run` handlers and logs the reason (live: phase 9). Logs record tool name, mapped tool, decision, ids, `paramsSha256` and the service's deny reason; never params, prompts or tokens (closes L12 for the plugin).
+
+### Live harness
+
+```bash
+export OPENCLAW_DIR=<pinned checkout>   # read-only; Node 24 on PATH; docker for the Postgres client
+cargo build --offline -p pair-api --bin pair-api     # in service/
+adapters/openclaw/spike/wired.sh                      # all phases, ~2.5 min; or: wired.sh normal deny ...
+scripts/tests/test_openclaw_gate.sh                   # unit tests, plus type-check with the upstream tsc when OPENCLAW_DIR is set
+```
+
+`wired.sh` creates `pair_w2_<id>` (never `pair`), lets pair-api apply all 24 migrations (checked against `_sqlx_migrations`), starts the real debug `pair-api` binary on loopback with `config/policy.yaml`, a test registry and budget copies under `spike/wired/`, a loopback mock model server, and the real gateway with a throwaway state dir and `allowConversationAccess=true`; drives turns with `openclaw agent --agent main --session-key ... --json`; asserts; sanitizes evidence into `adapters/openclaw/spike/evidence/wired/`; drops the database. Tokens are random per run. Last run: **43 of 43 checks pass** (`evidence/wired/results.txt`).
+
+Deviation from the brief: the test registry's endpoint is `https://mock-provider.example.com`, not loopback. pair-api's cloud-only guard rejects http and loopback model endpoints at config load with no config bypass (by design), and on the adapter path pair-api never dials a model (only OpenClaw calls the loopback mock). The registry exists to give the budget service a verified price version (`mock-2026-10-03`). `config/models.yaml` is untouched.
+
+| Proof | Phase | What the evidence shows |
+|---|---|---|
+| (i) real policy engine denies, nothing runs | `p3`, `p4` | Mock model asks for `cat <ws>/prod.tfvars` and `python3 <ws>/write_canary.py`; both pass the local rules. Service decision `deny` (`host credential path denied`; `"python3" can execute arbitrary code and is only permitted inside the sandbox`); the model received `pair policy: ...`; the canary file was never created and the tfvars content never appears in output or mock requests. Control `p2`: `cat <ws>/hello.txt` allowed by the service and executed. |
+| (ii) refused reserve means zero model hits | `p7` | Budget with all six caps `0.00` (the kill-switch level 1 file): reserve 402 `budget_exceeded`, run blocked at `before_agent_run`, mock model server saw **0 requests of any kind**, no `budget_reservations` row created. Control `p1`: same prompt with normal caps reaches the mock as `mock-routed`. |
+| (iii) pair-api stopped, tools blocked | `p5a`, `p5b` | Reserve succeeds, mock delays its tool call 25 s, pair-api is killed in the window: the tool call is blocked (`deny-on-error`, `unreachable`), content not returned. New run with pair-api down: reserve unreachable, run blocked, mock saw 0 requests. |
+| (iv) normal turn leaves a reconciled reservation | `p1` | `budget_reservations`: `settled`, `reserved_micros 17720`, kind `default`, price version `mock-2026-10-03`; `budget_ledger`: settled, 11 in / 7 out, 7 micros, equal to the adapter's computed cost (`db-reservation.txt`, `db-ledger.txt`). Mock usage is a fixed 11/7 per call, so this proves the plumbing, not real token counts. |
+| (v) `allowConversationAccess=false` | `p8` | WARN lines for `before_model_resolve`, `before_agent_run` and `llm_output` at gateway start. The model call **happens** on the default `mock-small`, no reservation is created, no override: the budget gate is gone. `before_tool_call` still fires and the real engine still denies. |
+| Token rotation (kill-switch level 3) | `p6a`, `p6b` | pair-api restarted with a new `PAIR_SERVICE_TOKEN` while the gateway keeps the old one: mid-run tool call blocked on HTTP 401; new run refused at reserve with 401, mock saw 0 requests. |
+| Misconfigured adapter | `p9` | Non-loopback `PAIR_API_URL`: gateway log `refusing to run ungated`, deny-all handlers, run blocked, mock saw 0 requests. |
+
+Harness bugs found on the way (not adapter bugs): the gateway silently restores a "last good" config backup when it finds an unstamped file (it applied `allowConversationAccess=true` over the false config until the harness re-stamped the file with `openclaw telemetry off` and removed stale `.bak`/`.clobbered` files); and `cd && cmd &` backgrounded the wrong pid, leaving a stale pair-api that answered later runs (that first full run's failures were the stale server and were discarded). The harness now refuses to start if its ports are in use.
+
+### NOT proven
+
+- Approval round trip: `requireApproval` is returned with the PAIR payload hash and `allowedDecisions: [allow-once, deny]`, but `openclaw agent` CLI turns have no approval-capable surface (spike finding), so allow-once/deny resolution is untested. Also, an OpenClaw-side allow-once is not a PAIR approval: nothing mints one through `/v1/approvals` (needs the separate approver token) and the tool would then execute without a PAIR approval being consumed.
+- Sandbox mode `all`: the harness ran with sandbox off (`exec` really executes on the host in the allowed case; the allowed command was a read-only `cat` of a scratch file). `python3` and other code-exec executables are denied by the policy precisely because no sandbox is declared to the engine.
+- Real providers, real token counts and prices: mock model and mock registry only. The 16,000-token overhead constant is calibrated from one mock run.
+- Follow-up model calls inside a run are not individually gated (see limits above); mid-run budget exhaustion is not stopped.
+- `before_agent_run` semantics across retries, compaction and Codex/Copilot harnesses; host behaviour when `before_model_resolve` times out.
+- Concurrent runs sharing the plugin (the per-run map is keyed by `runId`; one run at a time was driven).
+- A PAIR-side readiness check for the gateway's `allowConversationAccess` WARN is not implemented.

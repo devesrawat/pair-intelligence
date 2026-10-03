@@ -1,0 +1,18 @@
+{"timestamp":"2026-10-03T12:43:51.281881Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T12:43:51.286369Z","level":"INFO","fields":{"message":"migrations applied","dir":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:51.290418Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:51.294001Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T12:43:51.294312Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:51.295740Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.576079Z","level":"INFO","fields":{"message":"budget reserved","reservation":"01a101ca-d57e-72b0-b704-172e36ff9fdc","task":"b64ab5f0-a2ef-5240-afbb-5b2c5b7e27d1","micros":17720},"target":"pair_budget::reserve","span":{"method":"POST","path":"/v1/budget/reserve","trace_id":"58b6fb7c-6cee-401c-a19c-cdfe9fd92bfe","name":"request"},"spans":[{"method":"POST","path":"/v1/budget/reserve","trace_id":"58b6fb7c-6cee-401c-a19c-cdfe9fd92bfe","name":"request"}]}
+{"timestamp":"2026-10-03T12:43:52.820375Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T12:43:52.820507Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:43:52.820620Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:43:52.820707Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.820739Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.889292Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T12:43:52.893669Z","level":"INFO","fields":{"message":"migrations applied","dir":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.894411Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.895930Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T12:43:52.895974Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:43:52.896084Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}

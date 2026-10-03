@@ -1,0 +1,2 @@
+{"ts":"2026-10-03T12:43:18.984Z","source":"model_call_ended","runId":"328b9cec-80a9-4efe-9fba-66d6c0862727","callId":"328b9cec-80a9-4efe-9fba-66d6c0862727:model:1","provider":"mock","model":"mock-routed","outcome":"completed","durationMs":275}
+{"ts":"2026-10-03T12:43:19.016Z","source":"llm_output","runId":"328b9cec-80a9-4efe-9fba-66d6c0862727","provider":"mock","model":"mock-routed","resolvedRef":"mock/mock-routed","usage":{"input":11,"output":7,"cacheRead":0,"cacheWrite":0,"total":18,"cost":{"total":0}}}

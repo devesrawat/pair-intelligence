@@ -14,7 +14,7 @@ Honest, tracked snapshot of what exists, what is tested, and what is not. Writte
 | Container image | `deploy/api/Dockerfile` bakes migrations and `config/models.yaml`, pinned base tags, `.dockerignore`. Built and booted once by hand on the dev machine (read-only root filesystem, all capabilities dropped, `docker stop` took 1 s via SIGTERM). Not built in CI | manual, 2026-10-03 |
 | Compose | `deploy/compose.yaml` refuses to render without `POSTGRES_PASSWORD`; pair-api has `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, tmpfs; dev-only database in `deploy/compose.dev.yaml` | `scripts/tests/test_compose.sh` |
 | Backup / restore tooling | Encrypted (age) dump, 7 daily + 4 weekly retention with exact-name matching and loud failure; restore verifies everything first, restores into `<db>_incoming`, renames on success; live-db guard on `PAIR_LIVE_DB`; `--drop-existing` always confirmed; private file modes; docker mode keeps the password out of argv and refuses non-loopback hosts | `scripts/tests/test_{restore,retention,retention_safety,backup_perms,pgtools}.sh`; `scripts/restore-drill --seed-demo` (CI) |
-| OpenClaw spike plugin | Tool-name allow-list with default deny, extended destructive-command checks, fail-closed gate that cannot throw (including an unwritable log path) | `scripts/tests/test_openclaw_gate.sh` (policy and gate in isolation; **not** against a live gateway since the hardening) |
+| OpenClaw adapter (`pair-spike`) | `before_tool_call` maps tools through an explicit table (unmapped denied, shell syntax denied) to `POST /v1/policy/authorize`; local deny-list kept and wins; every failure blocks. `before_model_resolve` reserves via `/v1/budget/reserve`, `before_agent_run` (the only fail-closed run gate; `before_model_resolve` cannot abort) blocks runs without a reservation, `llm_output` reconciles (unknown usage stays unresolved). Env-only config, loopback-only URL, no params or tokens in logs | `scripts/tests/test_openclaw_gate.sh` (107 unit tests against a loopback mock pair-api, plus upstream `tsc` type-check when `OPENCLAW_DIR` is set); live: `adapters/openclaw/spike/wired.sh` (real pair-api binary + real gateway v2026.9.7, 43 checks, evidence in `adapters/openclaw/spike/evidence/wired/`), see [spike doc](spike-openclaw-plugin.md) |
 | Library crates | `core`, `policy`, `budget`, `models`, `memory`, `context`, `jobs`, `workflows` have their own suites | `cargo test --workspace`, `scripts/check <suite>` |
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, the workspace tests, the smoke check, every `scripts/tests/*.sh`, and a seeded restore drill, against the dev compose database. GitHub Actions are pinned to commit SHAs.
@@ -35,7 +35,7 @@ CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, the workspace te
 
 ### Still NOT wired
 
-- **The OpenClaw adapter calls none of these endpoints.** Model calls and tool calls made by OpenClaw itself are still not metered, capped or gated by PAIR; the spike plugin's allow-list is not the section 9 policy. Task 3 ("no alternate tool path bypasses policy"), Task 4 ("denied tasks never reach the provider") and Task 5 hold for what goes through `pair-api` and are **not** established for the OpenClaw path until the adapter is wired.
+- **The OpenClaw adapter is wired for the CLI/gateway path, with limits** (see the adapter row and [spike doc](spike-openclaw-plugin.md#not-proven)): tool calls are authorized by the real policy engine and model runs are reserved, gated and reconciled, proven live with a mock model and `allowConversationAccess=true`. NOT proven: the approval round trip (no approval-capable surface; an OpenClaw allow-once is not a PAIR approval), sandbox mode `all`, any real provider or real token counts. With `allowConversationAccess=false` the model-call gate silently disappears (only a gateway WARN line); follow-up model calls inside a run share the run's one estimated reservation; the local allow-list still denies `write`/`edit`. The policy is the shipped `config/policy.yaml`, not yet reviewed against OpenClaw's real tool surface. Gates 4, 5 and 8 remain unmeasured for the OpenClaw path.
 - `workflows` (coding, research, daily): nothing starts them. No step handler is registered, so no jobs worker loop runs (a handler-less worker would claim and fail every queued run, because `JobStore::claim` is not filtered by kind). `Gate::execute` has no caller in the service: there is no tool-execution path in `pair-api` for the gate to guard, and the approval that `/v1/approvals` creates is consumed only by a Gate path that does not exist here yet.
 - `memory` (store, inbox, retrieval, export): turns compile context with no retrieved memories; no memory endpoint exists.
 - Orphaned effect intents: the reconciler returns an explicit "undecided" error for every intent (it never guesses), so they stay unresolved and are logged on every sweep until a real reconciler exists.
@@ -101,8 +101,8 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 | Immutable image tags and rollback procedure | PARTIAL | Policy and runbook exist; CI does not build or push an image; base images pinned by tag, digests to be pinned at release |
 | Database private, authenticated ingress only | PARTIAL | Compose binds loopback; no reverse proxy is defined |
 | Isolated workers | PARTIAL | The coding runner defaults to `ContainerSandbox` (no network, read-only root, one worktree mount, `.git` of the original repo never mounted) and refuses host execution unless `PAIR_ALLOW_HOST_EXEC=1`. Tested with a recording executor only; no docker daemon was exercised, and approved pushes cannot run through it (no network or credentials in the container) |
-| Kill switch | PARTIAL | Levels 1 (zero caps) and 3 (rotate token) are proven for `pair-api` calls only; level 2 (interrupt jobs) is NOT EFFECTIVE; nothing reaches OpenClaw's direct provider calls. See [kill-switch](runbooks/kill-switch.md) |
-| Components still not hosted (section 2 above) | NOT WIRED | workflows, memory, OpenClaw adapter calls |
+| Kill switch | PARTIAL | Levels 1 (zero caps) and 3 (rotate token) are proven for `pair-api` calls and, in the live harness, for the OpenClaw adapter path (zero caps: reserve refused, mock model saw 0 requests; rotated token: adapter tool calls and reserves get 401 and are blocked); level 2 (interrupt jobs) is NOT EFFECTIVE; the adapter must be configured with `allowConversationAccess=true` for the budget gate to exist at all. See [kill-switch](runbooks/kill-switch.md) |
+| Components still not hosted (section 2 above) | NOT WIRED | workflows, memory |
 
 ## 6. Deferred
 
@@ -110,7 +110,7 @@ All ten are **unmeasured**. The detailed table with the missing artifact per gat
 
 - **L12** the spike plugin logs full tool params, and `spike.sh` / `setup-plugin.sh` interpolate values into `sed` unescaped.
 - Image base digests are not pinned (tags are; pin digests at release). `cargo install cargo-audit` / `cargo-deny` in the non-blocking supply-chain job are not version-pinned.
-- The OpenClaw spike evidence under `adapters/openclaw/spike/evidence/` was captured with the pre-hardening gate and was not re-captured against a live gateway.
+- The older OpenClaw spike evidence under `adapters/openclaw/spike/evidence/{final,noconv,errprobe}` predates the hardening and wiring; the current live evidence is `evidence/wired/`.
 
 ### Review findings: resolution (reviewers A, B, C; D is above)
 

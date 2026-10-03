@@ -1,0 +1,2 @@
+{"ts":"2026-10-03T12:43:50.959Z","hook":"before_model_resolve","phase":"reserve-attempt","runId":"2cb223ad-6228-4928-b021-2dccfb4c6753","taskId":"18d4a6e6-8d63-59d2-87ff-fec18d240672","promptChars":21,"maxCostMicros":17720}
+{"ts":"2026-10-03T12:43:50.960Z","hook":"before_model_resolve","phase":"refused","runId":"2cb223ad-6228-4928-b021-2dccfb4c6753","taskId":"18d4a6e6-8d63-59d2-87ff-fec18d240672","errorKind":"unreachable"}

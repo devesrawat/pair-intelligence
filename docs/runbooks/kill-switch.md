@@ -6,9 +6,11 @@ Model output cannot override permissions or budgets (spec global constraints); t
 
 ## Read this first: what is enforced today
 
-`pair-api` hosts the budget, policy, routing, context and conversation crates behind `/v1/turn`, `/v1/budget/reserve`, `/v1/budget/reconcile`, `/v1/policy/authorize` and `/v1/approvals`. **The OpenClaw adapter does not call any of them yet**, so model calls and tool calls made by OpenClaw itself are not metered or gated by PAIR. Consequences:
+`pair-api` hosts the budget, policy, routing, context and conversation crates behind `/v1/turn`, `/v1/budget/reserve`, `/v1/budget/reconcile`, `/v1/policy/authorize` and `/v1/approvals`. The OpenClaw adapter (`pair-spike` plugin) now calls the policy and budget endpoints, so levels 1 and 3 reach OpenClaw's own tool and model calls **when the adapter is loaded with `allowConversationAccess=true`** (proven in `adapters/openclaw/spike/wired.sh`, see [spike doc](../spike-openclaw-plugin.md)). Limits:
 
-- PAIR-side controls (levels 1 and 3 below) are effective for everything that goes through `pair-api`: turns and adapter-style reserve/reconcile calls. They do not reach an OpenClaw gateway that talks to a provider directly.
+- Without `allowConversationAccess=true` the model-call gate does not exist (the gateway only logs a WARN at start): levels 1 and 3 then stop tool calls but **not model calls**. Check the gateway log for `typed hook "before_agent_run" blocked`.
+- Only runs that start after the change are refused. A run already past `before_agent_run` finishes its model calls inside its existing reservation.
+- Proven with a mock model only; no real provider call has been made.
 - The control that holds regardless of PAIR is the provider console (A) and stopping the OpenClaw gateway (B).
 - Interrupting jobs (level 2) has no mechanism and stays **NOT EFFECTIVE**.
 
@@ -22,7 +24,7 @@ Effect: every new `POST /v1/turn` and `POST /v1/budget/reserve` is refused with 
 
 Proof: `crates/api/tests/kill_switch.rs::zeroing_the_shipped_budget_yaml_as_the_runbook_says_refuses_turns_and_adapter_reserves` (performs this exact edit on the shipped file), `turn.rs::caps_to_zero_refuses_new_turns`.
 
-Not covered: OpenClaw calls that bypass `pair-api`; spend already incurred; classifier calls made by other processes.
+Adapter path (proven live, `wired.sh` phase 7): with every cap at `0.00` the adapter's reserve returns 402 `budget_exceeded`, the run is blocked at `before_agent_run`, and the model server saw zero requests. Not covered: spend already incurred; OpenClaw model calls that bypass the adapter (hook not loaded, no conversation opt-in); classifier calls made by other processes.
 
 ### Level 2: interrupt in-flight jobs (NOT EFFECTIVE)
 
@@ -34,7 +36,7 @@ Set a new `PAIR_SERVICE_TOKEN` (at least 16 characters) and restart `pair-api`. 
 
 Proof: `kill_switch.rs::rotated_service_token_locks_out_the_old_token`, `turn.rs::turn_requires_service_token`.
 
-Not covered: the adapter holds the token only once it is wired to `pair-api`; today rotating it locks out nothing that matters for OpenClaw. Stop the gateway (B) to lock the adapter out.
+Adapter path (proven live, `wired.sh` phase 6): after rotation, the adapter (still holding the old token) gets HTTP 401 on `/v1/policy/authorize` and `/v1/budget/reserve`, so tool calls are blocked and new runs are refused before any model call. The adapter is configured through `PAIR_SERVICE_TOKEN` in the gateway's environment: update it and restart the gateway to restore service. Not covered: a run already past `before_agent_run` completes its model calls (its tool calls are blocked); the same `allowConversationAccess` caveat as above.
 
 ## Controls outside PAIR
 

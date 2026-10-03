@@ -1,0 +1,22 @@
+{"timestamp":"2026-10-03T12:44:19.174417Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T12:44:19.174592Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:44:19.174648Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:44:19.174739Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.174760Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.240770Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T12:44:19.244976Z","level":"INFO","fields":{"message":"migrations applied","dir":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.245840Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.247854Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T12:44:19.247904Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.248019Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.732771Z","level":"INFO","fields":{"message":"SIGTERM received, shutting down"},"target":"pair_api::shutdown"}
+{"timestamp":"2026-10-03T12:44:19.732912Z","level":"INFO","fields":{"message":"background task stopped","task":"lease_sweeper"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:44:19.732916Z","level":"INFO","fields":{"message":"background task stopped","task":"orphan_reconciler"},"target":"pair_api::background"}
+{"timestamp":"2026-10-03T12:44:19.733210Z","level":"INFO","fields":{"message":"background tasks stopped","drained":"[\"lease_sweeper\", \"orphan_reconciler\"]","aborted":"[]"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.733271Z","level":"INFO","fields":{"message":"pair-api stopped"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.809075Z","level":"INFO","fields":{"message":"relation \"_sqlx_migrations\" already exists, skipping"},"target":"sqlx::postgres::notice"}
+{"timestamp":"2026-10-03T12:44:19.812408Z","level":"INFO","fields":{"message":"migrations applied","dir":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/migrations"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.813179Z","level":"INFO","fields":{"message":"provider registry loaded","path":"<HOME>/Desktop/projects/pair-intelligence/.claude/worktrees/agent-ac4447b84a5a41784/adapters/openclaw/spike/wired/models.test.yaml"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.815682Z","level":"WARN","fields":{"message":"no provider API key configured: every model call will fail closed"},"target":"pair_api::bootstrap"}
+{"timestamp":"2026-10-03T12:44:19.815746Z","level":"INFO","fields":{"message":"budget, policy, routing and conversation services hosted"},"target":"pair_api"}
+{"timestamp":"2026-10-03T12:44:19.815870Z","level":"INFO","fields":{"message":"pair-api listening","bind":"127.0.0.1:18923"},"target":"pair_api"}

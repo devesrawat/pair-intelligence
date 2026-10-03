@@ -464,6 +464,27 @@ async fn judge_hook_can_veto_a_lexically_supported_claim() {
     assert!(h.out.report.statements.is_empty());
 }
 
+#[tokio::test]
+async fn statement_lexical_limitation_always_printed() {
+    let judge = VetoJudge;
+    for judge in [None, Some(&judge as &dyn SupportJudge)] {
+        let h = run_fixture("inaccessible_source.json", judge).await;
+        assert!(
+            h.out
+                .report
+                .limitations
+                .iter()
+                .any(|l| l.contains("Synthesized statements were checked lexically")),
+            "{:?}",
+            h.out.report.limitations
+        );
+        assert!(h
+            .out
+            .markdown
+            .contains("Synthesized statements were checked lexically"));
+    }
+}
+
 #[test]
 fn support_check_rules() {
     let src = "Revenue   grew 4% in 2023.\nMargins did not improve.";

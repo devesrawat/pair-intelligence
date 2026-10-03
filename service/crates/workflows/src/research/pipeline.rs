@@ -45,6 +45,8 @@ pub struct ResearchOutput {
     pub markdown: String,
 }
 
+pub(crate) const STATEMENT_LIMITATION: &str = "Synthesized statements were checked lexically against the spans of the claims they cite (term overlap, figures, negation parity); no semantic check covers them, so each statement still needs a manual audit.";
+
 fn validate_scope(scope: &ResearchScope) -> Result<()> {
     if scope.question.trim().is_empty() || scope.max_sources == 0 {
         return Err(PairError::new(
@@ -174,7 +176,9 @@ fn limitations(
         out.push("Some sources carry no publication date.".into());
     }
     if deps.judge.is_none() {
-        out.push("Support was checked lexically against captured text only (no semantic judge); every claim still needs a manual audit.".into());
+        out.push("Claim support was checked lexically against captured text only (no semantic judge); every claim still needs a manual audit.".into());
     }
+    // No judge covers synthesized statements, so this holds whether or not one is configured.
+    out.push(STATEMENT_LIMITATION.into());
     out
 }

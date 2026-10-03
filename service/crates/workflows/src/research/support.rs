@@ -181,7 +181,8 @@ pub fn check_support(claim: &RawClaim, source_text: &str) -> Support {
     Support::Supported { span_start }
 }
 
-/// Supported-statement check: statement figures and most terms must occur in the cited spans.
+/// Supported-statement check: statement figures and most terms must occur in the cited spans,
+/// and the statement may not flip negation relative to them. Lexical only.
 pub fn statement_supported(statement: &str, spans: &[&str]) -> bool {
     let union: HashSet<String> = spans
         .iter()
@@ -190,6 +191,12 @@ pub fn statement_supported(statement: &str, spans: &[&str]) -> bool {
         .collect();
     let toks = tokens(statement);
     if toks.iter().any(|t| is_numeric(t) && !union.contains(t)) {
+        return false;
+    }
+    // Same negation-parity rule as claims, over the distinct cited spans taken together.
+    let distinct: HashSet<&str> = spans.iter().copied().collect();
+    let span_negations: usize = distinct.iter().map(|s| negations(&tokens(s))).sum();
+    if negations(&toks) % 2 != span_negations % 2 {
         return false;
     }
     let content: Vec<String> = toks

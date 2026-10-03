@@ -286,6 +286,20 @@ async fn real_engine_gates_edit_writes_by_workspace_and_denied_paths() {
     assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
     assert!(!outside.join("src/a.txt").exists());
     std::fs::remove_dir_all(&outside).unwrap();
+
+    // inside the workspace but under a denied credential location (~/.ssh of the engine's home)
+    let home = world.root.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ssh_scope = Scope::new(vec![".ssh/".into()]);
+    let ssh_edit = vec![FileEdit {
+        path: ".ssh/config".into(),
+        content: "Host *\n".into(),
+    }];
+    let err = apply_edits(&cx, &home, &ssh_scope, &ssh_edit)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::PolicyDenied, "{}", err.message);
+    assert!(!home.join(".ssh/config").exists());
 }
 
 // ---- research -------------------------------------------------------------------------

@@ -79,6 +79,7 @@ pub async fn run_research(
     run: &ResearchRun,
     scope: &ResearchScope,
 ) -> Result<ResearchOutput> {
+    deps.limits.require_within(crate::limits::BACKGROUND_WALL)?;
     let class = validate_scope(scope)?;
     let run_id = deps.store.create_run(scope).await?;
     match execute(deps, run, scope, class, run_id).await {

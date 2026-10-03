@@ -187,6 +187,8 @@ pub async fn run_coding_task(deps: &CodingDeps<'_>, task: &CodingTask) -> Result
     if task.issue.trim().is_empty() {
         return Err(PairError::new(ErrorCode::InvalidInput, "issue is empty"));
     }
+    deps.limits
+        .require_within(crate::limits::INTERACTIVE_WALL)?;
     let cfg = RepoConfig::load(&task.repo)?;
     let home = task.workspaces_root.join(format!(".home-{}", task.id));
     std::fs::create_dir_all(&home)

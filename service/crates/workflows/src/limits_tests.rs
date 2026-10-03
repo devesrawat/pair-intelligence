@@ -246,3 +246,27 @@ async fn router_plan_drives_model_choice_and_only_unavailability_falls_back() {
     assert_eq!(err.code, ErrorCode::InvalidInput);
     assert_eq!(provider.call_count(), 1);
 }
+
+#[test]
+fn caller_cannot_raise_tool_call_or_deadline_caps() {
+    use crate::limits::{BACKGROUND_WALL, INTERACTIVE_WALL};
+    let greedy = RunLimits::with_deadline(1000, Instant::now() + Duration::from_secs(10 * 60 * 60));
+    for _ in 0..MAX_TOOL_CALLS {
+        greedy.begin_tool_call().unwrap();
+    }
+    assert_eq!(
+        greedy.begin_tool_call().unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+    assert!(greedy.remaining().unwrap() <= BACKGROUND_WALL);
+    // background limits are refused where the interactive wall applies
+    assert!(RunLimits::background()
+        .require_within(INTERACTIVE_WALL)
+        .is_err());
+    assert!(RunLimits::interactive()
+        .require_within(INTERACTIVE_WALL)
+        .is_ok());
+    assert!(RunLimits::interactive()
+        .require_within(BACKGROUND_WALL)
+        .is_ok());
+}

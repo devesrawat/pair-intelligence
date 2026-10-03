@@ -70,7 +70,7 @@ impl ModelCaller<'_> {
             difficulty: PROFILE_DIFFICULTY.to_string(),
             data_class: req.data_class,
             needs_tools: false,
-            est_input_tokens: estimate_input_tokens(&req),
+            est_input_tokens: routing_input_tokens(&req),
         };
         let mut attempts = AttemptLimiter::new(MAX_MODEL_ATTEMPTS);
         let mut last = PairError::new(ErrorCode::ProviderUnavailable, "router offered no model");
@@ -124,12 +124,27 @@ impl PriceSource for ProviderRegistry {
     }
 }
 
-/// Worst-case input token estimate: one token per byte never under-estimates.
-fn estimate_input_tokens(req: &ModelRequest) -> u64 {
+/// Bytes per token assumed for a reservation: code and non-Latin text run near 2, prose near
+/// 4, so 2 never under-estimates in practice (a real overrun is logged at reconcile).
+const RESERVATION_BYTES_PER_TOKEN: u64 = 2;
+/// Bytes per token assumed when asking the router whether a context fits a model window.
+const ROUTER_BYTES_PER_TOKEN: u64 = 4;
+
+fn input_bytes(req: &ModelRequest) -> u64 {
     req.messages
         .iter()
         .map(|m| u64::try_from(m.content.len()).unwrap_or(u64::MAX))
         .fold(0u64, u64::saturating_add)
+}
+
+/// Worst-case input token estimate for the reservation.
+fn estimate_input_tokens(req: &ModelRequest) -> u64 {
+    input_bytes(req).div_ceil(RESERVATION_BYTES_PER_TOKEN)
+}
+
+/// Realistic input token estimate for routing (a window check, not a spending cap).
+fn routing_input_tokens(req: &ModelRequest) -> u64 {
+    input_bytes(req).div_ceil(ROUTER_BYTES_PER_TOKEN)
 }
 
 /// Reservation = registry price x (estimated input + max output tokens), rounded up.

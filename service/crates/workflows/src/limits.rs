@@ -13,6 +13,8 @@ pub const MAX_TOOL_CALLS: usize = 20;
 pub const MAX_RESEARCH_SOURCES: usize = 12;
 pub const INTERACTIVE_WALL: Duration = Duration::from_secs(15 * 60);
 pub const BACKGROUND_WALL: Duration = Duration::from_secs(30 * 60);
+/// Slack between creating limits and starting the run.
+const WALL_TOLERANCE: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct RunLimits {
@@ -30,13 +32,30 @@ impl RunLimits {
         Self::with_deadline(MAX_TOOL_CALLS, Instant::now() + BACKGROUND_WALL)
     }
 
-    /// Explicit deadline; lets tests pick a clock without sleeping for minutes.
+    /// Explicit limits; lets tests pick a clock without sleeping for minutes. Limits can only
+    /// be tightened: the tool-call count is clamped to [`MAX_TOOL_CALLS`] and the deadline to
+    /// [`BACKGROUND_WALL`] from now, so a caller cannot make the caps opt-in.
     pub fn with_deadline(max_tool_calls: usize, deadline: Instant) -> Self {
         Self {
             tool_calls: AtomicUsize::new(0),
-            max_tool_calls,
-            deadline,
+            max_tool_calls: max_tool_calls.min(MAX_TOOL_CALLS),
+            deadline: deadline.min(Instant::now() + BACKGROUND_WALL),
         }
+    }
+
+    /// Refuses limits looser than `wall` (e.g. a coding task must not run on background
+    /// limits), so the workflow, not its caller, decides which cap applies.
+    pub fn require_within(&self, wall: Duration) -> Result<()> {
+        if self.remaining()? > wall + WALL_TOLERANCE {
+            return Err(PairError::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "run limits allow more than the {}s this workflow may take",
+                    wall.as_secs()
+                ),
+            ));
+        }
+        Ok(())
     }
 
     pub fn tool_calls_used(&self) -> usize {

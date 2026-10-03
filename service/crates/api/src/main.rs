@@ -9,7 +9,7 @@ use pair_api::background::{Background, Liveness};
 use pair_api::bootstrap::load_services;
 use pair_api::config::{self, Config};
 use pair_api::healthcheck;
-use pair_api::shutdown::shutdown_listener;
+use pair_api::shutdown::{drain_turns, shutdown_listener};
 use pair_api::state::AppState;
 use pair_jobs::{JobConfig, JobStore, StepHandler};
 use pair_models::provider::ProviderRegistry;
@@ -94,6 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stopper = background.stopper();
     state = state.with_liveness(liveness);
 
+    let turns = state.services().ok().map(|s| s.turns.clone());
     let shutdown = shutdown_listener()?;
     let listener = tokio::net::TcpListener::bind(&cfg.bind).await?;
     tracing::info!(bind = %cfg.bind, "pair-api listening");
@@ -103,6 +104,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             stopper.stop();
         })
         .await;
+    if let Some(turns) = turns {
+        // Serving has stopped, but a turn outlives its request: wait for the paid work in flight.
+        drain_turns(&turns, cfg.shutdown_drain).await;
+    }
     let report = background.drain(cfg.shutdown_drain).await;
     tracing::info!(drained = ?report.drained, aborted = ?report.aborted, "background tasks stopped");
     served?;

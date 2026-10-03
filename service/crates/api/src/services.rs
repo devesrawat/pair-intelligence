@@ -12,6 +12,7 @@ use pair_models::classification::pipeline::RoutingPipeline;
 use pair_models::provider::store::ConversationStore;
 use pair_models::provider::ProviderRegistry;
 use pair_policy::PolicyEngine;
+use tokio_util::task::TaskTracker;
 
 use crate::adapter_budget::AdapterBudget;
 use crate::attempts::AttemptStore;
@@ -41,4 +42,6 @@ pub struct Services {
     pub turn_budget: Duration,
     /// Server-side cost rules for the adapter routes `/v1/budget/*`.
     pub adapter_budget: AdapterBudget,
+    /// Every spawned turn. A turn outlives its HTTP request, so shutdown waits on this tracker.
+    pub turns: TaskTracker,
 }

@@ -2,12 +2,14 @@
 //! task cap, compile context, call the provider through the budget, persist with a cost state.
 
 mod claim;
+mod guard;
 mod open;
 mod persist;
 pub mod recording;
 mod replay;
 pub mod request;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use pair_core::error::{ErrorCode, PairError, Result};
@@ -27,6 +29,7 @@ use serde_json::json;
 
 use crate::services::Services;
 use claim::ClaimStore;
+use guard::{settle_dangling, TurnGuard};
 use open::{open_conversation, Fresh, Opened};
 use persist::{persist_attempts, CallContext};
 use recording::{AttemptOutcome, AttemptTrace, TracedBudget, TracedProvider, TurnTrace};
@@ -83,18 +86,30 @@ pub async fn run_turn(
     trace: TraceId,
     turn: ValidTurn,
 ) -> Result<TurnResponse> {
+    // The turn budget covers the whole turn (classifier and database time included), not just the
+    // provider attempts.
+    let started = Instant::now();
     let task = turn.task_id();
     let fresh = match open_conversation(svc, &turn, task, trace).await? {
         Opened::Answered(response) => return Ok(response),
         Opened::Fresh(fresh) => fresh,
     };
     let claim = fresh.claim;
-    let result = run_claimed(svc, actor, trace, turn, fresh).await;
+    let claims = ClaimStore::new(svc.store.pool().clone());
+    let attempt_trace = TurnTrace::default();
+    // If this future is dropped from here on, the guard settles what was reserved as unresolved
+    // and releases the claim.
+    let mut guard = TurnGuard::arm(
+        Arc::clone(&svc.budget),
+        attempt_trace.clone(),
+        svc.turns.clone(),
+        claim.map(|task| (claims.clone(), task)),
+    );
+    let result = run_claimed(svc, actor, trace, turn, fresh, (&attempt_trace, started)).await;
     if let Some(task) = claim {
-        ClaimStore::new(svc.store.pool().clone())
-            .finish(task, result.is_ok())
-            .await;
+        claims.finish(task, result.is_ok()).await;
     }
+    guard.disarm();
     result
 }
 
@@ -105,6 +120,7 @@ async fn run_claimed(
     trace: TraceId,
     turn: ValidTurn,
     fresh: Fresh,
+    (attempt_trace, started): (&TurnTrace, Instant),
 ) -> Result<TurnResponse> {
     let task = turn.task_id();
     // Everything below (routing, the classifier summary, the provider call) runs under the
@@ -117,26 +133,25 @@ async fn run_claimed(
 
     let outcome = route(svc, &turn, task, &recent).await?;
     record_shadow(svc, actor, trace, task, &outcome).await;
-    let prepared = prepare(svc, &turn, task, trace, &recent, &outcome)?;
+    let prepared = prepare(svc, &turn, (task, trace), &recent, &outcome, started)?;
 
-    let attempt_trace = TurnTrace::default();
-    let generated = generate(svc, &turn, &prepared, &attempt_trace).await;
+    let generated = generate(svc, &turn, &prepared, attempt_trace, started).await;
     let ids = TurnIds {
         task,
         trace,
         conversation: fresh.conversation,
         user_client_id: fresh.user_client_id,
     };
-    finish(svc, &ids, &prepared, &attempt_trace, generated).await
+    finish(svc, &ids, &prepared, attempt_trace, generated).await
 }
 
 fn prepare(
     svc: &Services,
     turn: &ValidTurn,
-    task: pair_core::ids::TaskId,
-    trace: TraceId,
+    (task, trace): (pair_core::ids::TaskId, TraceId),
     recent: &[ModelMessage],
     outcome: &PipelineOutcome,
+    started: Instant,
 ) -> Result<Prepared> {
     let plan = vet_plan(svc, outcome.plan.attempt_order())?;
     let route_reason = format!(
@@ -149,7 +164,12 @@ fn prepare(
         model_id: String::new(),
         messages: compiled.messages,
         max_output_tokens: u32::try_from(limits_model.max_output_tokens).unwrap_or(u32::MAX),
-        deadline_ms: u64::try_from(svc.turn_budget.as_millis()).unwrap_or(u64::MAX),
+        deadline_ms: u64::try_from(
+            svc.turn_budget
+                .saturating_sub(started.elapsed())
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
         data_class: turn.data_class,
         task,
         trace,
@@ -166,6 +186,7 @@ async fn generate(
     turn: &ValidTurn,
     prepared: &Prepared,
     attempt_trace: &TurnTrace,
+    started: Instant,
 ) -> Result<ModelResponse> {
     let budget = TracedBudget {
         inner: &svc.budget,
@@ -176,7 +197,7 @@ async fn generate(
         inner: svc.provider.as_ref(),
         trace: attempt_trace.clone(),
     };
-    let run_limits = RunLimits::with_deadline(MAX_TOOL_CALLS, Instant::now() + svc.turn_budget);
+    let run_limits = RunLimits::with_deadline(MAX_TOOL_CALLS, started + svc.turn_budget);
     let planner = FixedPlan(prepared.plan.clone());
     let caller = ModelCaller {
         provider: &provider,
@@ -187,7 +208,10 @@ async fn generate(
         kind: turn.kind,
         intent: TURN_INTENT,
     };
-    caller.generate(prepared.request.clone()).await
+    let generated = caller.generate(prepared.request.clone()).await;
+    // A reconcile that failed (or never ran) must not leave the reservation `held`.
+    settle_dangling(&svc.budget, attempt_trace).await;
+    generated
 }
 
 /// Persist every attempt, then turn the provider result into the response.

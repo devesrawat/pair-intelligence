@@ -19,6 +19,7 @@ use pair_models::router::ConfigRouter;
 use pair_policy::PolicyEngine;
 use pair_workflows::calls::MAX_MODEL_ATTEMPTS;
 use sqlx::PgPool;
+use tokio_util::task::TaskTracker;
 
 use crate::adapter_budget::AdapterBudget;
 use crate::attempts::AttemptStore;
@@ -89,5 +90,6 @@ pub fn build_services(i: ServiceInputs) -> Result<Services> {
         allow_unverified_ids: i.allow_unverified_ids,
         turn_budget: DEFAULT_TURN_BUDGET,
         adapter_budget: AdapterBudget::default(),
+        turns: TaskTracker::new(),
     })
 }

@@ -9,6 +9,7 @@ use super::{ok, trace_id};
 use crate::auth::Actor;
 use crate::error::BoundaryError;
 use crate::json::ApiJson;
+use crate::limits::InFlightPermit;
 use crate::state::AppState;
 use crate::trace::TraceCtx;
 use crate::turn::{run_turn, TurnRequest};
@@ -17,6 +18,7 @@ pub async fn turn(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Extension(trace): Extension<TraceCtx>,
+    Extension(permit): Extension<InFlightPermit>,
     ApiJson(body): ApiJson<TurnRequest>,
 ) -> Result<Json<Value>, BoundaryError> {
     // The data class is judged before anything else, including whether the service is configured.
@@ -25,7 +27,13 @@ pub async fn turn(
     let trace = trace_id(&trace);
     // Detached from the request: the HTTP timeout or a dropped connection must not cancel a turn
     // between reserve and reconcile (that would strand a held reservation and lose the audit row).
-    let handle = tokio::spawn(async move { run_turn(&services, &actor.0, trace, turn).await });
+    // The task keeps the request's in-flight permit, so a detached turn still counts against the
+    // limit, and it runs on the tracker, so the shutdown drain waits for it.
+    let tracker = services.turns.clone();
+    let handle = tracker.spawn(async move {
+        let _permit = permit;
+        run_turn(&services, &actor.0, trace, turn).await
+    });
     let response = handle.await.map_err(|e| {
         tracing::error!(error = %e, "turn task failed");
         PairError::new(ErrorCode::Internal, "turn task failed")

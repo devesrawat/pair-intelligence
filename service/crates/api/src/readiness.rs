@@ -41,7 +41,14 @@ pub async fn build_report(state: &AppState) -> ReadyReport {
     let db_up = db.level == HealthLevel::Ok;
     checks.push(db);
     if db_up {
-        checks.push(check_migrations(state.pool(), &state.migrations_dir).await);
+        checks.push(
+            check_migrations(
+                state.pool(),
+                &state.migrations_dir,
+                state.migrations_required,
+            )
+            .await,
+        );
         let (backlog, d) = check_backlog(state.pool()).await;
         checks.push(backlog);
         depth = d;
@@ -82,11 +89,11 @@ async fn check_db(pool: &PgPool) -> CheckResult {
 }
 
 /// Versions of forward migrations present on disk. Missing directory means none.
-async fn expected_versions(dir: &Path) -> Result<HashSet<i64>, String> {
+async fn expected_versions(dir: &Path) -> Result<HashSet<i64>, sqlx::migrate::MigrateError> {
     if !dir.is_dir() {
         return Ok(HashSet::new());
     }
-    let migrator = Migrator::new(dir).await.map_err(|e| e.to_string())?;
+    let migrator = Migrator::new(dir).await?;
     Ok(migrator
         .iter()
         .filter(|m| !m.migration_type.is_down_migration())
@@ -94,17 +101,27 @@ async fn expected_versions(dir: &Path) -> Result<HashSet<i64>, String> {
         .collect())
 }
 
-async fn check_migrations(pool: &PgPool, dir: &Path) -> CheckResult {
+async fn check_migrations(pool: &PgPool, dir: &Path, required: bool) -> CheckResult {
     let expected = match expected_versions(dir).await {
         Ok(v) => v,
         Err(e) => {
+            // The error text carries filesystem paths; keep it in the logs only.
+            tracing::error!(error = %e, "readyz: cannot read migrations");
             return CheckResult::new(
                 "migrations",
                 HealthLevel::Critical,
-                format!("cannot read migrations: {e}"),
-            )
+                "cannot read migrations",
+            );
         }
     };
+    if required && expected.is_empty() {
+        tracing::error!(dir = %dir.display(), "readyz: migrations expected but none found on disk");
+        return CheckResult::new(
+            "migrations",
+            HealthLevel::Critical,
+            "no migrations found on disk (missing mount?)",
+        );
+    }
     let rows = applied_migrations(pool).await;
     let rows = match rows {
         Ok(r) => r,
@@ -123,7 +140,9 @@ async fn check_migrations(pool: &PgPool, dir: &Path) -> CheckResult {
     let applied: HashSet<i64> = rows.iter().map(|(v, _)| *v).collect();
     let mut pending: Vec<i64> = expected.difference(&applied).copied().collect();
     pending.sort_unstable();
-    if pending.is_empty() {
+    if pending.is_empty() && required && applied.is_empty() {
+        CheckResult::new("migrations", HealthLevel::Critical, "no migrations applied")
+    } else if pending.is_empty() {
         CheckResult::new(
             "migrations",
             HealthLevel::Ok,
@@ -198,7 +217,10 @@ async fn check_disk(state: &AppState) -> CheckResult {
     let dir = state.data_dir.clone();
     match tokio::task::spawn_blocking(move || check_disk_free(&dir, |p| probe(p))).await {
         Ok(r) => r,
-        Err(e) => CheckResult::new("disk", HealthLevel::Warn, format!("probe task failed: {e}")),
+        Err(e) => {
+            tracing::warn!(error = %e, "readyz: disk probe task failed");
+            CheckResult::new("disk", HealthLevel::Warn, "probe task failed")
+        }
     }
 }
 
@@ -206,9 +228,10 @@ async fn check_disk(state: &AppState) -> CheckResult {
 /// to serve memory, budget and approvals while a provider is down.
 fn provider_check(providers: &[ProviderStatus]) -> CheckResult {
     if providers.is_empty() {
+        // Not Ok: an empty registry means model calls cannot work (missing config, stub wiring).
         return CheckResult::new(
             "providers",
-            HealthLevel::Ok,
+            HealthLevel::Warn,
             "no providers registered (stub)",
         );
     }

@@ -1,34 +1,27 @@
-//! `X-Trace-Id` propagation: reuse a well-formed inbound id, otherwise generate one.
+//! `X-Trace-Id` propagation: reuse a canonical-UUID inbound id, otherwise generate one.
+//! Ids are always UUIDs so they can be persisted in `uuid` columns.
 
 use axum::extract::Request;
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
 use pair_core::ids::TraceId;
+pub use pair_telemetry::TRACE_HEADER;
+use pair_telemetry::{parse_trace_header, trace_header_value};
 use tracing::Instrument;
 
-pub const TRACE_HEADER: &str = "x-trace-id";
-const MAX_TRACE_ID_LEN: usize = 64;
-
-/// Trace id attached to every request's extensions.
+/// Trace id (canonical UUID text) attached to every request's extensions.
 #[derive(Clone, Debug)]
 pub struct TraceCtx(pub String);
 
-fn is_valid_trace_id(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= MAX_TRACE_ID_LEN
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 pub async fn trace_layer(mut req: Request, next: Next) -> Response {
-    let id = req
+    let trace = req
         .headers()
         .get(TRACE_HEADER)
         .and_then(|v| v.to_str().ok())
-        .filter(|s| is_valid_trace_id(s))
-        .map(str::to_owned)
-        .unwrap_or_else(|| TraceId::new().to_string());
+        .and_then(parse_trace_header)
+        .unwrap_or_else(TraceId::new);
+    let id = trace_header_value(trace);
     req.extensions_mut().insert(TraceCtx(id.clone()));
     let span = tracing::info_span!(
         "request",
@@ -41,18 +34,4 @@ pub async fn trace_layer(mut req: Request, next: Next) -> Response {
         resp.headers_mut().insert(TRACE_HEADER, value);
     }
     resp
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_valid_trace_id_rejects_unsafe_values() {
-        assert!(is_valid_trace_id("abc-123_X"));
-        assert!(!is_valid_trace_id(""));
-        assert!(!is_valid_trace_id("a b"));
-        assert!(!is_valid_trace_id("a\nb"));
-        assert!(!is_valid_trace_id(&"a".repeat(MAX_TRACE_ID_LEN + 1)));
-    }
 }

@@ -77,27 +77,47 @@ async fn authenticated_request_ok() {
 }
 
 #[tokio::test]
-async fn trace_id_propagated() {
+async fn trace_id_valid_uuid_propagated() {
     let app = app_with(AppState::new(dead_pool(), TOKEN));
+    let id = "0199c0de-1234-7abc-8def-0123456789ab";
     let mut req = authed("/v1/whoami");
     req.headers_mut()
-        .insert("x-trace-id", "trace-abc_123".parse().expect("hv"));
+        .insert("x-trace-id", id.parse().expect("hv"));
     let (resp, body) = send(&app, req).await;
-    assert_eq!(resp.headers()["x-trace-id"], "trace-abc_123");
-    assert_eq!(body["data"]["trace_id"], "trace-abc_123");
+    assert_eq!(resp.headers()["x-trace-id"], id);
+    assert_eq!(body["data"]["trace_id"], id);
+}
 
-    // Absent or malformed inbound id: a fresh one is generated.
+#[tokio::test]
+async fn trace_id_non_uuid_regenerated() {
+    let app = app_with(AppState::new(dead_pool(), TOKEN));
+    // Absent: a fresh UUID is generated.
     let (resp, _) = send(&app, authed("/v1/whoami")).await;
     let generated = resp.headers()["x-trace-id"]
         .to_str()
         .expect("ascii")
         .to_owned();
     assert!(uuid::Uuid::parse_str(&generated).is_ok());
-    let mut bad = authed("/v1/whoami");
-    bad.headers_mut()
-        .insert("x-trace-id", "bad id!".parse().expect("hv"));
-    let (resp, _) = send(&app, bad).await;
-    assert_ne!(resp.headers()["x-trace-id"], "bad id!");
+    // Present but not a canonical UUID (would not fit a uuid column): replaced, never echoed.
+    for bad in [
+        "trace-abc_123",
+        "bad id!",
+        "0199c0de123470008def0123456789ab",
+        "urn:uuid:0199c0de-1234-7abc-8def-0123456789ab",
+        "{0199c0de-1234-7abc-8def-0123456789ab}",
+    ] {
+        let mut req = authed("/v1/whoami");
+        req.headers_mut()
+            .insert("x-trace-id", bad.parse().expect("hv"));
+        let (resp, body) = send(&app, req).await;
+        let got = resp.headers()["x-trace-id"]
+            .to_str()
+            .expect("ascii")
+            .to_owned();
+        assert_ne!(got, bad, "{bad} was echoed");
+        assert!(uuid::Uuid::parse_str(&got).is_ok(), "{got}");
+        assert_eq!(body["data"]["trace_id"], got.as_str());
+    }
 }
 
 #[tokio::test]

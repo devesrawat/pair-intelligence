@@ -7,6 +7,7 @@ use std::sync::Arc;
 use pair_telemetry::health::{statfs_via_df, DiskStats};
 use sqlx::PgPool;
 
+use crate::limits::Limits;
 use crate::providers::{ProviderHealth, StubProviderHealth};
 
 pub type DiskProbe = Arc<dyn Fn(&Path) -> io::Result<DiskStats> + Send + Sync>;
@@ -19,6 +20,8 @@ pub struct AppState {
     pub(crate) data_dir: Arc<PathBuf>,
     pub(crate) providers: Arc<dyn ProviderHealth>,
     pub(crate) disk_probe: DiskProbe,
+    pub(crate) migrations_required: bool,
+    pub(crate) limits: Limits,
 }
 
 impl AppState {
@@ -30,6 +33,8 @@ impl AppState {
             data_dir: Arc::new(PathBuf::from(".")),
             providers: Arc::new(StubProviderHealth),
             disk_probe: Arc::new(statfs_via_df),
+            migrations_required: false,
+            limits: Limits::default(),
         }
     }
 
@@ -45,6 +50,18 @@ impl AppState {
 
     pub fn with_providers(mut self, providers: Arc<dyn ProviderHealth>) -> Self {
         self.providers = providers;
+        self
+    }
+
+    /// When set, `/readyz` fails if no migrations are found on disk or none are applied
+    /// (a missing mount must not read as "nothing to migrate").
+    pub fn with_migrations_required(mut self, required: bool) -> Self {
+        self.migrations_required = required;
+        self
+    }
+
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
         self
     }
 

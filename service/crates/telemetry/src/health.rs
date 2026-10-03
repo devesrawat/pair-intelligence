@@ -84,7 +84,11 @@ where
 {
     match statfs(path) {
         Ok(stats) => evaluate_disk(stats),
-        Err(err) => CheckResult::new("disk", HealthLevel::Warn, format!("statfs failed: {err}")),
+        Err(err) => {
+            // Raw OS errors can carry filesystem paths; keep them out of the response body.
+            tracing::warn!(error = %err, "disk check: statfs failed");
+            CheckResult::new("disk", HealthLevel::Warn, "statfs failed")
+        }
     }
 }
 
@@ -194,9 +198,14 @@ mod tests {
 
     #[test]
     fn test_check_disk_free_probe_error_is_warn() {
-        let r = check_disk_free(Path::new("/x"), |_| Err(io::Error::other("boom")));
+        let r = check_disk_free(Path::new("/secret/data/dir"), |_| {
+            Err(io::Error::other("boom at /secret/data/dir"))
+        });
         assert_eq!(r.level, HealthLevel::Warn);
-        assert!(r.detail.contains("boom"));
+        // The OS error (which can carry paths) goes to logs, never into the response detail.
+        assert!(!r.detail.contains("boom"), "{}", r.detail);
+        assert!(!r.detail.contains("/secret"), "{}", r.detail);
+        assert!(r.detail.contains("statfs failed"), "{}", r.detail);
     }
 
     #[test]

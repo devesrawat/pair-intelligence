@@ -38,6 +38,8 @@ export type PairGateOptions = {
   readonly approvalTimeoutMs: number;
   /** Tool-call attempts per run before every further call is blocked. */
   readonly maxToolCallsPerRun?: number;
+  /** Called with the params hash of every call the gate lets through (see `params-watch.ts`). */
+  readonly onAllowed?: (toolCallId: string | undefined, paramsSha256: string) => void;
 };
 
 const block = (blockReason: string): GateResult => ({ block: true, blockReason });
@@ -137,8 +139,10 @@ async function decide(options: PairGateOptions, event: ToolCallEvent): Promise<G
   }
   if (local !== undefined && "requireApproval" in local) {
     options.log("before_tool_call", { ...ids, decision: "needs_approval", reason: "local rule" });
+    options.onAllowed?.(event.toolCallId, base.paramsSha256);
     return local;
   }
   options.log("before_tool_call", { ...ids, decision: "allow" });
+  options.onAllowed?.(event.toolCallId, base.paramsSha256);
   return undefined;
 }

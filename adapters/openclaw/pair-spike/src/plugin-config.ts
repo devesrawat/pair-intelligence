@@ -12,6 +12,8 @@ export type PluginConfig = {
   readonly outputPricePerMtokMicros: number;
   /** Test probe only: makes the local tool gate throw so fail-closed behaviour can be observed. */
   readonly injectPolicyError?: boolean;
+  /** Tool-call attempts allowed per run; bounds budget overspend from tool-loop length. */
+  readonly maxToolCallsPerRun?: number;
 };
 
 export type PluginConfigResult =
@@ -45,9 +47,14 @@ export function parsePluginConfig(raw: unknown): PluginConfigResult {
   if (probe !== undefined && typeof probe !== "boolean") {
     return { ok: false, reason: "plugin config: injectPolicyError must be a boolean" };
   }
+  const maxCalls = v["maxToolCallsPerRun"];
+  if (maxCalls !== undefined && (typeof maxCalls !== "number" || !Number.isSafeInteger(maxCalls) || maxCalls < 1)) {
+    return { ok: false, reason: "plugin config: maxToolCallsPerRun must be a positive integer" };
+  }
   return {
     ok: true,
     value: {
+      ...(maxCalls === undefined ? {} : { maxToolCallsPerRun: maxCalls }),
       usageLogPath: v["usageLogPath"] as string,
       hookLogPath: v["hookLogPath"] as string,
       overrideProvider: v["overrideProvider"] as string,

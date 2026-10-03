@@ -15,7 +15,8 @@
       "priceVersion": { "type": "string" },
       "inputPricePerMtokMicros": { "type": "integer", "minimum": 1 },
       "outputPricePerMtokMicros": { "type": "integer", "minimum": 1 },
-      "injectPolicyError": { "type": "boolean" }
+      "injectPolicyError": { "type": "boolean" },
+      "maxToolCallsPerRun": { "type": "integer", "minimum": 1 }
     },
     "required": [
       "usageLogPath",

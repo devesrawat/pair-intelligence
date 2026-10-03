@@ -98,7 +98,7 @@ async fn fourth_attempt_for_same_task_refused_even_after_restart() {
     let conversation = stack
         .services
         .store
-        .create_conversation("retry", pair_core::ids::TraceId::new())
+        .create_conversation_with_class("retry", pair_core::ids::TraceId::new(), DataClass::Public)
         .await
         .expect("conversation");
     let body = json!({

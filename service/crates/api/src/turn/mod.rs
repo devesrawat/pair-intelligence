@@ -1,6 +1,7 @@
 //! `POST /v1/turn`: refuse disallowed data classes, classify (shadow), plan a route within the
 //! task cap, compile context, call the provider through the budget, persist with a cost state.
 
+mod open;
 mod persist;
 pub mod recording;
 pub mod request;
@@ -13,16 +14,17 @@ use pair_core::money::Micros;
 use pair_core::traits::{BudgetEx, ContextCompiler};
 use pair_core::types::{
     ClassificationInput, ModelLimits, ModelMessage, ModelRequest, ModelResponse, TaskContext,
-    TaskProfile, TrustClass,
+    TaskProfile,
 };
 use pair_models::classification::pipeline::{PipelineOutcome, PipelineRequest};
-use pair_models::provider::store::{NewMessage, StoredMessage};
+use pair_models::provider::store::StoredMessage;
 use pair_models::router::RouteConstraints;
 use pair_workflows::calls::{ModelCaller, ModelPlanner};
 use pair_workflows::limits::{RunLimits, MAX_TOOL_CALLS};
 use serde_json::json;
 
 use crate::services::Services;
+use open::open_conversation;
 use persist::{persist_attempts, CallContext};
 use recording::{AttemptOutcome, AttemptTrace, TracedBudget, TracedProvider, TurnTrace};
 pub use request::{TurnRequest, TurnResponse, ValidTurn};
@@ -30,7 +32,6 @@ pub use request::{TurnRequest, TurnResponse, ValidTurn};
 const RECENT_MESSAGES: usize = 12;
 const SUMMARY_MESSAGES: usize = 3;
 const SUMMARY_CHARS: usize = 160;
-const TITLE_CHARS: usize = 60;
 const ROUTING_BYTES_PER_TOKEN: usize = 4;
 const CONTEXT_OVERHEAD_TOKENS: u64 = 400;
 const WORKFLOWS: [&str; 5] = [
@@ -79,9 +80,14 @@ pub async fn run_turn(
     turn: ValidTurn,
 ) -> Result<TurnResponse> {
     let task = turn.task_id();
-    let (conversation, history, user_client_id) =
-        open_conversation(svc, &turn, task, trace).await?;
-    let recent = recent_messages(&history);
+    let opened = open_conversation(svc, &turn, task, trace).await?;
+    // Everything below (routing, the classifier summary, the provider call) runs under the
+    // conversation's highest class, not just this turn's.
+    let turn = ValidTurn {
+        data_class: opened.class,
+        ..turn
+    };
+    let recent = recent_messages(&opened.history);
 
     let outcome = route(svc, &turn, task, &recent).await?;
     record_shadow(svc, actor, trace, task, &outcome).await;
@@ -92,8 +98,8 @@ pub async fn run_turn(
     let ids = TurnIds {
         task,
         trace,
-        conversation,
-        user_client_id,
+        conversation: opened.conversation,
+        user_client_id: opened.user_client_id,
     };
     finish(svc, &ids, &prepared, &attempt_trace, generated).await
 }
@@ -225,48 +231,6 @@ fn root_cause(error: PairError, attempts: &[AttemptTrace]) -> PairError {
         ),
         None => error,
     }
-}
-
-async fn open_conversation(
-    svc: &Services,
-    turn: &ValidTurn,
-    task: pair_core::ids::TaskId,
-    trace: TraceId,
-) -> Result<(ConversationId, Vec<StoredMessage>, String)> {
-    let (conversation, history) = match turn.conversation {
-        Some(c) => (c, svc.store.list_messages(c).await?),
-        None => {
-            let title: String = turn.message.chars().take(TITLE_CHARS).collect();
-            (
-                svc.store.create_conversation(&title, trace).await?,
-                Vec::new(),
-            )
-        }
-    };
-    let user_client_id = turn
-        .client_message_id
-        .clone()
-        .unwrap_or_else(|| format!("{task}:user"));
-    let (stored, inserted) = svc
-        .store
-        .append_message(NewMessage {
-            conversation,
-            client_message_id: user_client_id.clone(),
-            role: "user".into(),
-            content: turn.message.clone(),
-            trust: TrustClass::Owner,
-            trace,
-        })
-        .await?;
-    let assistant_id = format!("{user_client_id}:assistant");
-    if !inserted && history.iter().any(|m| m.client_message_id == assistant_id) {
-        return Err(PairError::new(
-            ErrorCode::Conflict,
-            "this turn was already answered; read the conversation instead of repeating it",
-        ));
-    }
-    let history = history.into_iter().filter(|m| m.id != stored.id).collect();
-    Ok((conversation, history, user_client_id))
 }
 
 fn recent_messages(history: &[StoredMessage]) -> Vec<ModelMessage> {

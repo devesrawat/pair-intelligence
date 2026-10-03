@@ -293,7 +293,11 @@ async fn answered_turn_replayed_with_same_client_message_id_is_refused_without_a
     let conversation = stack
         .services
         .store
-        .create_conversation("replay", pair_core::ids::TraceId::new())
+        .create_conversation_with_class(
+            "replay",
+            pair_core::ids::TraceId::new(),
+            pair_core::types::DataClass::Public,
+        )
         .await
         .expect("conversation");
     let body = json!({

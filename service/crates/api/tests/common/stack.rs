@@ -43,6 +43,8 @@ pub struct StackOpts {
     /// Tier the router starts from for every intent (`routine` = cheap first, `strong` = mid first).
     pub baseline_tier: &'static str,
     pub max_attempts: usize,
+    /// Registry models that may see public data only (a personal turn is then `provider_disallowed`).
+    pub public_only_models: bool,
 }
 
 impl Default for StackOpts {
@@ -54,6 +56,7 @@ impl Default for StackOpts {
             jev: None,
             baseline_tier: "strong",
             max_attempts: 3,
+            public_only_models: false,
         }
     }
 }
@@ -81,7 +84,14 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-fn entry(id: &str, base: &str, in_micros: i64, out_micros: i64, verified: bool) -> ModelEntry {
+fn entry(
+    id: &str,
+    base: &str,
+    prices: (i64, i64),
+    verified: bool,
+    classes: &[DataClass],
+) -> ModelEntry {
+    let (in_micros, out_micros) = prices;
     ModelEntry {
         id: id.to_owned(),
         provider: ProviderKind::Anthropic,
@@ -97,7 +107,7 @@ fn entry(id: &str, base: &str, in_micros: i64, out_micros: i64, verified: bool) 
             output_per_mtok: Micros(out_micros),
         }),
         data_policy: "test".to_owned(),
-        allowed_data_classes: vec![DataClass::Public, DataClass::Personal],
+        allowed_data_classes: classes.to_vec(),
         quota_requests_per_minute: None,
         health: Health::Healthy,
         id_verified: verified,
@@ -152,16 +162,28 @@ impl Stack {
             None => None,
         };
         let verified = |id: &str| !opts.unverified.contains(&id);
+        let classes: &[DataClass] = if opts.public_only_models {
+            &[DataClass::Public]
+        } else {
+            &[DataClass::Public, DataClass::Personal]
+        };
+        let base = &provider.base;
         let registry = Arc::new(
             ProviderRegistry::from_entries(vec![
-                entry(CHEAP, &provider.base, 1_000_000, 5_000_000, verified(CHEAP)),
-                entry(MID, &provider.base, 2_000_000, 10_000_000, verified(MID)),
+                entry(
+                    CHEAP,
+                    base,
+                    (1_000_000, 5_000_000),
+                    verified(CHEAP),
+                    classes,
+                ),
+                entry(MID, base, (2_000_000, 10_000_000), verified(MID), classes),
                 entry(
                     PREMIUM,
-                    &provider.base,
-                    4_000_000,
-                    20_000_000,
+                    base,
+                    (4_000_000, 20_000_000),
                     verified(PREMIUM),
+                    classes,
                 ),
             ])
             .expect("registry"),

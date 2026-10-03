@@ -75,6 +75,16 @@ fn parse_data_class(raw: &str) -> Result<DataClass> {
     }
 }
 
+/// Order of data classes: a higher rank is more sensitive (public < personal < sensitive < employer).
+pub fn class_rank(class: DataClass) -> u8 {
+    match class {
+        DataClass::Public => 0,
+        DataClass::Personal => 1,
+        DataClass::Sensitive => 2,
+        DataClass::Employer => 3,
+    }
+}
+
 /// NUL (which Postgres text cannot store) and every other control character except newline and tab.
 fn has_forbidden_control(s: &str) -> bool {
     s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')

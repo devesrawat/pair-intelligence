@@ -2,6 +2,7 @@
 //! [`code_span`], so stored content cannot start a heading, list item, fence or entry of its own.
 //! Only database-generated values (uuids, enum labels, counts) appear outside those wrappers.
 use super::{FileEntry, Row};
+use std::collections::HashMap;
 use std::fmt::Write;
 
 /// Characters a Markdown renderer or line-based parser may treat as a line break.
@@ -89,8 +90,11 @@ pub(super) fn render_index(input: &IndexInput<'_>) -> String {
         );
     }
     let _ = writeln!(out, "\n## Memories ({})\n", input.memories.len());
+    // Grouped once, in evidence order: O(M + E) instead of scanning every evidence row per memory.
+    let by_memory = group_by_memory(input.evidence);
     for m in input.memories {
-        render_memory(&mut out, m, input.evidence);
+        let id = m.value["id"].as_str().unwrap_or_default();
+        render_memory(&mut out, m, by_memory.get(id).map_or(&[], Vec::as_slice));
     }
     let _ = writeln!(out, "## Goals ({})\n", input.goals.len());
     for g in input.goals {
@@ -115,7 +119,17 @@ pub(super) fn render_index(input: &IndexInput<'_>) -> String {
     out
 }
 
-fn render_memory(out: &mut String, m: &Row, evidence: &[Row]) {
+fn group_by_memory(evidence: &[Row]) -> HashMap<&str, Vec<&Row>> {
+    let mut grouped: HashMap<&str, Vec<&Row>> = HashMap::new();
+    for e in evidence {
+        if let Some(memory_id) = e.value["memory_id"].as_str() {
+            grouped.entry(memory_id).or_default().push(e);
+        }
+    }
+    grouped
+}
+
+fn render_memory(out: &mut String, m: &Row, evidence: &[&Row]) {
     let v = &m.value;
     let _ = writeln!(out, "### memory {}\n", label(v, "id"));
     let _ = writeln!(
@@ -134,11 +148,7 @@ fn render_memory(out: &mut String, m: &Row, evidence: &[Row]) {
             indented_block(v["content"].as_str().unwrap_or_default())
         );
     }
-    let id = v["id"].as_str().unwrap_or_default();
-    for e in evidence
-        .iter()
-        .filter(|e| e.value["memory_id"].as_str() == Some(id))
-    {
+    for e in evidence {
         let _ = writeln!(
             out,
             "- evidence: source {} kind {} span {}",

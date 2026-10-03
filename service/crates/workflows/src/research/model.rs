@@ -1,12 +1,11 @@
 //! Budgeted model calls for the research stages. Page-derived content is always sent as
 //! `TrustClass::Untrusted`; instructions come only from this module (`TrustClass::Owner`).
-use crate::coding::budgeted_generate;
+use crate::calls::{budgeted_generate, PriceSource};
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    money::Micros,
-    traits::{Budget, Provider},
-    types::{DataClass, ModelMessage, ModelRequest, TrustClass},
+    traits::{BudgetEx, Provider},
+    types::{DataClass, ModelMessage, ModelRequest, TaskKind, TrustClass},
 };
 use serde::de::DeserializeOwned;
 
@@ -15,11 +14,11 @@ const CALL_DEADLINE_MS: u64 = 120_000;
 
 pub struct ResearchLlm<'a> {
     pub provider: &'a dyn Provider,
-    pub budget: &'a dyn Budget,
+    pub budget: &'a dyn BudgetEx,
+    pub prices: &'a dyn PriceSource,
     pub task: TaskId,
     pub trace: TraceId,
     pub model_id: String,
-    pub max_cost: Micros,
 }
 
 pub fn owner_msg(content: impl Into<String>) -> ModelMessage {
@@ -49,11 +48,15 @@ impl ResearchLlm<'_> {
             task: self.task,
             trace: self.trace,
         };
-        Ok(
-            budgeted_generate(self.provider, self.budget, req, self.max_cost)
-                .await?
-                .text,
+        Ok(budgeted_generate(
+            self.provider,
+            self.budget,
+            self.prices,
+            TaskKind::Research,
+            req,
         )
+        .await?
+        .text)
     }
 
     /// Structured output only: the reply must contain one JSON object matching `T`.

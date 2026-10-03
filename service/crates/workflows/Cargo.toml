@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 pair-core = { path = "../core" }
 pair-policy = { path = "../policy" }
+pair-models = { path = "../models" }
+pair-context = { path = "../context" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

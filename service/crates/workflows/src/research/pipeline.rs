@@ -15,14 +15,14 @@ use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    money::Micros,
-    traits::{Budget, Provider},
+    traits::{BudgetEx, Provider},
 };
 
 pub struct ResearchDeps<'a> {
     pub provider: &'a dyn Provider,
     pub gate: &'a pair_policy::Gate,
-    pub budget: &'a dyn Budget,
+    pub budget: &'a dyn BudgetEx,
+    pub prices: &'a dyn crate::calls::PriceSource,
     pub fetcher: &'a dyn SourceFetcher,
     pub store: &'a EvidenceStore,
     /// Optional semantic veto on top of the deterministic support check.
@@ -38,7 +38,6 @@ pub struct ResearchRun {
     pub task: TaskId,
     pub trace: TraceId,
     pub model_id: String,
-    pub max_call_cost: Micros,
 }
 
 pub struct ResearchOutput {
@@ -94,10 +93,10 @@ async fn execute(
     let llm = ResearchLlm {
         provider: deps.provider,
         budget: deps.budget,
+        prices: deps.prices,
         task: run.task,
         trace: run.trace,
         model_id: run.model_id.clone(),
-        max_cost: run.max_call_cost,
     };
 
     let sources = capture_sources(&net, scope).await?;

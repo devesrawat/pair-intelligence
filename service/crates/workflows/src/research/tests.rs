@@ -8,7 +8,6 @@ use pair_core::types::Decision;
 use pair_core::{
     error::Result,
     ids::{TaskId, TraceId},
-    money::Micros,
     types::TrustClass,
 };
 use pair_policy::Gate;
@@ -130,6 +129,7 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         provider: &provider,
         gate: &gate,
         budget: &budget,
+        prices: &crate::coding::testkit::FixedPrices::standard(),
         fetcher: &fetcher,
         store: &store,
         judge,
@@ -140,7 +140,6 @@ async fn run_fixture(name: &str, judge: Option<&dyn SupportJudge>) -> Harness {
         task: TaskId::new(),
         trace: TraceId::new(),
         model_id: "fake".into(),
-        max_call_cost: Micros(10),
     };
     let scope = ResearchScope {
         question: fx.question,

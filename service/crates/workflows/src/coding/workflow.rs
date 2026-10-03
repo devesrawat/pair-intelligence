@@ -3,20 +3,19 @@ use super::{
     classify::{classify_failure, FailureClass},
     config::RepoConfig,
     edits::{apply_edits, parse_edit_set},
-    llm::budgeted_generate,
     runner::{CmdReport, Runner},
     scope::Scope,
     worktree,
 };
+use crate::calls::{budgeted_generate, PriceSource};
 use chrono::Utc;
 use pair_core::{
     error::{ErrorCode, PairError, Result},
     ids::{TaskId, TraceId},
-    money::Micros,
-    traits::{Budget, ContextCompiler, Memory, Provider},
+    traits::{BudgetEx, ContextCompiler, Memory, Provider},
     types::{
         DataClass, ModelLimits, ModelMessage, ModelRequest, PolicyContext, RetrievalQuery,
-        TaskContext, TrustClass,
+        TaskContext, TaskKind, TrustClass,
     },
 };
 use pair_policy::Gate;
@@ -56,7 +55,9 @@ pub enum CodingStatus {
 pub struct CodingDeps<'a> {
     pub provider: &'a dyn Provider,
     pub gate: &'a Gate,
-    pub budget: &'a dyn Budget,
+    pub budget: &'a dyn BudgetEx,
+    /// Registry prices: reservations are derived from these, never from a caller figure.
+    pub prices: &'a dyn PriceSource,
     pub memory: &'a dyn Memory,
     pub compiler: &'a dyn ContextCompiler,
     /// Policy context for every command: active policy version (`PolicyEngine::version()`),
@@ -74,7 +75,6 @@ pub struct CodingTask {
     pub scope: Scope,
     pub workspaces_root: PathBuf,
     pub model_id: String,
-    pub max_call_cost: Micros,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,8 +136,9 @@ impl Ctx<'_, '_> {
         let resp = budgeted_generate(
             self.deps.provider,
             self.deps.budget,
+            self.deps.prices,
+            TaskKind::Coding,
             req,
-            self.task.max_call_cost,
         )
         .await?;
         Ok(resp.text)

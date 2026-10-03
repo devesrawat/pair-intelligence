@@ -5,7 +5,6 @@
 mod classify;
 mod config;
 mod edits;
-mod llm;
 mod remote;
 mod runner;
 mod scope;
@@ -15,7 +14,6 @@ mod worktree;
 pub use classify::{classify_failure, FailureClass};
 pub use config::RepoConfig;
 pub use edits::{apply_edits, parse_edit_set, FileEdit};
-pub use llm::budgeted_generate;
 pub use remote::{request_remote_write, RemoteAction, RemoteKind, RemoteOutcome};
 pub use runner::{CmdReport, Runner};
 pub use scope::{is_secret_path, Scope};

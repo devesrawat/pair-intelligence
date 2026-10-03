@@ -1,13 +1,14 @@
 //! In-test fakes of external services (policy engine, model provider, budget ledger,
 //! memory store, context compiler). Test-only.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use crate::calls::{ModelTerms, PriceSource};
 use crate::tools::{GIT_PUSH, PR_CREATE};
 use async_trait::async_trait;
 use pair_core::{
     error::Result,
     ids::{CandidateId, LedgerEntryId, MemoryId, ReservationId, TaskId},
-    money::Micros,
-    traits::{Budget, ContextCompiler, Memory, Policy, Provider},
+    money::{Micros, Price},
+    traits::{Budget, BudgetEx, ContextCompiler, Memory, Policy, Provider},
     types::*,
 };
 use std::sync::{
@@ -118,6 +119,8 @@ impl Policy for FixedPolicy {
 pub struct FakeBudget {
     pub reserved: AtomicUsize,
     pub reconciled: AtomicUsize,
+    pub reservations: Mutex<Vec<ReserveRequest>>,
+    pub usages: Mutex<Vec<UsageReport>>,
 }
 
 impl Default for FakeBudget {
@@ -125,23 +128,70 @@ impl Default for FakeBudget {
         Self {
             reserved: AtomicUsize::new(0),
             reconciled: AtomicUsize::new(0),
+            reservations: Mutex::new(Vec::new()),
+            usages: Mutex::new(Vec::new()),
         }
     }
 }
 
 #[async_trait]
 impl Budget for FakeBudget {
-    async fn reserve(&self, _task: TaskId, _max: Micros) -> Result<ReservationId> {
-        self.reserved.fetch_add(1, Ordering::SeqCst);
-        Ok(ReservationId::new())
+    async fn reserve(&self, task: TaskId, max: Micros) -> Result<ReservationId> {
+        self.reserve_with(ReserveRequest::metered(
+            task,
+            max,
+            TaskKind::Default,
+            String::new(),
+        ))
+        .await
     }
-    async fn reconcile(&self, id: ReservationId, _usage: UsageReport) -> Result<LedgerEntry> {
+    async fn reconcile(&self, id: ReservationId, usage: UsageReport) -> Result<LedgerEntry> {
         self.reconciled.fetch_add(1, Ordering::SeqCst);
+        let settled = usage.actual_cost.is_some();
+        self.usages.lock().unwrap().push(usage);
         Ok(LedgerEntry {
             id: LedgerEntryId::new(),
             reservation: id,
             amount: Micros(1),
-            settled: true,
+            settled,
+        })
+    }
+}
+
+#[async_trait]
+impl BudgetEx for FakeBudget {
+    async fn reserve_with(&self, req: ReserveRequest) -> Result<ReservationId> {
+        self.reserved.fetch_add(1, Ordering::SeqCst);
+        self.reservations.lock().unwrap().push(req);
+        Ok(ReservationId::new())
+    }
+}
+
+/// Registry stand-in: every model id has the same price and accepts every data class.
+pub struct FixedPrices(pub Option<Price>);
+
+impl FixedPrices {
+    pub fn standard() -> Self {
+        Self(Some(Price {
+            version: TEST_PRICE_VERSION.into(),
+            input_per_mtok: Micros(3_000_000),
+            output_per_mtok: Micros(15_000_000),
+        }))
+    }
+}
+
+pub const TEST_PRICE_VERSION: &str = "pv-test-1";
+
+impl PriceSource for FixedPrices {
+    fn terms(&self, _model_id: &str) -> Option<ModelTerms> {
+        Some(ModelTerms {
+            price: self.0.clone(),
+            allowed_data_classes: vec![
+                DataClass::Public,
+                DataClass::Personal,
+                DataClass::Sensitive,
+                DataClass::Employer,
+            ],
         })
     }
 }

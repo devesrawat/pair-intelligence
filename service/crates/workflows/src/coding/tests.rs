@@ -4,7 +4,6 @@ use super::*;
 use pair_core::{
     error::ErrorCode,
     ids::{ApprovalId, TaskId, TraceId},
-    money::Micros,
     types::Decision,
 };
 use pair_policy::Gate;
@@ -69,7 +68,6 @@ impl Fixture {
             scope: Scope::new(scope.iter().map(|s| (*s).to_string()).collect()),
             workspaces_root: self.root.join("ws"),
             model_id: "fake".into(),
-            max_call_cost: Micros(10),
         }
     }
 }
@@ -109,6 +107,7 @@ async fn run(
         provider,
         gate: &gate,
         budget: &budget,
+        prices: &FixedPrices::standard(),
         memory: &EmptyMemory,
         compiler: &PlainCompiler,
         policy: fake_ctx(&fx_task.workspaces_root),

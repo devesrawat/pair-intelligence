@@ -3,6 +3,11 @@
 # host provides (EventBridge/cron + notifier). Values for disk and queue backlog are
 # mirrored as constants in service/crates/telemetry/src/health.rs - change both together.
 # Every alert links to a runbook in docs/runbooks/.
+#
+# STATUS: definitions only. Nothing evaluates this file today: no scheduler, notifier or
+# alerting job exists in the repo. /readyz returning 503 is the only enforced behaviour.
+# Alerts whose source is not /readyz (backup_stale, restore_drill_overdue, reservation_unresolved,
+# budget_cap, unauthorized_action_block) have no producer at all yet. See docs/STATUS.md.
 version: 1
 
 alerts:
@@ -52,6 +57,7 @@ alerts:
     runbook: docs/runbooks/kill-switch.md
 
   backup_stale:
+    status: not_wired  # defined here only; no job reads PAIR_BACKUP_DIR or fires this alert
     source: newest file in PAIR_BACKUP_DIR
     warn:     { age_hours_above: 26 }
     critical: { age_hours_above: 48 }

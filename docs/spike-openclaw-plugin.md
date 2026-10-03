@@ -122,3 +122,12 @@ The tool list sent to the mock (`mock-requests.jsonl`, `tools`) is the default a
 - Sandbox on (`agents.defaults.sandbox.mode: all`); the ADR requires it for deployment. The spike ran with the default `off`.
 - Real provider streaming quirks (mock only), and Anthropic auth (open item from the audit, needs the owner's capped key).
 - Plugin install via `openclaw plugins install` (used `plugins.load.paths` instead).
+
+## Post-review hardening (review finding M5)
+
+The evidence above was captured with the first version of the gate. After review the plugin changed, and the evidence directories were **not** re-captured against a live gateway:
+
+- The `before_tool_call` handler lives in `src/gate.ts`. Its error path never throws (logging is wrapped in its own `try`) and always returns `{block: true}`, including when the hook log path is unwritable.
+- `src/rules.ts` is an allow-list of tool names with default deny (`read`, `sessions_list`, `sessions_history`, `sessions_search`, `image`); `web_search` / `web_fetch` need approval; `exec` is allowed only after command inspection (recursive `rm` in any flag order, `find -delete`, `dd of=`, `mkfs*`, `wipefs`, `shred`, block-device redirects are denied; `curl`/`wget`/`ssh` etc. need approval). The allow-list is a spike-level placeholder, not the spec section 9 policy.
+- Tests: `scripts/tests/test_openclaw_gate.sh` (`node --test`, Node 22.18+). They exercise the pure policy and the gate, not the real OpenClaw host.
+- Known gap (L12, deferred): the hook log still records full tool params.

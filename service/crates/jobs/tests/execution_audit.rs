@@ -20,6 +20,7 @@ use serde_json::json;
 use sqlx::Row;
 use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 const SECRET_ARG: &str = "ghp_SUPERSECRETTOKEN_0123456789";
@@ -177,7 +178,10 @@ async fn raw_args_never_stored() {
 #[tokio::test]
 async fn recorder_failure_blocks_execution() {
     let db = TestDb::new().await;
-    let broken = sqlx::PgPool::connect_lazy("postgres://pair:pair@127.0.0.1:1/none").unwrap();
+    let broken = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(300))
+        .connect_lazy("postgres://pair:pair@127.0.0.1:1/none")
+        .unwrap();
     let g = Gate::new(
         Arc::new(ByName {
             hash: String::new(),

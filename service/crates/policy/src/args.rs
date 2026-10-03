@@ -20,15 +20,73 @@ pub struct ArgRefs {
 }
 
 pub fn extract(args: &[String]) -> ArgRefs {
+    extract_from(args, None)
+}
+
+/// Like [`extract`], but knows that `git push <remote> <refspec>...` carries refspecs
+/// (`<sha>:refs/heads/x`) after the remote. Those have the shape of an scp-style `host:path`
+/// and would otherwise be mistaken for a host. Only the remote position is a destination; if the
+/// command line is anything but the plain `<flags> <remote> <refspecs>` form, nothing is
+/// skipped, so the answer is only ever stricter.
+pub fn extract_for(executable: Option<&str>, args: &[String]) -> ArgRefs {
+    extract_from(args, refspec_start(executable, args))
+}
+
+/// `push` is the only remote-facing git subcommand the policy permits (see `exec_rules`).
+const GIT_REMOTE_COMMANDS: [&str; 1] = ["push"];
+/// Flags that take no separate value, so the next argument is not swallowed by them.
+const GIT_VALUELESS_FLAGS: [&str; 17] = [
+    "-f",
+    "--force",
+    "--force-with-lease",
+    "-u",
+    "--set-upstream",
+    "-n",
+    "--dry-run",
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--tags",
+    "--follow-tags",
+    "--no-verify",
+    "--delete",
+    "--prune",
+    "--atomic",
+];
+
+/// Index of the first refspec argument of a plain `git push [flags] <remote> ...`.
+fn refspec_start(executable: Option<&str>, args: &[String]) -> Option<usize> {
+    let exe = executable?.rsplit('/').next()?;
+    if exe != "git" {
+        return None;
+    }
+    let sub = args.iter().position(|a| !a.starts_with('-'))?;
+    if !GIT_REMOTE_COMMANDS.contains(&args[sub].as_str()) {
+        return None;
+    }
+    for (i, arg) in args.iter().enumerate().skip(sub + 1) {
+        if !arg.starts_with('-') {
+            return Some(i + 1);
+        }
+        if !GIT_VALUELESS_FLAGS.contains(&arg.as_str()) {
+            return None; // unknown or value-taking flag: stay strict
+        }
+    }
+    None
+}
+
+fn extract_from(args: &[String], refspec_from: Option<usize>) -> ArgRefs {
     let mut refs = ArgRefs::default();
-    for arg in args {
+    for (index, arg) in args.iter().enumerate() {
+        let is_refspec = refspec_from.is_some_and(|from| index >= from);
         for piece in arg
             .split(|c: char| c.is_whitespace() || PIECE_SEPARATORS.contains(&c))
             .filter(|p| !p.is_empty())
         {
             if let Some(url) = url_candidate(piece) {
                 refs.destinations.push(url.to_owned());
-            } else if let Some(remote) = scp_remote(piece) {
+            } else if let Some(remote) = scp_remote(piece).filter(|_| !is_refspec) {
                 refs.destinations.push(format!("ssh://{remote}"));
             } else {
                 refs.paths

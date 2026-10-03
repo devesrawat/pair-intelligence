@@ -105,7 +105,7 @@ impl PolicyEngine {
         workspace: &Path,
         extra_paths: &[String],
     ) -> Result<(), String> {
-        let refs = args::extract(&req.args);
+        let refs = args::extract_for(req.executable.as_deref(), &req.args);
         req.paths
             .iter()
             .chain(extra_paths)
@@ -114,7 +114,7 @@ impl PolicyEngine {
     }
 
     fn check_destinations(&self, req: &ActionRequest) -> Result<(), String> {
-        let refs = args::extract(&req.args);
+        let refs = args::extract_for(req.executable.as_deref(), &req.args);
         req.destination
             .iter()
             .chain(&refs.destinations)

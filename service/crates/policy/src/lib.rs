@@ -8,6 +8,7 @@ pub mod exec_rules;
 pub mod gate;
 pub mod paths;
 pub mod payload;
+pub mod recorder;
 
 pub use engine::PolicyEngine;
 pub use error::PolicyError;

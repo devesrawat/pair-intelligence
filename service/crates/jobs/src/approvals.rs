@@ -5,7 +5,7 @@ use crate::store::plus;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use pair_core::error::{ErrorCode, PairError, Result};
-use pair_core::ids::{ApprovalId, RunId};
+use pair_core::ids::{ApprovalId, RunId, TraceId};
 use pair_core::traits::Approvals;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -179,21 +179,24 @@ impl PgApprovals {
         Self { pool }
     }
 
-    /// Approve with the default 24 h expiry.
-    pub async fn approve_default(&self, action_hash: &str, actor: &str) -> Result<ApprovalId> {
-        self.approve(action_hash, actor, plus(Utc::now(), APPROVAL_TTL)?)
-            .await
-    }
-}
-
-#[async_trait]
-impl Approvals for PgApprovals {
-    /// `expiry` must be in the future and at most 24 h away.
-    async fn approve(
+    /// Like `approve`, recording the correlation id of the request the approval was granted for.
+    pub async fn approve_with_trace(
         &self,
         action_hash: &str,
         actor: &str,
         expiry: DateTime<Utc>,
+        trace: TraceId,
+    ) -> Result<ApprovalId> {
+        self.insert_approval(action_hash, actor, expiry, Some(trace))
+            .await
+    }
+
+    async fn insert_approval(
+        &self,
+        action_hash: &str,
+        actor: &str,
+        expiry: DateTime<Utc>,
+        trace: Option<TraceId>,
     ) -> Result<ApprovalId> {
         if !is_valid_hash(action_hash) {
             return Err(PairError::new(
@@ -212,18 +215,57 @@ impl Approvals for PgApprovals {
             ));
         }
         let id = ApprovalId::new();
-        sqlx::query(
-            "INSERT INTO approvals (id, action_hash, actor, expires_at) VALUES ($1, $2, $3, $4)",
-        )
-        .bind(id.0)
-        .bind(action_hash)
-        .bind(actor)
-        .bind(expiry)
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        tracing::info!(approval_id = %id, actor, "approval granted");
+        // Without a trace the legacy column list is used, so schemas that predate migration 091
+        // (single-migration test fixtures, a rolled-back database) keep working.
+        let result = match trace {
+            Some(t) => {
+                sqlx::query(
+                    "INSERT INTO approvals (id, action_hash, actor, expires_at, trace_id) \
+                     VALUES ($1, $2, $3, $4, $5)",
+                )
+                .bind(id.0)
+                .bind(action_hash)
+                .bind(actor)
+                .bind(expiry)
+                .bind(t.0)
+                .execute(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO approvals (id, action_hash, actor, expires_at) \
+                     VALUES ($1, $2, $3, $4)",
+                )
+                .bind(id.0)
+                .bind(action_hash)
+                .bind(actor)
+                .bind(expiry)
+                .execute(&self.pool)
+                .await
+            }
+        };
+        result.map_err(db_err)?;
+        tracing::info!(approval_id = %id, actor, trace_id = ?trace, "approval granted");
         Ok(id)
+    }
+
+    /// Approve with the default 24 h expiry.
+    pub async fn approve_default(&self, action_hash: &str, actor: &str) -> Result<ApprovalId> {
+        self.approve(action_hash, actor, plus(Utc::now(), APPROVAL_TTL)?)
+            .await
+    }
+}
+
+#[async_trait]
+impl Approvals for PgApprovals {
+    /// `expiry` must be in the future and at most 24 h away.
+    async fn approve(
+        &self,
+        action_hash: &str,
+        actor: &str,
+        expiry: DateTime<Utc>,
+    ) -> Result<ApprovalId> {
+        self.insert_approval(action_hash, actor, expiry, None).await
     }
 
     async fn consume(&self, id: ApprovalId, action_hash: &str) -> Result<()> {

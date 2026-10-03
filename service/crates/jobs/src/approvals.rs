@@ -215,18 +215,36 @@ impl PgApprovals {
             ));
         }
         let id = ApprovalId::new();
-        sqlx::query(
-            "INSERT INTO approvals (id, action_hash, actor, expires_at, trace_id) \
-             VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(id.0)
-        .bind(action_hash)
-        .bind(actor)
-        .bind(expiry)
-        .bind(trace.map(|t| t.0))
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
+        // Without a trace the legacy column list is used, so schemas that predate migration 091
+        // (single-migration test fixtures, a rolled-back database) keep working.
+        let result = match trace {
+            Some(t) => {
+                sqlx::query(
+                    "INSERT INTO approvals (id, action_hash, actor, expires_at, trace_id) \
+                     VALUES ($1, $2, $3, $4, $5)",
+                )
+                .bind(id.0)
+                .bind(action_hash)
+                .bind(actor)
+                .bind(expiry)
+                .bind(t.0)
+                .execute(&self.pool)
+                .await
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO approvals (id, action_hash, actor, expires_at) \
+                     VALUES ($1, $2, $3, $4)",
+                )
+                .bind(id.0)
+                .bind(action_hash)
+                .bind(actor)
+                .bind(expiry)
+                .execute(&self.pool)
+                .await
+            }
+        };
+        result.map_err(db_err)?;
         tracing::info!(approval_id = %id, actor, trace_id = ?trace, "approval granted");
         Ok(id)
     }

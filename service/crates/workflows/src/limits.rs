@@ -77,16 +77,25 @@ impl RunLimits {
     /// Counts one tool call (a sandboxed command, a write batch, a search or a fetch).
     pub fn begin_tool_call(&self) -> Result<()> {
         self.remaining()?;
-        self.tool_calls
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < self.max_tool_calls).then_some(n + 1)
-            })
-            .map(|_| ())
-            .map_err(|_| {
-                PairError::new(
+        // Explicit CAS loop: `fetch_update` is deprecated on newer compilers and its replacement
+        // (`try_update`) does not exist on older ones.
+        let mut used = self.tool_calls.load(Ordering::SeqCst);
+        loop {
+            if used >= self.max_tool_calls {
+                return Err(PairError::new(
                     ErrorCode::LimitExceeded,
                     format!("tool-call limit of {} reached", self.max_tool_calls),
-                )
-            })
+                ));
+            }
+            match self.tool_calls.compare_exchange_weak(
+                used,
+                used + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => used = actual,
+            }
+        }
     }
 }

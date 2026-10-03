@@ -321,7 +321,7 @@ async fn assemble(
             .iter()
             .filter(|(h, head)| *head == row.id && h.kind == "decision")
             .collect();
-        past.sort_by(|a, b| b.0.valid_to.cmp(&a.0.valid_to));
+        past.sort_by_key(|(h, _)| std::cmp::Reverse(h.valid_to));
         group.extend(past.into_iter().map(|(h, _)| Emitted {
             row: h.clone(),
             score: score * HISTORY_SCORE_FACTOR,

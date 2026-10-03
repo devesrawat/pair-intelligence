@@ -214,6 +214,12 @@ fn dotenv_and_private_key_files_denied_but_templates_allowed() {
         ".env",
         ".env.local",
         ".env.production",
+        ".env.prod",
+        ".env.dev",
+        ".env.backup",
+        ".env.bak",
+        ".env.staging.local",
+        "sub/.ENV.Prod",
         "sub/.ENV",
         "keys/id_rsa",
         "keys/id_ed25519",
@@ -222,7 +228,15 @@ fn dotenv_and_private_key_files_denied_but_templates_allowed() {
         r.paths = vec![name.into()];
         assert!(is_deny(&f.engine.authorize(&r, &f.ctx).decision), "{name}");
     }
-    for name in [".env.example", "env.rs", "src/environment.rs"] {
+    for name in [
+        ".env.example",
+        ".env.sample",
+        ".env.template",
+        ".env.dist",
+        "sub/.ENV.EXAMPLE",
+        "env.rs",
+        "src/environment.rs",
+    ] {
         let mut r = request("fs.read");
         r.paths = vec![name.into()];
         assert_eq!(

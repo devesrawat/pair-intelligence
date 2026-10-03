@@ -22,7 +22,8 @@ pub struct PolicyEngine {
 impl PolicyEngine {
     pub fn from_config_str(text: &str, home: &Path) -> Result<Self, PolicyError> {
         let config = PolicyConfig::parse(text)?;
-        let guard = PathGuard::new(home, &config.denied_paths, &config.denied_names);
+        let guard = PathGuard::new(home, &config.denied_paths, &config.denied_names)
+            .with_allowed_names(&config.allowed_names);
         Ok(Self {
             config: Arc::new(config),
             guard,

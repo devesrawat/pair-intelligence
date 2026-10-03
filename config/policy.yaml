@@ -1,7 +1,7 @@
 # PAIR tool policy (spec section 9). Parsed by pair_policy::PolicyConfig; any parse or
 # validation error means no policy engine exists, so every action is refused (fail closed).
 # Unknown keys are rejected. Bump `version` whenever this file changes.
-version: "2026-10-03.4"
+version: "2026-10-03.5"
 
 # Risk class per registered tool. A tool that is not listed here is denied.
 # read | local_edit | local_commit run unprompted inside the workspace;
@@ -52,6 +52,9 @@ denied_paths:
   - /run/docker.sock
 
 # Credential file names denied wherever they appear (case-insensitive; `*.ext` matches a suffix).
+# Templates that hold no secrets and stay readable despite the `.env.*` pattern (exact names only).
+allowed_names: [".env.example", ".env.sample", ".env.template", ".env.dist"]
+
 denied_names:
   - ".envrc"
   - ".env"
@@ -60,6 +63,7 @@ denied_names:
   - ".env.staging"
   - ".env.production"
   - ".env.test"
+  - ".env.*"                  # any other variant: .env.prod, .env.dev, .env.backup, .env.bak, ...
   - ".git-credentials"
   - id_rsa
   - id_ed25519

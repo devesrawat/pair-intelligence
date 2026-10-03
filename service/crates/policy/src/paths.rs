@@ -9,6 +9,7 @@ pub struct PathGuard {
     home: PathBuf,
     denied: Vec<PathBuf>,
     denied_names: Vec<String>,
+    allowed_names: Vec<String>,
 }
 
 impl PathGuard {
@@ -25,6 +26,7 @@ impl PathGuard {
             home: home.to_path_buf(),
             denied,
             denied_names: denied_names.iter().map(|n| n.to_lowercase()).collect(),
+            allowed_names: Vec::new(),
         }
     }
 
@@ -48,12 +50,22 @@ impl PathGuard {
         }
     }
 
+    /// Exact file names that are never treated as credentials (templates like `.env.example`).
+    #[must_use]
+    pub fn with_allowed_names(mut self, names: &[String]) -> Self {
+        self.allowed_names = names.iter().map(|n| n.to_lowercase()).collect();
+        self
+    }
+
     fn refuse_credentials(&self, path: &Path) -> Result<(), String> {
         let is_socket = path.file_name().is_some_and(|n| n == DOCKER_SOCKET_NAME);
         let named = path
             .file_name()
             .map(|n| n.to_string_lossy().to_lowercase())
-            .is_some_and(|n| self.denied_names.iter().any(|d| name_matches(d, &n)));
+            .is_some_and(|n| {
+                !self.allowed_names.contains(&n)
+                    && self.denied_names.iter().any(|d| name_matches(d, &n))
+            });
         if is_socket || named || self.denied.iter().any(|d| path.starts_with(d)) {
             return Err(format!("host credential path denied: {}", path.display()));
         }
@@ -61,11 +73,14 @@ impl PathGuard {
     }
 }
 
-/// `*.ext` matches by suffix, anything else exactly. Both sides are lowercase.
+/// `*.ext` matches by suffix, `prefix*` by prefix, anything else exactly. Both sides are lowercase.
 fn name_matches(pattern: &str, name: &str) -> bool {
-    match pattern.strip_prefix('*') {
-        Some(suffix) => name.ends_with(suffix),
-        None => pattern == name,
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        name.ends_with(suffix)
+    } else if let Some(prefix) = pattern.strip_suffix('*') {
+        name.starts_with(prefix)
+    } else {
+        pattern == name
     }
 }
 

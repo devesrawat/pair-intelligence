@@ -48,6 +48,10 @@ pub struct PolicyConfig {
     /// File names (exact, or `*.suffix`) that are credentials wherever they appear.
     #[serde(default)]
     pub denied_names: Vec<String>,
+    /// File names (exact, lowercase compare) that stay readable even when a `denied_names`
+    /// pattern matches, e.g. `.env.example` under `.env.*`. Only exact names, never patterns.
+    #[serde(default)]
+    pub allowed_names: Vec<String>,
     pub denied_paths: Vec<String>,
     pub egress: Vec<EgressRule>,
 }

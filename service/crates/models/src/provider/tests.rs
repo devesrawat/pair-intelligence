@@ -438,3 +438,15 @@ async fn resolved_model_recorded() {
         .await;
     assert!(audit.is_ok());
 }
+
+#[test]
+fn registry_refuses_employer_and_sensitive_for_every_model() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/models.yaml");
+    let r = ProviderRegistry::load(&path).expect("models.yaml");
+    assert!(r.iter().count() > 0);
+    for entry in r.iter() {
+        for class in [DataClass::Employer, DataClass::Sensitive] {
+            assert!(!entry.allows(class), "{} must refuse {class:?}", entry.id);
+        }
+    }
+}

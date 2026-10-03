@@ -2,14 +2,14 @@
 //! The base URL comes from the registry entry and must pass the cloud-only guard.
 use super::common::{
     allow_unverified_from_env, http_error, net_error, read_lines, usage_report, vet_request,
-    with_deadline,
+    wire_role, with_deadline,
 };
 use super::guard::{guarded_client, GuardedResolver};
 use super::registry::{ModelEntry, ProviderKind, ProviderRegistry};
 use async_trait::async_trait;
 use pair_core::error::{ErrorCode, PairError, Result};
 use pair_core::traits::Provider;
-use pair_core::types::{ModelRequest, ModelResponse};
+use pair_core::types::{ModelMessage, ModelRequest, ModelResponse};
 use pair_telemetry::{Redactor, Secret, TRACE_HEADER};
 use serde::Deserialize;
 use serde_json::json;
@@ -74,11 +74,7 @@ impl OllamaCloudProvider {
 
     async fn call(&self, entry: &ModelEntry, req: &ModelRequest) -> Result<ModelResponse> {
         let started = Instant::now();
-        let messages: Vec<_> = req
-            .messages
-            .iter()
-            .map(|m| json!({"role": m.role, "content": m.content}))
-            .collect();
+        let messages = chat_messages(&req.messages)?;
         let body = json!({
             "model": entry.id,
             "messages": messages,
@@ -142,6 +138,12 @@ impl Provider for OllamaCloudProvider {
     }
 }
 
+fn chat_messages(msgs: &[ModelMessage]) -> Result<Vec<serde_json::Value>> {
+    msgs.iter()
+        .map(|m| Ok(json!({"role": wire_role(m)?, "content": m.content})))
+        .collect()
+}
+
 #[derive(Debug, Deserialize)]
 struct Chunk {
     model: Option<String>,
@@ -194,5 +196,28 @@ impl Accumulator {
             self.output_tokens = c.eval_count.unwrap_or(0);
         }
         Ok(c.done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pair_core::types::{ModelMessage, TrustClass};
+
+    #[test]
+    fn untrusted_message_never_sent_as_system() {
+        let msg = |role: &str, trust| ModelMessage {
+            role: role.into(),
+            content: format!("{role}-text"),
+            trust,
+        };
+        let wire = chat_messages(&[
+            msg("system", TrustClass::Owner),
+            msg("system", TrustClass::Untrusted),
+            msg("assistant", TrustClass::Tool),
+        ])
+        .expect("messages");
+        let roles: Vec<_> = wire.iter().map(|m| m["role"].as_str()).collect();
+        assert_eq!(roles, [Some("system"), Some("user"), Some("user")]);
     }
 }

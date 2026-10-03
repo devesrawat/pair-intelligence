@@ -87,7 +87,11 @@ fn git_dash_c_denied() {
     ] {
         assert_eq!(exec(&f, "git", args), Decision::Allow, "{args:?}");
     }
-    assert!(is_deny(&exec(&f, "git", &["push"])), "unlisted subcommand");
+    assert!(
+        is_deny(&exec(&f, "git", &["clone", "x"])),
+        "unlisted subcommand"
+    );
+    assert!(is_deny(&exec(&f, "git", &["push", "--receive-pack=evil"])));
 }
 
 #[test]

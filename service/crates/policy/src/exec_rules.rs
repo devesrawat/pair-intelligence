@@ -3,7 +3,9 @@
 //! be steered into running commands. This module classifies a command line as fixed-purpose
 //! (`Safe`) or `CodeExec`, and refuses outright the git invocations that inject config.
 
-const GIT_SUBCOMMANDS: [&str; 10] = [
+/// `push` is allowed here only because the tool registry makes `git.push` an `external_write`
+/// (single-use approval bound to the exact argv); every flag filter below still applies.
+const GIT_SUBCOMMANDS: [&str; 11] = [
     "status",
     "diff",
     "log",
@@ -14,6 +16,7 @@ const GIT_SUBCOMMANDS: [&str; 10] = [
     "rev-parse",
     "ls-files",
     "update-index",
+    "push",
 ];
 const GIT_SAFE_GLOBAL_FLAGS: [&str; 2] = ["--no-pager", "--no-optional-locks"];
 const GIT_FORBIDDEN_FLAGS: [&str; 9] = [

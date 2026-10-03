@@ -531,7 +531,11 @@ mod tests {
         p.route(&budget, request("/status")).await.expect("route");
         let mut sensitive = request("fix the failing test");
         sensitive.data_class = DataClass::Sensitive;
-        p.route(&budget, sensitive).await.expect("route");
+        let err = p
+            .route(&budget, sensitive)
+            .await
+            .expect_err("no provider may receive sensitive data");
+        assert_eq!(err.code, ErrorCode::ProviderDisallowed);
         assert_eq!(mock.hits(), 0);
         assert!(budget.reserved.lock().expect("lock").is_empty());
     }

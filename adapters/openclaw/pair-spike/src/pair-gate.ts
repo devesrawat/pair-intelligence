@@ -86,7 +86,7 @@ async function decide(options: PairGateOptions, event: ToolCallEvent): Promise<G
 
   // Audit before acting: a log that cannot be written makes the caller's catch block deny.
   if (verdict.kind === "deny") {
-    options.log("before_tool_call", { ...ids, decision: "deny" });
+    options.log("before_tool_call", { ...ids, decision: "deny", reason: verdict.reason.slice(0, REASON_MAX_CHARS) });
     return block(`${DENY_REASON_PREFIX}${verdict.reason.slice(0, REASON_MAX_CHARS)}`);
   }
   if (verdict.kind === "needs_approval") {

@@ -1,5 +1,6 @@
 // Loopback-only OpenAI-compatible mock. Serves canned streamed chat completions.
-// Scenario is chosen by a marker in the latest user message: SCENARIO:deny | SCENARIO:approve | otherwise plain text.
+// Scenario is chosen by a marker in the user messages:
+//   SCENARIO:deny | approve (spike), allowcat | svcsecret | svcpython | slowtool (wired harness), else plain text.
 import { appendFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -10,6 +11,12 @@ const FIXED_OUTPUT_TOKENS = 7;
 const TOOL_RESULT_PREVIEW_CHARS = 200;
 const port = Number(process.env.MOCK_PORT ?? DEFAULT_PORT);
 const logPath = process.env.MOCK_LOG ?? "mock-requests.jsonl";
+/** Workspace the wired harness gives OpenClaw (and pair-api as PAIR_WORKSPACE_ROOT). */
+const workspace = process.env.MOCK_WORKSPACE ?? "/nonexistent-workspace";
+/** Every HTTP request of any kind (method + path), so "zero hits" means zero requests, not zero completions. */
+const allLogPath = process.env.MOCK_ALL_LOG ?? "mock-all-requests.log";
+const DEFAULT_SLOW_MS = 20_000;
+const slowMs = Number(process.env.MOCK_SLOW_MS ?? DEFAULT_SLOW_MS);
 
 type ChatMessage = { role?: string; content?: unknown };
 type ChatRequest = {
@@ -62,7 +69,24 @@ function plan(body: ChatRequest): Plan {
   if (prompt.includes("SCENARIO:approve")) {
     return { toolName: "exec", args: { command: "curl http://127.0.0.1:1/never" } };
   }
+  // Wired harness: commands the LOCAL rules allow, so only the real PAIR policy engine can stop them.
+  if (prompt.includes("SCENARIO:allowcat") || prompt.includes("SCENARIO:slowtool")) {
+    return { toolName: "exec", args: { command: `cat ${workspace}/hello.txt` } };
+  }
+  if (prompt.includes("SCENARIO:svcsecret")) {
+    return { toolName: "exec", args: { command: `cat ${workspace}/prod.tfvars` } };
+  }
+  if (prompt.includes("SCENARIO:svcpython")) {
+    return { toolName: "exec", args: { command: `python3 ${workspace}/write_canary.py` } };
+  }
   return { text: "MOCK-OK hello from the mock model" };
+}
+
+/** slowtool delays only the tool-call turn, so the harness can stop pair-api in between. */
+function needsSlowTool(body: ChatRequest): boolean {
+  const messages = body.messages ?? [];
+  if (messages.some((m) => m.role === "tool")) return false;
+  return messages.some((m) => m.role === "user" && textOf(m.content).includes("SCENARIO:slowtool"));
 }
 
 function sse(res: ServerResponse, obj: unknown): void {
@@ -120,6 +144,7 @@ function respond(res: ServerResponse, body: ChatRequest): void {
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = req.url ?? "";
+  appendFileSync(allLogPath, `${new Date().toISOString()} ${req.method ?? ""} ${url}\n`);
   if (req.method === "GET" && url.startsWith("/v1/models")) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(
@@ -136,12 +161,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === "POST" && url.startsWith("/v1/chat/completions")) {
     const body = JSON.parse(await readBody(req)) as ChatRequest;
     const messages = body.messages ?? [];
+    const rawBytes = Buffer.byteLength(JSON.stringify(body));
     appendFileSync(
       logPath,
       `${JSON.stringify({
         ts: new Date().toISOString(),
         model: body.model,
         stream: body.stream,
+        bodyBytes: rawBytes,
         messageCount: messages.length,
         lastRole: messages[messages.length - 1]?.role,
         lastMessagePreview: JSON.stringify(messages[messages.length - 1]?.content ?? null).slice(0, 300),
@@ -149,6 +176,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         authorization: String(req.headers.authorization ?? "").replace(/Bearer\s+.+/, "Bearer <redacted>"),
       })}\n`,
     );
+    const delayMs = needsSlowTool(body) ? slowMs : 0;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     respond(res, body);
     return;
   }

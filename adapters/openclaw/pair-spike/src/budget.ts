@@ -24,9 +24,9 @@ export const RECONCILE_PATH = "/v1/budget/reconcile";
 export const CHARS_PER_TOKEN = 4;
 /**
  * Tokens OpenClaw adds around the user prompt on every model call (system prompt, tool schemas,
- * workspace files, history). Calibrated from the live harness request sizes (see the spike doc).
+ * workspace files, history). Calibrated from the live harness: a 24-char prompt produced a 53,580-byte request (about 13,400 tokens at 4 chars per token), so 16,000 leaves headroom.
  */
-export const SYSTEM_OVERHEAD_TOKENS = 12_000;
+export const SYSTEM_OVERHEAD_TOKENS = 16_000;
 /** Output allowance per call; matches the largest `maxTokens` configured for the routed model. */
 export const ASSUMED_MAX_OUTPUT_TOKENS = 2_048;
 /** Model calls one run may make (tool round trips). Reconcile flags `overrun` if reality exceeds the hold. */

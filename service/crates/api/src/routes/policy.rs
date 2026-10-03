@@ -12,7 +12,7 @@ use axum::Json;
 use chrono::Utc;
 use pair_core::error::{ErrorCode, PairError};
 use pair_core::ids::{ApprovalId, TaskId};
-use pair_core::traits::{Approvals, Policy};
+use pair_core::traits::Policy;
 use pair_core::types::{ActionRequest, DataClass, Decision, PolicyContext, PolicyOutcome};
 use pair_policy::recorder::{ExecDecision, ExecOutcome, ExecutionRecord, ExecutionRecorder};
 use serde::{Deserialize, Serialize};
@@ -144,6 +144,7 @@ fn approver_authorized(headers: &HeaderMap, expected: Option<&str>) -> bool {
 pub async fn create_approval(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
+    Extension(trace): Extension<TraceCtx>,
     headers: HeaderMap,
     ApiJson(body): ApiJson<ApprovalBody>,
 ) -> Result<Json<Value>, ApiError> {
@@ -164,7 +165,7 @@ pub async fn create_approval(
     let expires_at = Utc::now() + chrono::Duration::seconds(secs);
     let id = services
         .approvals
-        .approve(&body.payload_hash, &actor.0, expires_at)
+        .approve_with_trace(&body.payload_hash, &actor.0, expires_at, trace_id(&trace))
         .await?;
     ok(ApprovalResponse {
         approval_id: id.to_string(),

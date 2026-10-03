@@ -251,3 +251,29 @@ async fn authorize_fails_closed_when_recorder_down() {
     }
     stack.finish().await;
 }
+
+#[tokio::test]
+async fn approval_row_carries_the_request_trace_id() {
+    let stack = Stack::start(StackOpts::default()).await;
+    const TRACE: &str = "0199c0de-aaaa-7bbb-8ccc-0123456789ab";
+    let body = json!({"payload_hash": "b".repeat(64), "expires_in_secs": 60});
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/approvals")
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("x-actor", "owner")
+        .header("x-approver-token", APPROVER_TOKEN)
+        .header("x-trace-id", TRACE)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request");
+    let (resp, out) = send(&stack.app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "{out}");
+
+    let stored: Option<uuid::Uuid> = sqlx::query_scalar("SELECT trace_id FROM approvals")
+        .fetch_one(&stack.db.pool)
+        .await
+        .expect("approval row");
+    assert_eq!(stored.map(|u| u.to_string()).as_deref(), Some(TRACE));
+    stack.finish().await;
+}
